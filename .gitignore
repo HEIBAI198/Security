@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+server.out.log
+server.err.log
+data/store.json
+data/store.sqlite3
+data/exported_model.json
+data/generated_document.*
+outputs/

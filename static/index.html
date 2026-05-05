@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SysML DocGen</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">SD</div>
+        <div>
+          <strong>SysML DocGen</strong>
+          <span>MMS / VE / MDK / DocGen</span>
+        </div>
+      </div>
+
+      <section class="login-box">
+        <label class="field-label" for="usernameInput">用户</label>
+        <input id="usernameInput" value="engineer" autocomplete="username">
+        <label class="field-label" for="passwordInput">密码</label>
+        <input id="passwordInput" type="password" value="engineer123" autocomplete="current-password">
+        <div class="login-actions">
+          <button id="loginButton" class="button small primary" type="button">登录</button>
+          <button id="logoutButton" class="button small" type="button">退出</button>
+        </div>
+        <p id="identityText" class="identity-text">未登录，使用请求头模拟权限</p>
+      </section>
+
+      <label class="field-label" for="projectSelect">项目</label>
+      <select id="projectSelect"></select>
+
+      <label class="field-label" for="branchSelect">分支</label>
+      <select id="branchSelect"></select>
+
+      <nav class="nav-tabs" aria-label="主功能">
+        <button class="nav-button active" data-view="modelView">模型仓库</button>
+        <button class="nav-button" data-view="diagramView">图形建模</button>
+        <button class="nav-button" data-view="viewEditor">视图编辑</button>
+        <button class="nav-button" data-view="traceView">追踪矩阵</button>
+        <button class="nav-button" data-view="versionView">版本审计</button>
+        <button class="nav-button" data-view="docgenView">文档生成</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <label class="field-label" for="roleSelect">无登录时角色</label>
+        <select id="roleSelect">
+          <option value="author">作者</option>
+          <option value="reader">读者</option>
+          <option value="admin">管理员</option>
+        </select>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <h1 id="projectTitle">SysML 模型文档自动生成系统</h1>
+          <p id="projectMeta"></p>
+        </div>
+        <div class="topbar-actions">
+          <button id="commitButton" class="button primary">保存快照</button>
+          <button id="exportButton" class="button">导出模型</button>
+        </div>
+      </header>
+
+      <section id="stats" class="stats-grid"></section>
+
+      <section id="modelView" class="view active">
+        <div class="split-layout">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>模型元素</h2>
+              <button id="newElementButton" class="button small primary">新建</button>
+            </div>
+            <div class="toolbar">
+              <select id="typeFilter"></select>
+              <input id="searchInput" type="search" placeholder="检索 ID、名称或描述">
+            </div>
+            <div id="elementList" class="element-list"></div>
+          </section>
+
+          <section class="panel editor-panel">
+            <div class="panel-header">
+              <h2>元素编辑器</h2>
+              <button id="deleteElementButton" class="button small danger">删除</button>
+            </div>
+            <form id="elementForm" class="form-grid">
+              <label>
+                <span>ID</span>
+                <input id="elementId" name="id" placeholder="自动生成或手动填写">
+              </label>
+              <label>
+                <span>类型</span>
+                <select id="elementType" name="type"></select>
+              </label>
+              <label class="wide">
+                <span>名称</span>
+                <input id="elementName" name="name" required>
+              </label>
+              <label>
+                <span>责任域</span>
+                <input id="elementOwner" name="owner">
+              </label>
+              <label>
+                <span>构造型</span>
+                <input id="elementStereotype" name="stereotype">
+              </label>
+              <label class="wide">
+                <span>描述</span>
+                <textarea id="elementDescription" name="description" rows="4"></textarea>
+              </label>
+              <label class="wide">
+                <span>属性 JSON</span>
+                <textarea id="elementAttributes" name="attributes" rows="6"></textarea>
+              </label>
+              <label class="wide">
+                <span>关系 JSON</span>
+                <textarea id="elementRelations" name="relations" rows="5"></textarea>
+              </label>
+              <div class="form-actions wide">
+                <button class="button primary" type="submit">保存元素</button>
+                <button id="resetElementButton" class="button" type="button">重置</button>
+              </div>
+            </form>
+          </section>
+        </div>
+
+        <section class="panel semantic-panel">
+          <div class="panel-header">
+            <h2>SysML 语义校验</h2>
+            <button id="validateButton" class="button small">重新校验</button>
+          </div>
+          <div id="validationResults" class="validation-list"></div>
+        </section>
+      </section>
+
+      <section id="diagramView" class="view">
+        <div class="split-layout diagram-split">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>图形建模</h2>
+              <button id="refreshDiagramButton" class="button small">刷新</button>
+            </div>
+            <div class="form-grid compact-form">
+              <label class="wide">
+                <span>图类型</span>
+                <select id="diagramTypeSelect"></select>
+              </label>
+              <label>
+                <span>源元素</span>
+                <select id="relationSourceSelect"></select>
+              </label>
+              <label>
+                <span>关系</span>
+                <select id="relationTypeSelect"></select>
+              </label>
+              <label>
+                <span>目标元素</span>
+                <select id="relationTargetSelect"></select>
+              </label>
+              <div class="form-actions">
+                <button id="addRelationButton" class="button primary" type="button">添加关系</button>
+              </div>
+            </div>
+          </section>
+          <section class="panel diagram-panel">
+            <div class="panel-header">
+              <h2 id="diagramTitle">关系图</h2>
+              <span class="status-pill">SVG</span>
+            </div>
+            <div id="diagramCanvas" class="diagram-canvas"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="viewEditor" class="view">
+        <div class="split-layout view-split">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>文档视图</h2>
+              <button id="refreshViewButton" class="button small">刷新</button>
+            </div>
+            <div id="modelTree" class="model-tree"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
+              <h2>实时模型视图</h2>
+              <button id="generateFromViewButton" class="button small primary">生成文档</button>
+            </div>
+            <iframe id="viewFrame" title="实时模型视图"></iframe>
+          </section>
+        </div>
+      </section>
+
+      <section id="traceView" class="view">
+        <section class="panel">
+          <div class="panel-header">
+            <h2>需求追踪矩阵</h2>
+            <button id="refreshTraceButton" class="button small">刷新</button>
+          </div>
+          <div id="traceMatrix" class="trace-table"></div>
+        </section>
+      </section>
+
+      <section id="versionView" class="view">
+        <div class="split-layout version-split">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>版本操作</h2>
+              <button id="refreshVersionButton" class="button small">刷新</button>
+            </div>
+            <div class="form-grid compact-form">
+              <label>
+                <span>Diff 起点</span>
+                <select id="diffFromSelect"></select>
+              </label>
+              <label>
+                <span>Diff 终点</span>
+                <select id="diffToSelect"></select>
+              </label>
+              <div class="form-actions">
+                <button id="runDiffButton" class="button primary" type="button">比较</button>
+              </div>
+              <label>
+                <span>回滚到提交</span>
+                <select id="rollbackCommitSelect"></select>
+              </label>
+              <div class="form-actions">
+                <button id="rollbackButton" class="button danger" type="button">回滚</button>
+              </div>
+              <label>
+                <span>新分支名</span>
+                <input id="newBranchInput" placeholder="例如 dev-power">
+              </label>
+              <div class="form-actions">
+                <button id="createBranchButton" class="button" type="button">创建分支</button>
+              </div>
+              <label>
+                <span>合并来源</span>
+                <select id="mergeSourceSelect"></select>
+              </label>
+              <label class="checkbox-row">
+                <input id="forceMergeInput" type="checkbox">
+                <span>强制覆盖冲突</span>
+              </label>
+              <div class="form-actions">
+                <button id="mergeBranchButton" class="button" type="button">合并到当前分支</button>
+              </div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
+              <h2>差异与审计</h2>
+              <span id="diffSummary" class="status-pill">未比较</span>
+            </div>
+            <div id="diffResults" class="diff-results"></div>
+            <div id="commitList" class="commit-list"></div>
+            <div id="auditList" class="audit-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="docgenView" class="view">
+        <div class="split-layout docgen-split">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>DocGen 模板</h2>
+              <button id="resetTemplateButton" class="button small">默认模板</button>
+            </div>
+            <textarea id="templateInput" class="template-input"></textarea>
+            <div class="form-actions padded-actions">
+              <button id="generateDocumentButton" class="button primary">生成</button>
+              <button id="downloadMarkdownButton" class="button">Markdown</button>
+              <button id="downloadHtmlButton" class="button">HTML</button>
+              <button id="downloadPdfButton" class="button">PDF</button>
+            </div>
+            <div id="documentList" class="document-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-header">
+              <h2>文档预览</h2>
+              <span id="documentStatus" class="status-pill">未生成</span>
+            </div>
+            <iframe id="documentFrame" title="文档预览"></iframe>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

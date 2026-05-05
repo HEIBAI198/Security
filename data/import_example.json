@@ -1,0 +1,35 @@
+{
+  "elements": [
+    {
+      "id": "REQ-004",
+      "name": "遥测监控需求",
+      "type": "Requirement",
+      "stereotype": "requirement",
+      "description": "电源分系统应周期性下传关键状态遥测。",
+      "owner": "总体组",
+      "attributes": {
+        "text": "系统应每 1s 采集并下传母线电压、电池 SOC 和配电通道状态。",
+        "priority": "Medium",
+        "verification": "Inspection"
+      },
+      "relations": [
+        {"type": "satisfy", "target": "IF-POWER-TM"}
+      ]
+    },
+    {
+      "id": "PRT-TM-OUT",
+      "name": "遥测输出端口",
+      "type": "Port",
+      "stereotype": "proxyPort",
+      "description": "电源分系统向平台数据管理单元输出遥测帧。",
+      "owner": "接口组",
+      "attributes": {
+        "direction": "out",
+        "interface": "IF-POWER-TM"
+      },
+      "relations": [
+        {"type": "connect", "target": "IF-POWER-TM"}
+      ]
+    }
+  ]
+}

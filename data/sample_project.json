@@ -1,0 +1,384 @@
+{
+  "schema_version": "2.0",
+  "projects": {
+    "satellite-power": {
+      "id": "satellite-power",
+      "name": "卫星电源系统 SysML 文档生成示例",
+      "description": "用于课程设计演示的 SysML 模型仓库，覆盖需求、结构、接口、约束、状态、验证与追踪关系。",
+      "organization": "系统工程课程设计小组",
+      "created_at": "2026-04-25T00:00:00+00:00",
+      "updated_at": "2026-04-25T00:00:00+00:00",
+      "roles": {
+        "admin": ["teacher"],
+        "author": ["engineer", "modeler"],
+        "reader": ["reviewer"]
+      },
+      "branches": {
+        "main": {
+          "name": "main",
+          "head": "C-0001-cd2d83",
+          "created_at": "2026-04-25T00:00:00+00:00",
+          "documents": [],
+          "elements": {
+            "REQ-001": {
+              "id": "REQ-001",
+              "name": "供电连续性需求",
+              "type": "Requirement",
+              "stereotype": "requirement",
+              "description": "卫星在任务模式下应保持关键载荷持续供电。",
+              "owner": "总体组",
+              "attributes": {
+                "text": "在标称日照与地影周期内，电源分系统应向关键载荷提供连续、稳定的 28V 母线供电。",
+                "priority": "High",
+                "verification": "Test"
+              },
+              "relations": [
+                {"type": "satisfy", "target": "BLK-POWER"},
+                {"type": "verify", "target": "TST-001"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "REQ-002": {
+              "id": "REQ-002",
+              "name": "能量余量需求",
+              "type": "Requirement",
+              "stereotype": "requirement",
+              "description": "系统应具备足够的能量余量以应对负载波动。",
+              "owner": "总体组",
+              "attributes": {
+                "text": "在最大负载工况下，电池荷电状态应保持不低于 30%，且日照段结束时恢复至 85% 以上。",
+                "priority": "Medium",
+                "verification": "Analysis"
+              },
+              "relations": [
+                {"type": "satisfy", "target": "BLK-BATTERY"},
+                {"type": "verify", "target": "TST-002"},
+                {"type": "constrain", "target": "CST-SOC"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "REQ-003": {
+              "id": "REQ-003",
+              "name": "故障隔离需求",
+              "type": "Requirement",
+              "stereotype": "requirement",
+              "description": "单点负载故障不应导致全平台掉电。",
+              "owner": "可靠性组",
+              "attributes": {
+                "text": "任一非关键负载短路时，配电单元应在 100ms 内完成隔离，并保持关键负载供电。",
+                "priority": "High",
+                "verification": "Test"
+              },
+              "relations": [
+                {"type": "satisfy", "target": "BLK-PDU"},
+                {"type": "verify", "target": "TST-003"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "REQ-004": {
+              "id": "REQ-004",
+              "name": "电源遥测接口需求",
+              "type": "Requirement",
+              "stereotype": "requirement",
+              "description": "电源分系统应向平台数据管理单元提供遥测接口。",
+              "owner": "接口组",
+              "attributes": {
+                "text": "系统应每 1s 通过平台电源遥测接口下传母线电压、电池 SOC 和配电通道状态。",
+                "priority": "Medium",
+                "verification": "Inspection"
+              },
+              "relations": [
+                {"type": "satisfy", "target": "IF-POWER-TM"},
+                {"type": "verify", "target": "TST-004"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "BLK-POWER": {
+              "id": "BLK-POWER",
+              "name": "电源分系统",
+              "type": "Block",
+              "stereotype": "block",
+              "description": "负责太阳能输入调节、电池充放电控制和平台母线供电。",
+              "owner": "电源分系统",
+              "attributes": {
+                "mass": "18 kg",
+                "power": "650 W"
+              },
+              "relations": [
+                {"type": "compose", "target": "BLK-SOLAR"},
+                {"type": "compose", "target": "BLK-BATTERY"},
+                {"type": "compose", "target": "BLK-PDU"},
+                {"type": "expose", "target": "PRT-28V-BUS"},
+                {"type": "connect", "target": "IF-POWER-TM"},
+                {"type": "constrain", "target": "CST-SOC"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "BLK-SOLAR": {
+              "id": "BLK-SOLAR",
+              "name": "太阳阵调节器",
+              "type": "Block",
+              "stereotype": "block",
+              "description": "完成太阳阵最大功率点跟踪和母线能量输入控制。",
+              "owner": "电源分系统",
+              "attributes": {
+                "efficiency": "92%"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "BLK-BATTERY": {
+              "id": "BLK-BATTERY",
+              "name": "锂离子电池组",
+              "type": "Block",
+              "stereotype": "block",
+              "description": "在地影期间提供能量，并支持峰值负载削峰。",
+              "owner": "电源分系统",
+              "attributes": {
+                "capacity": "80 Ah",
+                "voltage": "28 V"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "BLK-PDU": {
+              "id": "BLK-PDU",
+              "name": "配电单元",
+              "type": "Block",
+              "stereotype": "block",
+              "description": "为各载荷和平台设备提供受控配电、保护与故障隔离。",
+              "owner": "电源分系统",
+              "attributes": {
+                "channels": 16
+              },
+              "relations": [
+                {"type": "connect", "target": "PRT-28V-BUS"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "PRT-28V-BUS": {
+              "id": "PRT-28V-BUS",
+              "name": "28V 母线输出端口",
+              "type": "Port",
+              "stereotype": "proxyPort",
+              "description": "电源分系统对外提供的受控 28V 供电端口。",
+              "owner": "接口组",
+              "attributes": {
+                "direction": "out",
+                "interface": "IF-POWER-BUS",
+                "voltage": "28 V"
+              },
+              "relations": [
+                {"type": "connect", "target": "IF-POWER-BUS"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "IF-POWER-BUS": {
+              "id": "IF-POWER-BUS",
+              "name": "平台 28V 电源接口",
+              "type": "Interface",
+              "stereotype": "interfaceBlock",
+              "description": "定义平台 28V 供电接口的电压、纹波和保护约束。",
+              "owner": "接口组",
+              "attributes": {
+                "protocol": "DC Power",
+                "voltage": "28 V",
+                "ripple": "< 100 mV"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "IF-POWER-TM": {
+              "id": "IF-POWER-TM",
+              "name": "电源遥测接口",
+              "type": "Interface",
+              "stereotype": "interfaceBlock",
+              "description": "定义电源分系统向平台数据管理单元上报遥测数据的接口。",
+              "owner": "接口组",
+              "attributes": {
+                "protocol": "CAN",
+                "cycle": "1 s"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "CST-SOC": {
+              "id": "CST-SOC",
+              "name": "电池 SOC 约束",
+              "type": "Constraint",
+              "stereotype": "constraintBlock",
+              "description": "限制地影期间电池荷电状态和日照恢复状态。",
+              "owner": "总体组",
+              "attributes": {
+                "expression": "SOC_min >= 30% and SOC_after_sunlight >= 85%"
+              },
+              "relations": [
+                {"type": "constrain", "target": "REQ-002"},
+                {"type": "constrain", "target": "BLK-BATTERY"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "ACT-001": {
+              "id": "ACT-001",
+              "name": "进入地影供电流程",
+              "type": "Activity",
+              "stereotype": "activity",
+              "description": "卫星进入地影后由电池组接管母线供电。",
+              "owner": "电源分系统",
+              "attributes": {
+                "trigger": "进入地影",
+                "result": "母线电压保持稳定"
+              },
+              "relations": [
+                {"type": "allocate", "target": "BLK-BATTERY"},
+                {"type": "refine", "target": "REQ-001"},
+                {"type": "flow", "target": "ACT-002"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "ACT-002": {
+              "id": "ACT-002",
+              "name": "出地影充电恢复流程",
+              "type": "Activity",
+              "stereotype": "activity",
+              "description": "卫星出地影后太阳阵恢复供电并为电池充电。",
+              "owner": "电源分系统",
+              "attributes": {
+                "trigger": "出地影",
+                "result": "电池 SOC 恢复至目标水平"
+              },
+              "relations": [
+                {"type": "allocate", "target": "BLK-SOLAR"},
+                {"type": "refine", "target": "REQ-002"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "ST-SUNLIGHT": {
+              "id": "ST-SUNLIGHT",
+              "name": "日照供电状态",
+              "type": "State",
+              "stereotype": "state",
+              "description": "太阳阵向母线供电并为电池充电。",
+              "owner": "电源分系统",
+              "attributes": {},
+              "relations": [
+                {"type": "transition", "target": "ST-ECLIPSE"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "ST-ECLIPSE": {
+              "id": "ST-ECLIPSE",
+              "name": "地影供电状态",
+              "type": "State",
+              "stereotype": "state",
+              "description": "电池组接管母线供电并维持关键负载。",
+              "owner": "电源分系统",
+              "attributes": {},
+              "relations": [
+                {"type": "transition", "target": "ST-SUNLIGHT"}
+              ],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "TST-001": {
+              "id": "TST-001",
+              "name": "连续供电硬件在环试验",
+              "type": "TestCase",
+              "stereotype": "testCase",
+              "description": "模拟日照/地影切换，记录母线电压和关键载荷供电状态。",
+              "owner": "验证组",
+              "attributes": {
+                "method": "HIL Test",
+                "criterion": "母线电压保持 28V±3%"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "TST-002": {
+              "id": "TST-002",
+              "name": "能量平衡仿真分析",
+              "type": "TestCase",
+              "stereotype": "testCase",
+              "description": "基于轨道周期、太阳阵输出和负载剖面进行能量平衡仿真。",
+              "owner": "验证组",
+              "attributes": {
+                "method": "Simulation",
+                "criterion": "SOC 不低于 30%"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "TST-003": {
+              "id": "TST-003",
+              "name": "配电故障注入试验",
+              "type": "TestCase",
+              "stereotype": "testCase",
+              "description": "注入非关键负载短路故障，验证配电单元隔离时间与供电保持能力。",
+              "owner": "验证组",
+              "attributes": {
+                "method": "Fault Injection",
+                "criterion": "隔离时间小于 100ms"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            },
+            "TST-004": {
+              "id": "TST-004",
+              "name": "遥测接口检查",
+              "type": "TestCase",
+              "stereotype": "testCase",
+              "description": "检查电源遥测帧字段、周期和接口协议一致性。",
+              "owner": "验证组",
+              "attributes": {
+                "method": "Inspection",
+                "criterion": "遥测周期 1s，字段完整"
+              },
+              "relations": [],
+              "created_at": "2026-04-25T00:00:00+00:00",
+              "updated_at": "2026-04-25T00:00:00+00:00"
+            }
+          }
+        }
+      },
+      "commits": [
+        {
+          "id": "C-0001-cd2d83",
+          "branch": "main",
+          "message": "初始化卫星电源系统示例模型",
+          "author": "system",
+          "created_at": "2026-04-25T00:00:00+00:00",
+          "model_hash": "cd2d8328c512",
+          "element_count": 20,
+          "snapshot": {}
+        }
+      ],
+      "tags": [
+        {
+          "id": "baseline-req-v1",
+          "name": "需求基线 V1",
+          "commit": "C-0001-cd2d83",
+          "description": "课程设计初始需求基线",
+          "created_at": "2026-04-25T00:00:00+00:00"
+        }
+      ]
+    }
+  }
+}
