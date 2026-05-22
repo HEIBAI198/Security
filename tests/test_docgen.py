@@ -66,6 +66,25 @@ class DocGenTest(unittest.TestCase):
                             "attributes": {"method": "Test", "criterion": "通过"},
                             "relations": [],
                         },
+                        "VP-REQ-REVIEW": {
+                            "id": "VP-REQ-REVIEW",
+                            "name": "Requirement Review Viewpoint",
+                            "type": "Viewpoint",
+                            "stereotype": "viewpoint",
+                            "description": "Review requirements, satisfaction, and verification.",
+                            "attributes": {
+                                "purpose": "Check requirement closure.",
+                                "allowed_types": ["Requirement", "Block", "TestCase"],
+                                "allowed_relations": ["satisfy", "verify"],
+                                "default_query": {
+                                    "types": ["Requirement"],
+                                    "text": "REQ-001",
+                                    "relation_depth": 1,
+                                    "relations": ["verify"],
+                                },
+                            },
+                            "relations": [],
+                        },
                         "VIEW-POWER": {
                             "id": "VIEW-POWER",
                             "name": "Power View",
@@ -298,6 +317,32 @@ class DocGenTest(unittest.TestCase):
 
         payload = view_payload(elements, "VIEW-EMPTY-QUERY")
         self.assertEqual(payload["element_ids"], ["VIEW-EMPTY-QUERY", "REQ-001"])
+
+    def test_viewpoint_default_query_is_resolved_by_view(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VIEW-VP-QUERY"] = {
+            "id": "VIEW-VP-QUERY",
+            "name": "Viewpoint Driven View",
+            "type": "View",
+            "attributes": {"viewpoint_id": "VP-REQ-REVIEW", "query": {"relation_depth": 1}},
+            "relations": [],
+        }
+
+        payload = view_payload(elements, "VIEW-VP-QUERY")
+        self.assertEqual(payload["viewpoint"]["id"], "VP-REQ-REVIEW")
+        self.assertIn("REQ-001", payload["element_ids"])
+        self.assertIn("TST-001", payload["element_ids"])
+        self.assertNotIn("BLK-001", payload["element_ids"])
+
+        diagram = build_view_diagram(elements, "VIEW-VP-QUERY")
+        self.assertTrue(
+            any(
+                edge["source"] == "VIEW-VP-QUERY"
+                and edge["target"] == "VP-REQ-REVIEW"
+                and edge["type"] == "conform"
+                for edge in diagram["edges"]
+            )
+        )
 
     def test_template_renders_view_token(self):
         elements = self.project["branches"]["main"]["elements"]

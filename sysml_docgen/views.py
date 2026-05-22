@@ -25,9 +25,11 @@ def view_payload(elements: dict[str, Element], view_id: str) -> dict[str, Any]:
     view = elements.get(view_id)
     if not view or view.get("type") != "View":
         raise KeyError(view_id)
+    viewpoint = resolve_viewpoint(elements, view)
     scoped = resolve_view_scope(elements, view)
     return {
         "view": copy.deepcopy(view),
+        "viewpoint": copy.deepcopy(viewpoint) if viewpoint else None,
         "elements": list(scoped.values()),
         "element_count": len(scoped),
         "element_ids": list(scoped),
@@ -38,16 +40,20 @@ def view_payload(elements: dict[str, Element], view_id: str) -> dict[str, Any]:
 def resolve_view_scope(elements: dict[str, Element], view: Element) -> dict[str, Element]:
     """Resolve elements selected by a View's manual bindings and query rules."""
     selected_ids: list[str] = [str(view.get("id", ""))]
+    viewpoint = resolve_viewpoint(elements, view)
+    if viewpoint:
+        selected_ids.append(str(viewpoint.get("id", "")))
     selected_ids.extend(_list_attribute(view, "included_elements"))
     selected_ids.extend(_list_attribute(view, "elements"))
     selected_ids.extend(_include_relation_targets(view))
 
-    query = view.get("attributes", {}).get("query", {})
+    query = _effective_query(view, viewpoint)
     if isinstance(query, dict):
         selected_ids.extend(_query_matches(elements, query))
 
     depth = _relation_depth(query)
-    selected_ids = _expand_by_depth(elements, selected_ids, depth)
+    relation_filter = _as_set(query.get("relations")) if isinstance(query, dict) else set()
+    selected_ids = _expand_by_depth(elements, selected_ids, depth, relation_filter)
 
     scoped: dict[str, Element] = {}
     for element_id in selected_ids:
@@ -79,7 +85,20 @@ def build_view_diagram(elements: dict[str, Element], view_id: str) -> dict[str, 
             }
         )
         existing_edges.add(edge_key)
+    viewpoint = payload.get("viewpoint")
+    if viewpoint:
+        edge_key = (view_id, viewpoint.get("id"), "conform")
+        if edge_key not in existing_edges:
+            diagram["edges"].append(
+                {
+                    "source": view_id,
+                    "target": viewpoint.get("id"),
+                    "type": "conform",
+                    "label": "Conform",
+                }
+            )
     diagram["view"] = payload["view"]
+    diagram["viewpoint"] = viewpoint
     diagram["label"] = payload["view"].get("name") or payload["view"].get("id", view_id)
     return diagram
 
@@ -88,10 +107,16 @@ def render_view_markdown(elements: dict[str, Element], view_id: str) -> str:
     """Render a View as a standalone Markdown section."""
     payload = view_payload(elements, view_id)
     view = payload["view"]
+    viewpoint_element = payload.get("viewpoint")
     scoped = {element["id"]: element for element in payload["elements"]}
     attrs = view.get("attributes", {})
     title = attrs.get("doc_section_title") or view.get("name") or view.get("id", view_id)
-    viewpoint = attrs.get("viewpoint") or "General"
+    viewpoint = (
+        (viewpoint_element or {}).get("name")
+        or attrs.get("viewpoint")
+        or attrs.get("viewpoint_id")
+        or "General"
+    )
 
     rows = [
         f"## {title}",
@@ -123,6 +148,43 @@ def view_scope_summary(elements: dict[str, Element]) -> dict[str, int]:
         element_type = str(element.get("type", "Unknown"))
         counts[element_type] = counts.get(element_type, 0) + 1
     return counts
+
+
+def resolve_viewpoint(elements: dict[str, Element], view: Element) -> Element | None:
+    """Resolve the Viewpoint element linked by attributes or conform relation."""
+    attrs = view.get("attributes", {})
+    viewpoint_id = str(attrs.get("viewpoint_id") or "").strip()
+    if not viewpoint_id:
+        viewpoint_id = str(attrs.get("viewpoint") or "").strip()
+    for relation in view.get("relations", []):
+        if relation.get("type") == "conform" and relation.get("target"):
+            viewpoint_id = str(relation.get("target", "")).strip()
+            break
+    viewpoint = elements.get(viewpoint_id)
+    if viewpoint and viewpoint.get("type") == "Viewpoint":
+        return viewpoint
+    return None
+
+
+def _effective_query(view: Element, viewpoint: Element | None) -> dict[str, Any]:
+    view_query = view.get("attributes", {}).get("query", {})
+    if not isinstance(view_query, dict):
+        view_query = {}
+    viewpoint_query = {}
+    if viewpoint:
+        raw = viewpoint.get("attributes", {}).get("default_query", {})
+        if isinstance(raw, dict):
+            viewpoint_query = raw
+    return _merge_query(viewpoint_query, view_query)
+
+
+def _merge_query(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        if value in (None, "", []):
+            continue
+        merged[key] = value
+    return merged
 
 
 def _list_attribute(view: Element, name: str) -> list[str]:
@@ -170,10 +232,16 @@ def _query_matches(elements: dict[str, Element], query: dict[str, Any]) -> list[
     return matches
 
 
-def _expand_by_depth(elements: dict[str, Element], selected_ids: list[str], depth: int) -> list[str]:
+def _expand_by_depth(
+    elements: dict[str, Element],
+    selected_ids: list[str],
+    depth: int,
+    relation_filter: set[str] | None = None,
+) -> list[str]:
     selected = [element_id for element_id in selected_ids if element_id]
     seen = set(selected)
     frontier = list(selected)
+    relation_filter = relation_filter or set()
     for _ in range(depth):
         next_frontier: list[str] = []
         for element_id in frontier:
@@ -181,6 +249,8 @@ def _expand_by_depth(elements: dict[str, Element], selected_ids: list[str], dept
             if not element:
                 continue
             for relation in element.get("relations", []):
+                if relation_filter and relation.get("type") not in relation_filter:
+                    continue
                 target = str(relation.get("target", "")).strip()
                 if target and target not in seen:
                     seen.add(target)
@@ -189,7 +259,11 @@ def _expand_by_depth(elements: dict[str, Element], selected_ids: list[str], dept
             for source_id, source in elements.items():
                 if source_id in seen:
                     continue
-                if any(relation.get("target") == element_id for relation in source.get("relations", [])):
+                if any(
+                    relation.get("target") == element_id
+                    and (not relation_filter or relation.get("type") in relation_filter)
+                    for relation in source.get("relations", [])
+                ):
                     seen.add(source_id)
                     selected.append(source_id)
                     next_frontier.append(source_id)

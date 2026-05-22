@@ -115,6 +115,7 @@ export type DiagramPayload = {
 
 export type ViewPayload = {
   view: SysmlElement
+  viewpoint?: SysmlElement | null
   elements: SysmlElement[]
   element_count: number
   element_ids: string[]
@@ -375,14 +376,31 @@ export function defaultElement(
   if (type === 'View') {
     Object.assign(attributes, {
       viewpoint: '',
+      viewpoint_id: '',
       included_elements: [],
       query: {
         types: [],
         owners: [],
         text: '',
         relation_depth: 1,
+        relations: [],
       },
       doc_section_title: '',
+    })
+  }
+  if (type === 'Viewpoint') {
+    Object.assign(attributes, {
+      purpose: '',
+      allowed_types: ['Requirement', 'Block', 'TestCase'],
+      allowed_relations: ['satisfy', 'verify'],
+      default_query: {
+        types: ['Requirement', 'Block', 'TestCase'],
+        owners: [],
+        text: '',
+        relation_depth: 1,
+        relations: ['satisfy', 'verify'],
+      },
+      document_template: 'summary-trace-validation',
     })
   }
   return {

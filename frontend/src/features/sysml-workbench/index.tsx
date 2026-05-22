@@ -213,6 +213,7 @@ const typeNames: Record<string, string> = {
   State: '状态',
   TestCase: '测试',
   View: '视图',
+  Viewpoint: '视角',
 }
 
 const relationNames: Record<string, string> = {
@@ -238,6 +239,7 @@ const displayTypeNames: Record<string, string> = {
   State: 'State',
   TestCase: 'Test Case',
   View: 'View',
+  Viewpoint: 'Viewpoint',
 }
 
 const displayDiagramNames: Record<string, string> = {
@@ -378,6 +380,7 @@ export function SysmlWorkbench() {
     elements.find((item) => item.id === selectedId) ||
     allElements.find((item) => item.id === selectedId)
   const viewElements = allElements.filter((item) => item.type === 'View')
+  const viewpointElements = allElements.filter((item) => item.type === 'Viewpoint')
   const elementCounts = useMemo(() => countBy(elements, (item) => item.type), [
     elements,
   ])
@@ -845,6 +848,25 @@ export function SysmlWorkbench() {
       ...currentForm,
       attributes: updated,
     }))
+  }
+
+  function updateViewAttributes(patch: Record<string, unknown>) {
+    const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+    const updated = { ...attributes, ...patch }
+    setAttributesText(JSON.stringify(updated, null, 2))
+    setForm((currentForm) => ({
+      ...currentForm,
+      attributes: updated,
+    }))
+  }
+
+  function updateViewQuery(patch: Record<string, unknown>) {
+    const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+    const currentQuery =
+      attributes.query && typeof attributes.query === 'object' && !Array.isArray(attributes.query)
+        ? (attributes.query as Record<string, unknown>)
+        : {}
+    updateViewAttributes({ query: { ...currentQuery, ...patch } })
   }
 
   async function commitBranch() {
@@ -1496,6 +1518,7 @@ export function SysmlWorkbench() {
                   relationsText={relationsText}
                   setRelationsText={setRelationsText}
                   views={views.length ? views : viewElements}
+                  viewpoints={viewpointElements}
                   validation={validation}
                   aiReview={aiModelReview}
                   onNew={() => startNewElement(types[0] || 'Requirement')}
@@ -1504,6 +1527,8 @@ export function SysmlWorkbench() {
                   onSave={saveElement}
                   onAddRelation={addRelation}
                   onToggleViewElement={toggleViewElement}
+                  onUpdateViewAttributes={updateViewAttributes}
+                  onUpdateViewQuery={updateViewQuery}
                   onAiReview={runAiModelReview}
                   busy={busy}
                 />
@@ -1649,6 +1674,7 @@ type ModelTabProps = {
   relationsText: string
   setRelationsText: (value: string) => void
   views: SysmlElement[]
+  viewpoints: SysmlElement[]
   validation: ValidationPayload | null
   aiReview: AiModelReview | null
   onNew: () => void
@@ -1657,6 +1683,8 @@ type ModelTabProps = {
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
   onToggleViewElement: (elementId: string, checked: boolean) => void
+  onUpdateViewAttributes: (patch: Record<string, unknown>) => void
+  onUpdateViewQuery: (patch: Record<string, unknown>) => void
   onAiReview: () => void
   busy: string
 }
@@ -2012,11 +2040,14 @@ function ModelTab(props: ModelTabProps) {
                 />
               </Field>
               {props.form.type === 'View' && (
-                <ViewBindingPanel
+                <ViewDefinitionPanel
                   elements={props.bindableElements}
+                  viewpoints={props.viewpoints}
                   viewId={props.form.id}
                   attributesText={props.attributesText}
                   onToggle={props.onToggleViewElement}
+                  onUpdateAttributes={props.onUpdateViewAttributes}
+                  onUpdateQuery={props.onUpdateViewQuery}
                 />
               )}
               <div className='grid gap-4 lg:grid-cols-2'>
@@ -2114,17 +2145,34 @@ function ValidationPanel({ validation }: { validation: ValidationPayload | null 
   )
 }
 
-function ViewBindingPanel({
+function ViewDefinitionPanel({
   elements,
+  viewpoints,
   viewId,
   attributesText,
   onToggle,
+  onUpdateAttributes,
+  onUpdateQuery,
 }: {
   elements: SysmlElement[]
+  viewpoints: SysmlElement[]
   viewId: string
   attributesText: string
   onToggle: (elementId: string, checked: boolean) => void
+  onUpdateAttributes: (patch: Record<string, unknown>) => void
+  onUpdateQuery: (patch: Record<string, unknown>) => void
 }) {
+  const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+  const query =
+    attributes.query && typeof attributes.query === 'object' && !Array.isArray(attributes.query)
+      ? (attributes.query as Record<string, unknown>)
+      : {}
+  const selectedTypes = stringList(query.types)
+  const selectedOwners = stringList(query.owners)
+  const selectedRelations = stringList(query.relations)
+  const ownerOptions = Array.from(
+    new Set(elements.map((element) => element.owner || '').filter(Boolean))
+  ).sort()
   const included = includedElementIds(attributesText)
   const candidates = elements.filter((element) => element.id !== viewId)
   const grouped = candidates.reduce<Record<string, SysmlElement[]>>((acc, element) => {
@@ -2139,15 +2187,116 @@ function ViewBindingPanel({
       <CardHeader className='pb-3'>
         <div className='flex items-center justify-between gap-3'>
           <div>
-            <CardTitle className='text-base'>Bind Elements To View</CardTitle>
+            <CardTitle className='text-base'>Viewpoint & View Query</CardTitle>
             <CardDescription>
-              Check elements to write them into attributes.included_elements.
+              Configure the Viewpoint, automatic query, and manually bound elements.
             </CardDescription>
           </div>
           <Badge variant='secondary'>{included.size} selected</Badge>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className='space-y-5'>
+        <div className='grid gap-4 lg:grid-cols-2'>
+          <Field label='Viewpoint'>
+            <Select
+              value={String(attributes.viewpoint_id || 'none')}
+              onValueChange={(value) => {
+                const viewpoint = viewpoints.find((item) => item.id === value)
+                onUpdateAttributes({
+                  viewpoint_id: value === 'none' ? '' : value,
+                  viewpoint: viewpoint?.name || '',
+                })
+              }}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue placeholder='Select a Viewpoint' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='none'>No Viewpoint</SelectItem>
+                {viewpoints.map((viewpoint) => (
+                  <SelectItem key={viewpoint.id} value={viewpoint.id}>
+                    {viewpoint.name || viewpoint.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label='Document section title'>
+            <Input
+              value={String(attributes.doc_section_title || '')}
+              onChange={(event) =>
+                onUpdateAttributes({ doc_section_title: event.target.value })
+              }
+              placeholder='例如：电源需求审查'
+            />
+          </Field>
+        </div>
+
+        <div className='rounded-md border bg-background p-4'>
+          <div className='mb-3'>
+            <div className='text-sm font-semibold'>View Query</div>
+            <p className='text-xs text-muted-foreground'>
+              Use this form to automatically collect model elements for this View.
+            </p>
+          </div>
+          <div className='grid gap-4 lg:grid-cols-2'>
+            <Field label='Element types'>
+              <MultiCheckGrid
+                options={elementsTypes(elements)}
+                selected={selectedTypes}
+                onChange={(next) => onUpdateQuery({ types: next })}
+              />
+            </Field>
+            <Field label='Relations to focus'>
+              <MultiCheckGrid
+                options={['satisfy', 'verify', 'refine', 'constrain', 'include', 'conform']}
+                selected={selectedRelations}
+                onChange={(next) => onUpdateQuery({ relations: next })}
+                label={labelRelation}
+              />
+            </Field>
+            <Field label='Owners'>
+              <MultiCheckGrid
+                options={ownerOptions}
+                selected={selectedOwners}
+                onChange={(next) => onUpdateQuery({ owners: next })}
+              />
+            </Field>
+            <Field label='Keyword'>
+              <Input
+                value={String(query.text || '')}
+                onChange={(event) => onUpdateQuery({ text: event.target.value })}
+                placeholder='搜索 ID、名称、描述、属性'
+              />
+            </Field>
+            <Field label='Relation depth'>
+              <Select
+                value={String(query.relation_depth ?? 0)}
+                onValueChange={(value) =>
+                  onUpdateQuery({ relation_depth: Number(value) })
+                }
+              >
+                <SelectTrigger className='w-full'>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='0'>0 - only matched/manual elements</SelectItem>
+                  <SelectItem value='1'>1 - include directly related elements</SelectItem>
+                  <SelectItem value='2'>2 - include two relation hops</SelectItem>
+                  <SelectItem value='3'>3 - include three relation hops</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+        </div>
+
+        <div>
+          <div className='mb-3'>
+            <div className='text-sm font-semibold'>Bind Elements To View</div>
+            <p className='text-xs text-muted-foreground'>
+              Check elements to write them into attributes.included_elements.
+            </p>
+          </div>
         {candidates.length ? (
           <ScrollArea className='h-[300px] rounded-md border bg-background'>
             <div className='space-y-4 p-3'>
@@ -2198,6 +2347,7 @@ function ViewBindingPanel({
             description='Create requirements, blocks, tests, or interfaces before binding a View.'
           />
         )}
+        </div>
       </CardContent>
     </Card>
   )
@@ -2250,6 +2400,51 @@ function AiModelReviewPanel({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function MultiCheckGrid({
+  options,
+  selected,
+  onChange,
+  label = (value: string) => value,
+}: {
+  options: string[]
+  selected: string[]
+  onChange: (next: string[]) => void
+  label?: (value: string) => string
+}) {
+  if (!options.length) {
+    return (
+      <div className='rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground'>
+        No options available
+      </div>
+    )
+  }
+  return (
+    <div className='grid max-h-[150px] gap-2 overflow-auto rounded-md border bg-muted/20 p-2 sm:grid-cols-2'>
+      {options.map((option) => {
+        const checked = selected.includes(option)
+        return (
+          <label
+            key={option}
+            className='flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-background'
+          >
+            <Checkbox
+              checked={checked}
+              onCheckedChange={(value) => {
+                const next =
+                  value === true
+                    ? Array.from(new Set([...selected, option]))
+                    : selected.filter((item) => item !== option)
+                onChange(next)
+              }}
+            />
+            <span className='truncate'>{label(option)}</span>
+          </label>
+        )
+      })}
+    </div>
   )
 }
 
@@ -2990,6 +3185,7 @@ function nodeAccentColor(type: string) {
     State: 'oklch(0.55 0.16 20)',
     TestCase: 'oklch(0.58 0.15 245)',
     View: 'oklch(0.55 0.1 95)',
+    Viewpoint: 'oklch(0.58 0.12 75)',
   }
   return colors[type] || 'var(--muted-foreground)'
 }
@@ -4320,6 +4516,23 @@ function includedElementIds(attributesText: string) {
     ? attributes.included_elements
     : []
   return new Set(values.map(String))
+}
+
+function stringList(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean)
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+  return []
+}
+
+function elementsTypes(elements: SysmlElement[]) {
+  return Array.from(new Set(elements.map((element) => element.type)))
+    .filter((type) => type !== 'View')
+    .sort()
 }
 
 function parseJson<T>(value: string, label: string, fallback: T): T {

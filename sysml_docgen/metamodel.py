@@ -19,6 +19,7 @@ TYPE_PREFIX = {
     "State": "ST",
     "TestCase": "TST",
     "View": "VIEW",
+    "Viewpoint": "VP",
 }
 
 
@@ -32,6 +33,7 @@ TYPE_LABELS = {
     "State": "状态",
     "TestCase": "测试用例",
     "View": "视图",
+    "Viewpoint": "视角",
 }
 
 
@@ -47,6 +49,7 @@ RELATION_LABELS = {
     "transition": "状态迁移",
     "constrain": "约束",
     "include": "Include",
+    "conform": "Conform",
 }
 
 
@@ -125,6 +128,14 @@ METAMODEL = {
         "relations": {
             "refine": ["Requirement", "Block", "Activity"],
             "include": list(TYPE_PREFIX),
+            "conform": ["Viewpoint"],
+        },
+    },
+    "Viewpoint": {
+        "stereotype": "viewpoint",
+        "required_attributes": [],
+        "relations": {
+            "refine": ["Requirement", "Block", "Activity", "View"],
         },
     },
 }
@@ -133,8 +144,8 @@ METAMODEL = {
 DIAGRAM_TYPES = {
     "requirements": {
         "label": "需求追踪图",
-        "types": ["Requirement", "Block", "Activity", "TestCase", "Constraint", "View"],
-        "relations": ["satisfy", "verify", "refine", "constrain", "include"],
+        "types": ["Requirement", "Block", "Activity", "TestCase", "Constraint", "View", "Viewpoint"],
+        "relations": ["satisfy", "verify", "refine", "constrain", "include", "conform"],
     },
     "structure": {
         "label": "块定义/接口图",
@@ -288,6 +299,7 @@ def layout_nodes(elements: dict[str, Element]) -> list[dict[str, Any]]:
         "Constraint",
         "TestCase",
         "View",
+        "Viewpoint",
     ]
     grouped: dict[str, list[Element]] = {}
     for element in elements.values():
