@@ -13,6 +13,7 @@ from ..docgen import build_traceability
 from ..metamodel import build_diagram, metamodel_payload
 from ..repository_contract import RepositoryStore
 from ..repository import project_summary
+from ..views import build_view_diagram, list_view_elements, view_payload
 
 
 def normalize_model_payload(model: dict[str, Any]) -> dict[str, Any]:
@@ -195,3 +196,21 @@ class MmsService:
     def traceability(self, project_id: str, branch: str) -> dict[str, Any]:
         elements = self.store.get_branch(project_id, branch).get("elements", {})
         return build_traceability(elements)
+
+    def list_views(self, project_id: str, branch: str) -> list[dict[str, Any]]:
+        elements = self.store.get_branch(project_id, branch).get("elements", {})
+        return list_view_elements(elements)
+
+    def view(self, project_id: str, branch: str, view_id: str) -> dict[str, Any]:
+        elements = self.store.get_branch(project_id, branch).get("elements", {})
+        try:
+            return view_payload(elements, view_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"View {view_id} does not exist") from exc
+
+    def view_diagram(self, project_id: str, branch: str, view_id: str) -> dict[str, Any]:
+        elements = self.store.get_branch(project_id, branch).get("elements", {})
+        try:
+            return build_view_diagram(elements, view_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"View {view_id} does not exist") from exc

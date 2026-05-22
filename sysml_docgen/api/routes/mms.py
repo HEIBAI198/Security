@@ -315,6 +315,38 @@ async def diagram(
     return {"diagram": service.diagram(project_id, branch, type)}
 
 
+@router.get("/api/projects/{project_id}/branches/{branch}/views", tags=["VE"])
+async def list_views(
+    project_id: str,
+    branch: str,
+    _: dict[str, str] = Depends(authorize_read),
+    service: MmsService = Depends(get_mms_service),
+) -> dict[str, Any]:
+    return {"views": service.list_views(project_id, branch)}
+
+
+@router.get("/api/projects/{project_id}/branches/{branch}/views/{view_id}", tags=["VE"])
+async def get_view(
+    project_id: str,
+    branch: str,
+    view_id: str,
+    _: dict[str, str] = Depends(authorize_read),
+    service: MmsService = Depends(get_mms_service),
+) -> dict[str, Any]:
+    return service.view(project_id, branch, view_id)
+
+
+@router.get("/api/projects/{project_id}/branches/{branch}/views/{view_id}/diagram", tags=["VE"])
+async def view_diagram(
+    project_id: str,
+    branch: str,
+    view_id: str,
+    _: dict[str, str] = Depends(authorize_read),
+    service: MmsService = Depends(get_mms_service),
+) -> dict[str, Any]:
+    return {"diagram": service.view_diagram(project_id, branch, view_id)}
+
+
 @router.get("/api/projects/{project_id}/branches/{branch}/traceability", tags=["VE"])
 async def traceability(
     project_id: str,

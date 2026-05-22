@@ -484,6 +484,13 @@ def render_template(template: str, elements: dict[str, Element]) -> str:
             return render_model_summary_markdown(elements)
         if token_type == "validation":
             return render_validation_markdown(elements)
+        if token_type == "view":
+            from .views import render_view_markdown
+
+            try:
+                return render_view_markdown(elements, expression)
+            except KeyError:
+                return f"> View `{expression}` was not found."
         return match.group(0)
 
     return TOKEN_RE.sub(replace, template)

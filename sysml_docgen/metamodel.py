@@ -46,6 +46,7 @@ RELATION_LABELS = {
     "flow": "活动流",
     "transition": "状态迁移",
     "constrain": "约束",
+    "include": "Include",
 }
 
 
@@ -123,6 +124,7 @@ METAMODEL = {
         "required_attributes": [],
         "relations": {
             "refine": ["Requirement", "Block", "Activity"],
+            "include": list(TYPE_PREFIX),
         },
     },
 }
@@ -131,8 +133,8 @@ METAMODEL = {
 DIAGRAM_TYPES = {
     "requirements": {
         "label": "需求追踪图",
-        "types": ["Requirement", "Block", "Activity", "TestCase", "Constraint"],
-        "relations": ["satisfy", "verify", "refine", "constrain"],
+        "types": ["Requirement", "Block", "Activity", "TestCase", "Constraint", "View"],
+        "relations": ["satisfy", "verify", "refine", "constrain", "include"],
     },
     "structure": {
         "label": "块定义/接口图",
@@ -143,6 +145,11 @@ DIAGRAM_TYPES = {
         "label": "活动/状态图",
         "types": ["Activity", "State", "Block"],
         "relations": ["flow", "transition", "allocate"],
+    },
+    "views": {
+        "label": "View-Focused Graph",
+        "types": list(TYPE_PREFIX),
+        "relations": list(RELATION_LABELS),
     },
     "all": {
         "label": "全模型关系图",

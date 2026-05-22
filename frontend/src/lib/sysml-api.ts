@@ -110,6 +110,15 @@ export type DiagramPayload = {
   label: string
   nodes: DiagramNode[]
   edges: DiagramEdge[]
+  view?: SysmlElement
+}
+
+export type ViewPayload = {
+  view: SysmlElement
+  elements: SysmlElement[]
+  element_count: number
+  element_ids: string[]
+  summary: Record<string, number>
 }
 
 export type TraceRef = {
@@ -325,6 +334,19 @@ export function defaultElement(
   const attributes = Object.fromEntries(
     (modelType?.required_attributes || []).map((key) => [key, ''])
   )
+  if (type === 'View') {
+    Object.assign(attributes, {
+      viewpoint: '',
+      included_elements: [],
+      query: {
+        types: [],
+        owners: [],
+        text: '',
+        relation_depth: 1,
+      },
+      doc_section_title: '',
+    })
+  }
   return {
     id: '',
     type,

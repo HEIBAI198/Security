@@ -89,7 +89,40 @@ class FastApiAppTest(unittest.TestCase):
         self.assertIn("/api/mdk/import-jobs", paths)
         self.assertIn("/api/mdk/import-jobs/{job_id}", paths)
         self.assertIn("/api/mdk/import-jobs/{job_id}/apply", paths)
+        self.assertIn("/api/projects/{project_id}/branches/{branch}/views", paths)
+        self.assertIn("/api/projects/{project_id}/branches/{branch}/views/{view_id}", paths)
+        self.assertIn("/api/projects/{project_id}/branches/{branch}/views/{view_id}/diagram", paths)
         self.assertIn("/api/docgen/pdf", paths)
+
+    def test_view_routes_resolve_scoped_elements_and_diagram(self):
+        created = self.client.post(
+            "/api/projects/satellite-power/branches/main/elements",
+            json={
+                "id": "VIEW-API-001",
+                "name": "API View",
+                "type": "View",
+                "attributes": {
+                    "included_elements": ["REQ-001", "BLK-POWER"],
+                    "query": {"types": ["TestCase"], "text": "供电", "relation_depth": 0},
+                },
+                "relations": [],
+            },
+            headers={"X-User": "engineer", "X-Role": "author"},
+        )
+        self.assertEqual(created.status_code, 200)
+
+        views = self.client.get("/api/projects/satellite-power/branches/main/views")
+        self.assertEqual(views.status_code, 200)
+        self.assertTrue(any(view["id"] == "VIEW-API-001" for view in views.json()["views"]))
+
+        payload = self.client.get("/api/projects/satellite-power/branches/main/views/VIEW-API-001")
+        self.assertEqual(payload.status_code, 200)
+        self.assertIn("REQ-001", payload.json()["element_ids"])
+        self.assertIn("BLK-POWER", payload.json()["element_ids"])
+
+        diagram = self.client.get("/api/projects/satellite-power/branches/main/views/VIEW-API-001/diagram")
+        self.assertEqual(diagram.status_code, 200)
+        self.assertTrue(any(node["id"] == "VIEW-API-001" for node in diagram.json()["diagram"]["nodes"]))
 
     def test_mdk_adapters_route_exposes_capabilities(self):
         response = self.client.get("/api/mdk/adapters")

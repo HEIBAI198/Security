@@ -14,6 +14,7 @@ from sysml_docgen.docgen import (
 )
 from sysml_docgen.metamodel import build_diagram, validate_repository
 from sysml_docgen.store import diff_snapshots
+from sysml_docgen.views import build_view_diagram, render_view_markdown, view_payload
 from sysml_docgen.xmi import elements_to_xmi, parse_xmi_elements, parse_xmi_with_report
 
 
@@ -64,6 +65,19 @@ class DocGenTest(unittest.TestCase):
                             "description": "测试供电",
                             "attributes": {"method": "Test", "criterion": "通过"},
                             "relations": [],
+                        },
+                        "VIEW-POWER": {
+                            "id": "VIEW-POWER",
+                            "name": "Power View",
+                            "type": "View",
+                            "stereotype": "view",
+                            "description": "Scoped power system view",
+                            "attributes": {
+                                "viewpoint": "Power reviewer",
+                                "included_elements": ["REQ-001", "BLK-001", "TST-001"],
+                                "doc_section_title": "Power View Section",
+                            },
+                            "relations": [{"type": "include", "target": "IF-001"}],
                         },
                     },
                     "documents": [],
@@ -246,6 +260,50 @@ class DocGenTest(unittest.TestCase):
         diagram = build_diagram(elements, "requirements")
         self.assertGreaterEqual(len(diagram["nodes"]), 3)
         self.assertGreaterEqual(len(diagram["edges"]), 2)
+
+    def test_view_payload_diagram_and_markdown_use_view_scope(self):
+        elements = self.project["branches"]["main"]["elements"]
+        payload = view_payload(elements, "VIEW-POWER")
+        self.assertEqual(payload["element_count"], 5)
+        self.assertIn("IF-001", payload["element_ids"])
+
+        diagram = build_view_diagram(elements, "VIEW-POWER")
+        self.assertEqual(diagram["view"]["id"], "VIEW-POWER")
+        self.assertTrue(any(node["id"] == "VIEW-POWER" for node in diagram["nodes"]))
+        self.assertTrue(
+            any(
+                edge["source"] == "VIEW-POWER"
+                and edge["target"] == "REQ-001"
+                and edge["type"] == "include"
+                for edge in diagram["edges"]
+            )
+        )
+
+        markdown = render_view_markdown(elements, "VIEW-POWER")
+        self.assertIn("Power View Section", markdown)
+        self.assertIn("REQ-001", markdown)
+
+    def test_empty_view_query_does_not_match_whole_model(self):
+        elements = self.project["branches"]["main"]["elements"]
+        elements["VIEW-EMPTY-QUERY"] = {
+            "id": "VIEW-EMPTY-QUERY",
+            "name": "Empty Query View",
+            "type": "View",
+            "attributes": {
+                "included_elements": ["REQ-001"],
+                "query": {"types": [], "owners": [], "text": "", "relation_depth": 0},
+            },
+            "relations": [],
+        }
+
+        payload = view_payload(elements, "VIEW-EMPTY-QUERY")
+        self.assertEqual(payload["element_ids"], ["VIEW-EMPTY-QUERY", "REQ-001"])
+
+    def test_template_renders_view_token(self):
+        elements = self.project["branches"]["main"]["elements"]
+        result = render_template("# Demo\n\n{{view:VIEW-POWER}}", elements)
+        self.assertIn("Power View Section", result)
+        self.assertIn("BLK-001", result)
 
     def test_diff_snapshots_reports_added_and_modified(self):
         before = {"REQ-001": {"id": "REQ-001", "name": "A", "type": "Requirement"}}

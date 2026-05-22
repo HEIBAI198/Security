@@ -89,6 +89,7 @@ import {
   type Tag,
   type TraceabilityRow,
   type ValidationPayload,
+  type ViewPayload,
 } from '@/lib/sysml-api'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -227,6 +228,7 @@ const displayDiagramNames: Record<string, string> = {
   requirements: 'Requirements Trace',
   structure: 'Structure & Interface',
   behavior: 'Behavior & State',
+  views: 'View-Focused Graph',
   all: 'Full Model Graph',
 }
 
@@ -298,6 +300,7 @@ export function SysmlWorkbench() {
   const [branch, setBranch] = useState('main')
   const [metamodel, setMetamodel] = useState<Metamodel | null>(null)
   const [elements, setElements] = useState<SysmlElement[]>([])
+  const [allElements, setAllElements] = useState<SysmlElement[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [query, setQuery] = useState('')
@@ -309,6 +312,9 @@ export function SysmlWorkbench() {
   const [validation, setValidation] = useState<ValidationPayload | null>(null)
   const [diagramType, setDiagramType] = useState('requirements')
   const [diagram, setDiagram] = useState<DiagramPayload | null>(null)
+  const [views, setViews] = useState<SysmlElement[]>([])
+  const [selectedViewId, setSelectedViewId] = useState('all')
+  const [viewScope, setViewScope] = useState<ViewPayload | null>(null)
   const [diagramPositions, setDiagramPositions] = useState<
     Record<string, { x: number; y: number }>
   >({})
@@ -325,6 +331,7 @@ export function SysmlWorkbench() {
   const [mergeSource, setMergeSource] = useState('')
   const [forceMerge, setForceMerge] = useState(false)
   const [template, setTemplate] = useState(defaultTemplate)
+  const [docViewId, setDocViewId] = useState('all')
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [currentDocument, setCurrentDocument] = useState<DocumentRecord | null>(
     null
@@ -348,7 +355,10 @@ export function SysmlWorkbench() {
   const project = projects.find((item) => item.id === projectId)
   const types = Object.keys(metamodel?.types || {})
   const relationTypes = Object.keys(metamodel?.relation_labels || {})
-  const selectedElement = elements.find((item) => item.id === selectedId)
+  const selectedElement =
+    elements.find((item) => item.id === selectedId) ||
+    allElements.find((item) => item.id === selectedId)
+  const viewElements = allElements.filter((item) => item.type === 'View')
   const elementCounts = useMemo(() => countBy(elements, (item) => item.type), [
     elements,
   ])
@@ -380,6 +390,16 @@ export function SysmlWorkbench() {
   }, [projectId, branch, typeFilter, query])
 
   useEffect(() => {
+    if (!projectId || !branch) return
+    loadAllElements()
+  }, [projectId, branch])
+
+  useEffect(() => {
+    if (!projectId || !branch) return
+    loadViews()
+  }, [projectId, branch, allElements.length])
+
+  useEffect(() => {
     if (!selectedElement) return
     setForm(selectedElement)
     setAttributesText(JSON.stringify(selectedElement.attributes || {}, null, 2))
@@ -389,7 +409,7 @@ export function SysmlWorkbench() {
   useEffect(() => {
     if (!projectId || !branch) return
     loadDiagram()
-  }, [diagramType, projectId, branch])
+  }, [diagramType, projectId, branch, selectedViewId])
 
   async function bootstrap() {
     setLoading(true)
@@ -450,6 +470,19 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function loadAllElements() {
+    if (!projectId || !branch) return
+    try {
+      const payload = await api<{ elements: SysmlElement[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/elements`,
+        { identity, role }
+      )
+      setAllElements(payload.elements)
+    } catch (error) {
+      notifyError(error)
+    }
+  }
+
   async function loadValidation() {
     if (!projectId || !branch) return
     try {
@@ -463,14 +496,56 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function loadViews() {
+    if (!projectId || !branch) return
+    try {
+      const payload = await api<{ views: SysmlElement[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/views`,
+        { identity, role }
+      )
+      setViews(payload.views)
+      if (
+        selectedViewId !== 'all' &&
+        !payload.views.some((view) => view.id === selectedViewId)
+      ) {
+        setSelectedViewId('all')
+        setViewScope(null)
+      }
+      if (
+        docViewId !== 'all' &&
+        !payload.views.some((view) => view.id === docViewId)
+      ) {
+        setDocViewId('all')
+      }
+    } catch (error) {
+      notifyError(error)
+    }
+  }
+
   async function loadDiagram() {
     if (!projectId || !branch) return
     try {
+      if (selectedViewId !== 'all') {
+        const [diagramPayload, scopePayload] = await Promise.all([
+          api<{ diagram: DiagramPayload }>(
+            `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/views/${encodeURIComponent(selectedViewId)}/diagram`,
+            { identity, role }
+          ),
+          api<ViewPayload>(
+            `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/views/${encodeURIComponent(selectedViewId)}`,
+            { identity, role }
+          ),
+        ])
+        setDiagram(diagramPayload.diagram)
+        setViewScope(scopePayload)
+        return
+      }
       const payload = await api<{ diagram: DiagramPayload }>(
         `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/diagram?type=${diagramType}`,
         { identity, role }
       )
       setDiagram(payload.diagram)
+      setViewScope(null)
     } catch (error) {
       notifyError(error)
     }
@@ -661,7 +736,7 @@ export function SysmlWorkbench() {
       role,
     })
     setSelectedId(nextSelectedId ?? result.element.id)
-    await loadElements()
+    await Promise.all([loadElements(), loadAllElements()])
     if (successMessage) toast.success(successMessage)
   }
 
@@ -720,7 +795,7 @@ export function SysmlWorkbench() {
         { method: 'DELETE', identity, role }
       )
       setSelectedId('')
-      await loadElements()
+      await Promise.all([loadElements(), loadAllElements()])
       toast.success('模型元素已删除')
     } catch (error) {
       notifyError(error)
@@ -735,6 +810,22 @@ export function SysmlWorkbench() {
     const next = [...(parseJsonSafe<Relation[]>(relationsText, []) || [])]
     next.push({ type: relationTypes[0], target })
     setRelationsText(JSON.stringify(next, null, 2))
+  }
+
+  function toggleViewElement(elementId: string, checked: boolean) {
+    const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+    const current = Array.isArray(attributes.included_elements)
+      ? attributes.included_elements.map(String)
+      : []
+    const next = checked
+      ? Array.from(new Set([...current, elementId]))
+      : current.filter((item) => item !== elementId)
+    const updated = { ...attributes, included_elements: next }
+    setAttributesText(JSON.stringify(updated, null, 2))
+    setForm((currentForm) => ({
+      ...currentForm,
+      attributes: updated,
+    }))
   }
 
   async function commitBranch() {
@@ -815,7 +906,7 @@ export function SysmlWorkbench() {
       setBranch(newBranch.trim())
       setNewBranch('')
       await loadProjectBranches()
-      await loadElements()
+      await Promise.all([loadElements(), loadAllElements()])
       toast.success('分支已创建')
     } catch (error) {
       notifyError(error)
@@ -868,7 +959,7 @@ export function SysmlWorkbench() {
         }
       )
       await loadProjectBranches()
-      await loadElements()
+      await Promise.all([loadElements(), loadAllElements()])
       await loadVersionData()
       toast.success('回滚已完成')
     } catch (error) {
@@ -900,7 +991,7 @@ export function SysmlWorkbench() {
         return
       }
       await loadProjectBranches()
-      await loadElements()
+      await Promise.all([loadElements(), loadAllElements()])
       await loadVersionData()
       toast.success('分支合并完成')
     } catch (error) {
@@ -914,11 +1005,15 @@ export function SysmlWorkbench() {
     if (!projectId || !branch) return
     setBusy('generate-document')
     try {
+      const effectiveTemplate =
+        docViewId === 'all'
+          ? template
+          : `# View Document\n\n{{view:${docViewId}}}\n`
       const result = await api<{ document: DocumentRecord }>(
         `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/documents`,
         {
           method: 'POST',
-          body: JSON.stringify({ template, format: 'html' }),
+          body: JSON.stringify({ template: effectiveTemplate, format: 'html' }),
           identity,
           role,
         }
@@ -1039,7 +1134,7 @@ export function SysmlWorkbench() {
         }
       )
       setMdkImportJob(payload.job)
-      await loadElements()
+      await Promise.all([loadElements(), loadAllElements()])
       if (mdkCommit) await loadProjectBranches()
       toast.success(`已应用导入任务，导入 ${payload.result.imported} 个元素`)
     } catch (error) {
@@ -1275,6 +1370,7 @@ export function SysmlWorkbench() {
               <TabsContent value='model'>
                 <ModelTab
                   elements={elements}
+                  bindableElements={allElements}
                   selectedId={selectedId}
                   setSelectedId={setSelectedId}
                   typeFilter={typeFilter}
@@ -1289,11 +1385,14 @@ export function SysmlWorkbench() {
                   setAttributesText={setAttributesText}
                   relationsText={relationsText}
                   setRelationsText={setRelationsText}
+                  views={views.length ? views : viewElements}
                   validation={validation}
                   onNew={() => startNewElement(types[0] || 'Requirement')}
+                  onNewView={() => startNewElement('View')}
                   onDelete={deleteElement}
                   onSave={saveElement}
                   onAddRelation={addRelation}
+                  onToggleViewElement={toggleViewElement}
                   busy={busy}
                 />
               </TabsContent>
@@ -1303,8 +1402,12 @@ export function SysmlWorkbench() {
                   diagram={diagram}
                   diagramType={diagramType}
                   setDiagramType={setDiagramType}
+                  views={views.length ? views : viewElements}
+                  selectedViewId={selectedViewId}
+                  setSelectedViewId={setSelectedViewId}
+                  viewScope={viewScope}
                   metamodel={metamodel}
-                  elements={elements}
+                  elements={allElements.length ? allElements : elements}
                   selectedId={selectedId}
                   setSelectedId={setSelectedId}
                   onRefresh={loadDiagram}
@@ -1359,6 +1462,9 @@ export function SysmlWorkbench() {
                   template={template}
                   setTemplate={setTemplate}
                   elements={elements}
+                  views={views.length ? views : viewElements}
+                  docViewId={docViewId}
+                  setDocViewId={setDocViewId}
                   validation={validation}
                   documents={documents}
                   currentDocument={currentDocument}
@@ -1402,6 +1508,7 @@ export function SysmlWorkbench() {
 
 type ModelTabProps = {
   elements: SysmlElement[]
+  bindableElements: SysmlElement[]
   selectedId: string
   setSelectedId: (id: string) => void
   typeFilter: string
@@ -1419,11 +1526,14 @@ type ModelTabProps = {
   setAttributesText: (value: string) => void
   relationsText: string
   setRelationsText: (value: string) => void
+  views: SysmlElement[]
   validation: ValidationPayload | null
   onNew: () => void
+  onNewView: () => void
   onDelete: () => void
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
+  onToggleViewElement: (elementId: string, checked: boolean) => void
   busy: string
 }
 
@@ -1622,6 +1732,65 @@ function ModelTab(props: ModelTabProps) {
       <div className='space-y-4'>
         <Card>
           <CardHeader>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>Views</CardTitle>
+                <CardDescription>
+                  First-class model views for scoped Graph and Docs output.
+                </CardDescription>
+              </div>
+              <Button size='sm' variant='outline' onClick={props.onNewView}>
+                <Plus className='size-4' />
+                New View
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {props.views.length ? (
+              <div className='grid gap-2 md:grid-cols-2'>
+                {props.views.map((view) => {
+                  const attributes = view.attributes || {}
+                  const included = Array.isArray(attributes.included_elements)
+                    ? attributes.included_elements.length
+                    : 0
+                  return (
+                    <button
+                      key={view.id}
+                      type='button'
+                      onClick={() => props.setSelectedId(view.id)}
+                      className={cn(
+                        'rounded-md border p-3 text-left transition-colors hover:bg-muted/60',
+                        props.selectedId === view.id && 'border-primary bg-muted'
+                      )}
+                    >
+                      <div className='flex items-center justify-between gap-2'>
+                        <span className='font-mono text-sm font-semibold'>
+                          {view.id}
+                        </span>
+                        <Badge variant='secondary'>{included} linked</Badge>
+                      </div>
+                      <div className='mt-1 text-sm font-medium'>
+                        {view.name || view.id}
+                      </div>
+                      <p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>
+                        {String(attributes.viewpoint || 'General viewpoint')} /{' '}
+                        {view.description || 'No description'}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              <EmptyState
+                title='No Views yet'
+                description='Create a View to bind elements and drive scoped Graph/Docs output.'
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
             <div className='flex items-start justify-between gap-3'>
               <div>
                 <CardTitle>元素编辑器</CardTitle>
@@ -1702,6 +1871,14 @@ function ModelTab(props: ModelTabProps) {
                   }
                 />
               </Field>
+              {props.form.type === 'View' && (
+                <ViewBindingPanel
+                  elements={props.bindableElements}
+                  viewId={props.form.id}
+                  attributesText={props.attributesText}
+                  onToggle={props.onToggleViewElement}
+                />
+              )}
               <div className='grid gap-4 lg:grid-cols-2'>
                 <Field label='属性 JSON'>
                   <Textarea
@@ -1792,10 +1969,103 @@ function ValidationPanel({ validation }: { validation: ValidationPayload | null 
   )
 }
 
+function ViewBindingPanel({
+  elements,
+  viewId,
+  attributesText,
+  onToggle,
+}: {
+  elements: SysmlElement[]
+  viewId: string
+  attributesText: string
+  onToggle: (elementId: string, checked: boolean) => void
+}) {
+  const included = includedElementIds(attributesText)
+  const candidates = elements.filter((element) => element.id !== viewId)
+  const grouped = candidates.reduce<Record<string, SysmlElement[]>>((acc, element) => {
+    acc[element.type] = acc[element.type] || []
+    acc[element.type].push(element)
+    return acc
+  }, {})
+  const orderedTypes = Object.keys(grouped).sort()
+
+  return (
+    <Card className='border-dashed bg-muted/20'>
+      <CardHeader className='pb-3'>
+        <div className='flex items-center justify-between gap-3'>
+          <div>
+            <CardTitle className='text-base'>Bind Elements To View</CardTitle>
+            <CardDescription>
+              Check elements to write them into attributes.included_elements.
+            </CardDescription>
+          </div>
+          <Badge variant='secondary'>{included.size} selected</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {candidates.length ? (
+          <ScrollArea className='h-[300px] rounded-md border bg-background'>
+            <div className='space-y-4 p-3'>
+              {orderedTypes.map((type) => (
+                <div key={type} className='space-y-2'>
+                  <div className='flex items-center gap-2 text-xs font-semibold uppercase text-muted-foreground'>
+                    <span>{labelType(type)}</span>
+                    <Badge variant='outline'>{grouped[type].length}</Badge>
+                  </div>
+                  <div className='space-y-2'>
+                    {grouped[type]
+                      .sort((left, right) => left.id.localeCompare(right.id))
+                      .map((element) => {
+                        const checked = included.has(element.id)
+                        return (
+                          <label
+                            key={element.id}
+                            className='flex cursor-pointer items-start gap-3 rounded-md border p-3 hover:bg-muted/50'
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(value) =>
+                                onToggle(element.id, value === true)
+                              }
+                            />
+                            <span className='min-w-0 flex-1'>
+                              <span className='block font-mono text-xs font-semibold'>
+                                {element.id}
+                              </span>
+                              <span className='block truncate text-sm'>
+                                {element.name || element.id}
+                              </span>
+                              <span className='line-clamp-1 text-xs text-muted-foreground'>
+                                {element.description || element.owner || 'No description'}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        ) : (
+          <EmptyState
+            title='No bindable elements'
+            description='Create requirements, blocks, tests, or interfaces before binding a View.'
+          />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 type DiagramTabProps = {
   diagram: DiagramPayload | null
   diagramType: string
   setDiagramType: (type: string) => void
+  views: SysmlElement[]
+  selectedViewId: string
+  setSelectedViewId: (viewId: string) => void
+  viewScope: ViewPayload | null
   metamodel: Metamodel | null
   elements: SysmlElement[]
   selectedId: string
@@ -1822,6 +2092,24 @@ function DiagramTab(props: DiagramTabProps) {
           <CardDescription>按不同 SysML 视角查看关系网络</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
+          <Field label='View scope'>
+            <Select
+              value={props.selectedViewId}
+              onValueChange={props.setSelectedViewId}
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>All model elements</SelectItem>
+                {props.views.map((view) => (
+                  <SelectItem key={view.id} value={view.id}>
+                    {view.name || view.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
           <Field label='图谱类型'>
             <Select value={props.diagramType} onValueChange={props.setDiagramType}>
               <SelectTrigger className='w-full'>
@@ -1836,6 +2124,17 @@ function DiagramTab(props: DiagramTabProps) {
               </SelectContent>
             </Select>
           </Field>
+          {props.viewScope && (
+            <div className='rounded-md border bg-muted/30 p-3 text-sm'>
+              <div className='font-medium'>{props.viewScope.view.name}</div>
+              <p className='mt-1 text-xs text-muted-foreground'>
+                {props.viewScope.element_count} elements in this View /{' '}
+                {Object.entries(props.viewScope.summary)
+                  .map(([type, count]) => `${type}: ${count}`)
+                  .join(', ') || 'No scoped elements'}
+              </p>
+            </div>
+          )}
           <Button variant='outline' onClick={props.onRefresh}>
             <RefreshCw className='size-4' />
             刷新图谱
@@ -1870,7 +2169,9 @@ function DiagramTab(props: DiagramTabProps) {
           <div className='flex items-center justify-between gap-3'>
             <div>
               <CardTitle>
-                {displayDiagramNames[props.diagramType] || 'Model Graph'}
+                {props.viewScope
+                  ? `View Graph: ${props.viewScope.view.name || props.viewScope.view.id}`
+                  : displayDiagramNames[props.diagramType] || 'Model Graph'}
               </CardTitle>
               <CardDescription>
                 {props.diagram?.nodes.length || 0} 节点 / {props.diagram?.edges.length || 0} 关系
@@ -2939,6 +3240,9 @@ type DocgenTabProps = {
   template: string
   setTemplate: (value: string) => void
   elements: SysmlElement[]
+  views: SysmlElement[]
+  docViewId: string
+  setDocViewId: (value: string) => void
   validation: ValidationPayload | null
   documents: DocumentRecord[]
   currentDocument: DocumentRecord | null
@@ -2969,6 +3273,21 @@ function DocgenTab(props: DocgenTabProps) {
           </div>
         </CardHeader>
         <CardContent className='space-y-4'>
+          <Field label='Document scope'>
+            <Select value={props.docViewId} onValueChange={props.setDocViewId}>
+              <SelectTrigger className='w-full'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>Full model document</SelectItem>
+                {props.views.map((view) => (
+                  <SelectItem key={view.id} value={view.id}>
+                    {view.name || view.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
           <Suspense
             fallback={
               <div className='flex h-[420px] items-center justify-center rounded-md border bg-muted/30 text-sm text-muted-foreground'>
@@ -3622,6 +3941,14 @@ function countBy<T>(items: T[], getKey: (item: T) => string) {
     acc[key] = (acc[key] || 0) + 1
     return acc
   }, {})
+}
+
+function includedElementIds(attributesText: string) {
+  const attributes = parseJsonSafe<Record<string, unknown>>(attributesText, {})
+  const values = Array.isArray(attributes.included_elements)
+    ? attributes.included_elements
+    : []
+  return new Set(values.map(String))
 }
 
 function parseJson<T>(value: string, label: string, fallback: T): T {
