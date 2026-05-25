@@ -71,11 +71,14 @@ import {
 import { toast } from 'sonner'
 import {
   api,
+  type AiClosureSuggestionResponse,
+  type AiDocumentQualityReview,
   type AiDocgenDraft,
   type AiDocgenMode,
   type AiChatMessage,
   type AiChatResponse,
   type AiModelReview,
+  type AiVersionImpact,
   defaultElement,
   loadIdentity,
   login,
@@ -440,6 +443,12 @@ export function SysmlWorkbench() {
     null
   )
   const [aiModelReview, setAiModelReview] = useState<AiModelReview | null>(null)
+  const [aiClosureSuggestions, setAiClosureSuggestions] =
+    useState<AiClosureSuggestionResponse | null>(null)
+  const [aiVersionImpact, setAiVersionImpact] =
+    useState<AiVersionImpact | null>(null)
+  const [aiDocumentReview, setAiDocumentReview] =
+    useState<AiDocumentQualityReview | null>(null)
   const [mdkAdapters, setMdkAdapters] = useState<MdkAdapter[]>([])
   const [mdkTool, setMdkTool] = useState('json')
   const [mdkFilename, setMdkFilename] = useState('model.json')
@@ -1104,6 +1113,29 @@ export function SysmlWorkbench() {
         { identity, role }
       )
       setDiff(payload)
+      setAiVersionImpact(null)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function runAiVersionImpact() {
+    if (!projectId || !branch) return
+    setBusy('ai-version-impact')
+    try {
+      const result = await api<AiVersionImpact>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/version/ai-impact`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ from: diffFrom, to: diffTo }),
+          identity,
+          role,
+        }
+      )
+      setAiVersionImpact(result)
+      toast.success('AI change impact analysis completed')
     } catch (error) {
       notifyError(error)
     } finally {
@@ -1237,6 +1269,7 @@ export function SysmlWorkbench() {
         }
       )
       setCurrentDocument(result.document)
+      setAiDocumentReview(null)
       await loadDocuments()
       toast.success('文档已生成')
     } catch (error) {
@@ -1290,6 +1323,28 @@ export function SysmlWorkbench() {
     }
   }
 
+  async function runAiClosureSuggestions() {
+    if (!projectId || !branch) return
+    setBusy('ai-closure-suggestions')
+    try {
+      const result = await api<AiClosureSuggestionResponse>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/ve/ai-closure-suggestions`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ selected_id: selectedId }),
+          identity,
+          role,
+        }
+      )
+      setAiClosureSuggestions(result)
+      toast.success('AI closure suggestions generated')
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function openDocument(documentId: string) {
     if (!projectId || !branch) return
     setBusy(`document-${documentId}`)
@@ -1299,6 +1354,32 @@ export function SysmlWorkbench() {
         { identity, role }
       )
       setCurrentDocument(payload.document)
+      setAiDocumentReview(null)
+    } catch (error) {
+      notifyError(error)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  async function runAiDocumentReview() {
+    if (!projectId || !branch || !currentDocument) {
+      toast.error('请先生成或打开一个文档')
+      return
+    }
+    setBusy('ai-document-review')
+    try {
+      const result = await api<AiDocumentQualityReview>(
+        `/api/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branch)}/documents/${encodeURIComponent(currentDocument.id)}/ai-review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ document_id: currentDocument.id }),
+          identity,
+          role,
+        }
+      )
+      setAiDocumentReview(result)
+      toast.success('AI document quality score completed')
     } catch (error) {
       notifyError(error)
     } finally {
@@ -1332,7 +1413,11 @@ export function SysmlWorkbench() {
       )
       setAssistantMessages([
         ...nextMessages,
-        { role: 'assistant', content: result.answer },
+        {
+          role: 'assistant',
+          content: result.answer,
+          retrieval: result.retrieval,
+        },
       ])
     } catch (error) {
       setAssistantMessages(assistantMessages)
@@ -1752,11 +1837,13 @@ export function SysmlWorkbench() {
                   setRelationsText={setRelationsText}
                   validation={validation}
                   aiReview={aiModelReview}
+                  aiClosureSuggestions={aiClosureSuggestions}
                   onNew={() => startNewElement(types[0] || 'Requirement')}
                   onDelete={deleteElement}
                   onSave={saveElement}
                   onAddRelation={addRelation}
                   onAiReview={runAiModelReview}
+                  onAiClosureSuggestions={runAiClosureSuggestions}
                   busy={busy}
                 />
               </TabsContent>
@@ -1820,6 +1907,7 @@ export function SysmlWorkbench() {
                   tags={tags}
                   auditEvents={auditEvents}
                   diff={diff}
+                  aiImpact={aiVersionImpact}
                   diffFrom={diffFrom}
                   setDiffFrom={setDiffFrom}
                   diffTo={diffTo}
@@ -1836,6 +1924,7 @@ export function SysmlWorkbench() {
                   setForceMerge={setForceMerge}
                   onRefresh={loadVersionData}
                   onDiff={runDiff}
+                  onAiImpact={runAiVersionImpact}
                   onRollback={rollback}
                   onCreateBranch={createBranch}
                   onCreateTag={createTag}
@@ -1855,9 +1944,11 @@ export function SysmlWorkbench() {
                   validation={validation}
                   documents={documents}
                   currentDocument={currentDocument}
+                  aiDocumentReview={aiDocumentReview}
                   onReset={() => setTemplate(defaultTemplate)}
                   onGenerate={generateDocument}
                   onAiDraft={generateAiDocgenDraft}
+                  onAiDocumentReview={runAiDocumentReview}
                   onOpen={openDocument}
                   onDownload={downloadCurrent}
                   busy={busy}
@@ -1924,11 +2015,13 @@ type ModelTabProps = {
   setRelationsText: (value: string) => void
   validation: ValidationPayload | null
   aiReview: AiModelReview | null
+  aiClosureSuggestions: AiClosureSuggestionResponse | null
   onNew: () => void
   onDelete: () => void
   onSave: (event: FormEvent) => void
   onAddRelation: () => void
   onAiReview: () => void
+  onAiClosureSuggestions: () => void
   busy: string
 }
 
@@ -2259,8 +2352,10 @@ function ModelTab(props: ModelTabProps) {
         <ValidationPanel validation={props.validation} />
         <AiModelReviewPanel
           review={props.aiReview}
+          closureSuggestions={props.aiClosureSuggestions}
           busy={props.busy}
           onReview={props.onAiReview}
+          onClosureSuggestions={props.onAiClosureSuggestions}
         />
       </div>
     </div>
@@ -3950,14 +4045,19 @@ function ViewpointDefinitionPanel({
 
 function AiModelReviewPanel({
   review,
+  closureSuggestions,
   busy,
   onReview,
+  onClosureSuggestions,
 }: {
   review: AiModelReview | null
+  closureSuggestions?: AiClosureSuggestionResponse | null
   busy: string
   onReview: () => void
+  onClosureSuggestions?: () => void
 }) {
   const loading = busy === 'ai-model-review'
+  const closureLoading = busy === 'ai-closure-suggestions'
 
   return (
     <Card className='sysml-card'>
@@ -3967,17 +4067,34 @@ function AiModelReviewPanel({
             <CardTitle>{'AI \u6a21\u578b\u5ba1\u67e5'}</CardTitle>
             <CardDescription>{'\u57fa\u4e8e\u5f53\u524d VE \u6a21\u578b\u7ed9\u51fa\u4e00\u81f4\u6027\u548c\u8ffd\u6eaf\u5efa\u8bae'}</CardDescription>
           </div>
-          <Button variant='secondary' size='sm' onClick={onReview} disabled={loading}>
-            {loading ? (
-              <Loader2 className='size-4 animate-spin' />
-            ) : (
-              <Sparkles className='size-4' />
-            )}
-            {'AI \u5ba1\u67e5'}
-          </Button>
+          <div className='flex flex-wrap gap-2'>
+            {onClosureSuggestions ? (
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={onClosureSuggestions}
+                disabled={closureLoading}
+              >
+                {closureLoading ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <Workflow className='size-4' />
+                )}
+                闭环建议
+              </Button>
+            ) : null}
+            <Button variant='secondary' size='sm' onClick={onReview} disabled={loading}>
+              {loading ? (
+                <Loader2 className='size-4 animate-spin' />
+              ) : (
+                <Sparkles className='size-4' />
+              )}
+              {'AI \u5ba1\u67e5'}
+            </Button>
+          </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className='space-y-4'>
         {loading ? (
           <div className='flex items-center gap-2 text-sm text-muted-foreground'>
             <Loader2 className='size-4 animate-spin' />
@@ -3993,6 +4110,45 @@ function AiModelReviewPanel({
             description={'\u70b9\u51fb AI \u5ba1\u67e5\u540e\uff0c\u7cfb\u7edf\u4f1a\u5206\u6790\u5f53\u524d\u6a21\u578b\u7684\u5b8c\u6574\u6027\u3001\u8ffd\u6eaf\u6027\u548c\u6587\u6863\u53ef\u751f\u6210\u6027'}
           />
         )}
+        {closureLoading ? (
+          <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+            <Loader2 className='size-4 animate-spin' />
+            正在生成需求闭环建议
+          </div>
+        ) : closureSuggestions ? (
+          <div className='rounded-md border bg-muted/20 p-4'>
+            <div className='mb-3 flex items-center justify-between gap-2'>
+              <div className='text-sm font-semibold'>AI 需求闭环建议</div>
+              <Badge variant='secondary'>{closureSuggestions.suggestions.length}</Badge>
+            </div>
+            {closureSuggestions.suggestions.length ? (
+              <div className='space-y-3'>
+                {closureSuggestions.suggestions.slice(0, 4).map((item, index) => (
+                  <div key={`${item.requirement_id}-${index}`} className='rounded-md border bg-background p-3'>
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <span className='font-mono text-sm font-semibold'>{item.requirement_id}</span>
+                      {item.status ? <Badge variant='outline'>{item.status}</Badge> : null}
+                    </div>
+                    <p className='mt-2 text-sm text-muted-foreground'>
+                      {item.rationale || item.requirement_name || '建议补齐验证、约束或关系闭环。'}
+                    </p>
+                    {item.missing?.length ? (
+                      <div className='mt-2 flex flex-wrap gap-1.5'>
+                        {item.missing.map((missing) => (
+                          <Badge key={missing} variant='secondary' className='rounded-sm'>
+                            {missing}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className='text-sm text-muted-foreground'>AI 没有返回可结构化的闭环建议。</p>
+            )}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )
@@ -4888,6 +5044,7 @@ type VersionTabProps = {
   tags: Tag[]
   auditEvents: AuditEvent[]
   diff: DiffPayload | null
+  aiImpact: AiVersionImpact | null
   diffFrom: string
   setDiffFrom: (value: string) => void
   diffTo: string
@@ -4904,6 +5061,7 @@ type VersionTabProps = {
   setForceMerge: (value: boolean) => void
   onRefresh: () => void
   onDiff: () => void
+  onAiImpact: () => void
   onRollback: () => void
   onCreateBranch: () => void
   onCreateTag: () => void
@@ -4972,6 +5130,18 @@ function VersionTab(props: VersionTabProps) {
             <Button onClick={props.onDiff} disabled={props.busy === 'diff'}>
               <GitCompare className='size-4' />
               运行 Diff
+            </Button>
+            <Button
+              variant='secondary'
+              onClick={props.onAiImpact}
+              disabled={props.busy === 'ai-version-impact'}
+            >
+              {props.busy === 'ai-version-impact' ? (
+                <Loader2 className='size-4 animate-spin' />
+              ) : (
+                <Sparkles className='size-4' />
+              )}
+              AI 影响分析
             </Button>
           </div>
           <Separator />
@@ -5112,6 +5282,36 @@ function VersionTab(props: VersionTabProps) {
           </CardContent>
         </Card>
 
+        <Card className='sysml-card'>
+          <CardHeader>
+            <div className='flex items-center justify-between gap-3'>
+              <div>
+                <CardTitle>AI 变更影响分析</CardTitle>
+                <CardDescription>
+                  {props.aiImpact
+                    ? `${props.aiImpact.from} → ${props.aiImpact.to}`
+                    : '基于版本差异分析追踪、文档和审查风险'}
+                </CardDescription>
+              </div>
+              <Badge variant='outline'>Impact</Badge>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {props.busy === 'ai-version-impact' ? (
+              <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+                <Loader2 className='size-4 animate-spin' />
+                正在分析变更影响
+              </div>
+            ) : props.aiImpact ? (
+              <div className='rounded-md border bg-muted/20 p-4'>
+                <MarkdownMessage content={props.aiImpact.analysis} />
+              </div>
+            ) : (
+              <EmptyState title='尚未运行 AI 影响分析' description='选择版本后点击 AI 影响分析' />
+            )}
+          </CardContent>
+        </Card>
+
       <div className='grid gap-4 xl:grid-cols-3'>
           <Card className='sysml-card'>
             <CardHeader>
@@ -5233,9 +5433,11 @@ type DocgenTabProps = {
   validation: ValidationPayload | null
   documents: DocumentRecord[]
   currentDocument: DocumentRecord | null
+  aiDocumentReview: AiDocumentQualityReview | null
   onReset: () => void
   onGenerate: () => void
   onAiDraft: (mode: AiDocgenMode) => void
+  onAiDocumentReview: () => void
   onOpen: (id: string) => void
   onDownload: (format: 'html' | 'markdown' | 'pdf') => void
   busy: string
@@ -5326,6 +5528,18 @@ function DocgenTab(props: DocgenTabProps) {
             <Button variant='outline' onClick={() => props.onDownload('pdf')}>
               PDF
             </Button>
+            <Button
+              variant='secondary'
+              onClick={props.onAiDocumentReview}
+              disabled={!props.currentDocument || props.busy === 'ai-document-review'}
+            >
+              {props.busy === 'ai-document-review' ? (
+                <Loader2 className='size-4 animate-spin' />
+              ) : (
+                <Sparkles className='size-4' />
+              )}
+              AI 质量审查
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -5353,6 +5567,34 @@ function DocgenTab(props: DocgenTabProps) {
             <div className='h-[720px]'>
               <EmptyState title={'\u7b49\u5f85\u751f\u6210'} description={'\u70b9\u51fb\u751f\u6210\u6309\u94ae\u9884\u89c8\u6587\u6863'} />
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className='sysml-card'>
+        <CardHeader>
+          <div className='flex items-center justify-between gap-3'>
+            <div>
+              <CardTitle>AI 文档质量审查</CardTitle>
+              <CardDescription>
+                {props.aiDocumentReview?.document_id || '生成或打开文档后可运行质量评分'}
+              </CardDescription>
+            </div>
+            <Badge variant='outline'>Quality</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {props.busy === 'ai-document-review' ? (
+            <div className='flex items-center gap-2 text-sm text-muted-foreground'>
+              <Loader2 className='size-4 animate-spin' />
+              正在审查文档质量
+            </div>
+          ) : props.aiDocumentReview ? (
+            <div className='rounded-md border bg-muted/20 p-4'>
+              <MarkdownMessage content={props.aiDocumentReview.review} />
+            </div>
+          ) : (
+            <EmptyState title='尚未运行文档质量审查' description='先生成文档，再点击 AI 质量审查' />
           )}
         </CardContent>
       </Card>
@@ -5456,7 +5698,7 @@ function AssistantTab(props: AssistantTabProps) {
             </div>
             <div>
               <CardTitle>SysML Assistant</CardTitle>
-              <CardDescription>{'\u57fa\u4e8e MMS \u6a21\u578b\u7684\u95ee\u7b54\u52a9\u624b'}</CardDescription>
+              <CardDescription>{'\u57fa\u4e8e RAG \u68c0\u7d22\u7684 MMS \u6a21\u578b\u95ee\u7b54\u52a9\u624b'}</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -5491,7 +5733,7 @@ function AssistantTab(props: AssistantTabProps) {
                 <CardDescription>{'\u8be2\u95ee\u9700\u6c42\u3001\u6a21\u5757\u3001\u8ffd\u8e2a\u5173\u7cfb\u6216\u6587\u6863\u751f\u6210\u6d41\u7a0b'}</CardDescription>
               </div>
             </div>
-            <Badge variant='secondary'>Assistant</Badge>
+            <Badge variant='secondary'>{'RAG \u68c0\u7d22\u589e\u5f3a'}</Badge>
           </div>
         </CardHeader>
         <CardContent className='grid h-[680px] grid-rows-[1fr_auto] gap-0 p-0'>
@@ -5580,9 +5822,57 @@ function AssistantMessageBubble({ message }: { message: AiChatMessage }) {
         {isUser ? (
           <div className='whitespace-pre-wrap'>{message.content}</div>
         ) : (
-          <MarkdownMessage content={message.content} compact />
+          <div className='space-y-3'>
+            <MarkdownMessage content={message.content} compact />
+            <AssistantRetrievalSources retrieval={message.retrieval} />
+          </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function AssistantRetrievalSources({
+  retrieval,
+}: {
+  retrieval?: AiChatMessage['retrieval']
+}) {
+  const references = retrieval?.references || []
+  if (!retrieval) return null
+
+  return (
+    <div className='rounded-md border bg-muted/20 p-3'>
+      <div className='mb-2 flex items-center justify-between gap-2'>
+        <div className='text-xs font-semibold uppercase text-muted-foreground'>
+          {'RAG \u68c0\u7d22\u4f9d\u636e'}
+        </div>
+        <Badge variant='outline'>{references.length}</Badge>
+      </div>
+      <div className='flex flex-wrap gap-2'>
+        {references.length ? (
+          references.slice(0, 10).map((reference, index) => (
+            <Badge
+              key={`${reference.kind}-${reference.id}-${index}`}
+              variant='secondary'
+              className='max-w-full rounded-sm'
+            >
+              <span className='truncate'>
+                {reference.kind}: {reference.label || reference.id}
+              </span>
+            </Badge>
+          ))
+        ) : (
+          <span className='text-xs text-muted-foreground'>
+            已启用 RAG，但当前问题没有命中具体模型元素。
+          </span>
+        )}
+      </div>
+      {retrieval?.query_tokens?.length ? (
+        <div className='mt-2 text-xs text-muted-foreground'>
+          {'tokens: '}
+          {retrieval.query_tokens.slice(0, 12).join(', ')}
+        </div>
+      ) : null}
     </div>
   )
 }

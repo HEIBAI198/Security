@@ -233,15 +233,65 @@ export type AiModelReview = {
   summary: AiDocgenDraft['summary']
 }
 
+export type AiClosureSuggestion = {
+  requirement_id: string
+  requirement_name?: string
+  status?: 'open' | 'partial'
+  missing?: string[]
+  rationale?: string
+  suggested_test_case?: SysmlElement | null
+  suggested_constraint?: SysmlElement | null
+  suggested_relations?: Relation[]
+}
+
+export type AiClosureSuggestionResponse = {
+  suggestions: AiClosureSuggestion[]
+  raw: string
+  model: string
+  summary: AiDocgenDraft['summary']
+}
+
+export type AiVersionImpact = {
+  analysis: string
+  model: string
+  from: string
+  to: string
+  summary: AiDocgenDraft['summary']
+}
+
+export type AiDocumentQualityReview = {
+  review: string
+  model: string
+  document_id: string
+  summary: AiDocgenDraft['summary']
+}
+
 export type AiChatMessage = {
   role: 'user' | 'assistant'
   content: string
+  retrieval?: AiChatRetrieval
 }
 
 export type AiChatResponse = {
   answer: string
   model: string
   summary: AiDocgenDraft['summary']
+  retrieval?: AiChatRetrieval
+}
+
+export type AiChatReference = {
+  kind: 'element' | 'traceability' | 'validation'
+  id: string
+  label: string
+  score: number
+}
+
+export type AiChatRetrieval = {
+  query_tokens?: string[]
+  references?: AiChatReference[]
+  elements?: Array<Record<string, unknown>>
+  traceability?: Array<Record<string, unknown>>
+  validation_issues?: Array<Record<string, unknown>>
 }
 
 export type MdkAdapter = {

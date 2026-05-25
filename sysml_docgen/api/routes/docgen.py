@@ -64,6 +64,17 @@ async def ai_model_review(
     return await service.review_model(project_id, branch, payload)
 
 
+@router.post("/api/projects/{project_id}/branches/{branch}/ve/ai-closure-suggestions", tags=["VE", "AI"])
+async def ai_requirement_closure_suggestions(
+    project_id: str,
+    branch: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_read),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    return await service.suggest_requirement_closure(project_id, branch, payload)
+
+
 @router.post("/api/projects/{project_id}/branches/{branch}/ai/chat", tags=["VE", "AI"])
 async def ai_model_chat(
     project_id: str,
@@ -73,6 +84,43 @@ async def ai_model_chat(
     service: AiDocgenService = Depends(get_ai_docgen_service),
 ) -> dict[str, Any]:
     return await service.chat_about_model(project_id, branch, payload)
+
+
+@router.post("/api/projects/{project_id}/branches/{branch}/version/ai-impact", tags=["Versions", "AI"])
+async def ai_version_impact(
+    project_id: str,
+    branch: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_read),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    return await service.analyze_version_impact(project_id, branch, payload)
+
+
+@router.post("/api/projects/{project_id}/branches/{branch}/docgen/ai-review", tags=["DocGen", "AI"])
+async def ai_document_review_from_payload(
+    project_id: str,
+    branch: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_read),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    document_id = str(payload.get("document_id") or "").strip()
+    if not document_id:
+        raise HTTPException(status_code=400, detail="document_id is required")
+    return await service.review_document_quality(project_id, branch, document_id, payload)
+
+
+@router.post("/api/projects/{project_id}/branches/{branch}/documents/{document_id}/ai-review", tags=["DocGen", "AI"])
+async def ai_document_review(
+    project_id: str,
+    branch: str,
+    document_id: str,
+    payload: dict[str, Any],
+    _: dict[str, str] = Depends(authorize_read),
+    service: AiDocgenService = Depends(get_ai_docgen_service),
+) -> dict[str, Any]:
+    return await service.review_document_quality(project_id, branch, document_id, payload)
 
 
 @router.get("/api/projects/{project_id}/branches/{branch}/documents/{document_id}", tags=["DocGen"])
