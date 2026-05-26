@@ -1,4 +1,4 @@
-export type SysmlRole = 'user'
+export type SysmlRole = 'admin' | 'author' | 'reader' | 'user'
 
 export type Identity = {
   username: string
@@ -439,7 +439,7 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
   const headers = new Headers(options.headers)
   headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
   headers.set('X-User', identity?.username || 'engineer')
-  headers.set('X-Role', identity?.role || options.role || 'user')
+  headers.set('X-Role', identity?.role || options.role || 'author')
 
   const token = identity?.token || window.localStorage.getItem(tokenStorageKey)
   if (token) headers.set('Authorization', `Bearer ${token}`)
