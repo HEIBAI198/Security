@@ -2,7 +2,7 @@ FROM node:24-bookworm-slim AS frontend-builder
 
 WORKDIR /frontend
 
-COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/package.json ./
 RUN npm install
 
 COPY frontend/ ./
