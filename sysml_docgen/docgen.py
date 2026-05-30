@@ -431,6 +431,10 @@ def _docx_run_fonts() -> str:
     return '<w:rFonts w:ascii="Segoe UI" w:hAnsi="Segoe UI" w:eastAsia="Microsoft YaHei"/><w:sz w:val="21"/>'
 
 
+# Keep the public import path stable while using the styled extracted renderer.
+from .document_engine.docx_builtin import markdown_to_docx_builtin as markdown_to_docx_builtin
+
+
 def elements_by_type(elements: dict[str, Element], element_type: str) -> list[Element]:
     return sorted(
         [copy.deepcopy(item) for item in elements.values() if item.get("type") == element_type],
@@ -2001,7 +2005,7 @@ def generate_document(
         "validation": validate_repository(elements),
     }
 
-    docx_bytes = markdown_to_docx_pandoc(rendered_markdown)
+    docx_bytes = markdown_to_docx_pandoc(rendered_markdown) if DOCX_REFERENCE else None
     if not docx_bytes:
         docx_bytes = markdown_to_docx_builtin(rendered_markdown)
     document["docx_base64"] = base64.b64encode(docx_bytes).decode("ascii")

@@ -237,6 +237,8 @@ export type DocumentRecord = {
   html?: string
   markdown?: string
   pdf_base64?: string
+  docx_base64?: string
+  docx_filename?: string
 }
 
 export type AiDocgenMode = 'full' | 'summary' | 'trace' | 'review'

@@ -223,10 +223,11 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
           name='username'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Username</FormLabel>
+              <FormLabel className='text-sm font-semibold'>Username</FormLabel>
               <FormControl>
                 <Input
                   autoComplete='username'
+                  className='h-9 rounded-md border-slate-200 bg-white px-3 text-sm shadow-xs'
                   placeholder='请输入用户名'
                   {...field}
                 />
@@ -240,10 +241,11 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
           name='password'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Password</FormLabel>
+              <FormLabel className='text-sm font-semibold'>Password</FormLabel>
               <FormControl>
                 <PasswordInput
                   autoComplete='current-password'
+                  className='[&_input]:h-9 [&_input]:rounded-md [&_input]:border-slate-200 [&_input]:bg-white [&_input]:px-3 [&_input]:text-sm [&_input]:shadow-xs'
                   placeholder='请输入密码'
                   {...field}
                 />
@@ -252,7 +254,7 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
             </FormItem>
           )}
         />
-        <div className='flex items-center justify-between gap-3'>
+        <div className='flex items-center justify-between gap-3 py-0.5'>
           <FormField
             control={form.control}
             name='rememberPassword'
@@ -266,7 +268,7 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
                     }
                   />
                 </FormControl>
-                <FormLabel className='cursor-pointer text-sm font-normal'>
+                <FormLabel className='cursor-pointer text-sm font-normal text-slate-700'>
                   记住密码
                 </FormLabel>
               </FormItem>
@@ -274,16 +276,24 @@ export function UserAuthForm({ className, ...props }: UserAuthFormProps) {
           />
           <Link
             to='/forgot-password'
-            className='shrink-0 text-sm font-medium text-muted-foreground hover:opacity-75'
+            className='shrink-0 text-sm font-medium text-slate-500 hover:text-slate-950'
           >
             忘记密码？
           </Link>
         </div>
-        <Button type='submit' className='mt-2' disabled={isLoading}>
+        <Button
+          type='submit'
+          className='mt-2 h-9 rounded-md bg-slate-950 text-sm shadow-sm hover:bg-slate-800'
+          disabled={isLoading}
+        >
           {isLoading ? <Loader2 className='animate-spin' /> : <LogIn />}
           登录
         </Button>
-        <Button variant='outline' className='w-full' asChild>
+        <Button
+          variant='outline'
+          className='h-9 w-full rounded-md border-slate-200 bg-white text-sm shadow-xs hover:bg-slate-50'
+          asChild
+        >
           <Link to='/sign-up'>注册</Link>
         </Button>
       </form>

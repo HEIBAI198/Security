@@ -1,4 +1,6 @@
+import io
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -175,6 +177,16 @@ class DocGenTest(unittest.TestCase):
         docx = markdown_to_docx_builtin("# 标题\n\n| 列 | 值 |\n| --- | --- |\n| 中文 | 正常 |")
         self.assertTrue(docx.startswith(b"PK"))
         self.assertIn(b"word/document.xml", docx)
+        with zipfile.ZipFile(io.BytesIO(docx)) as package:
+            document_xml = package.read("word/document.xml").decode("utf-8")
+            styles_xml = package.read("word/styles.xml").decode("utf-8")
+        self.assertIn('w:fill="0F766E"', document_xml)
+        self.assertIn('w:fill="F8FAFC"', document_xml)
+        self.assertIn('w:top w:val="single" w:sz="4" w:space="0" w:color="E5E7EB"', document_xml)
+        self.assertIn('w:eastAsia="\u5b8b\u4f53"', styles_xml)
+        self.assertIn('w:ascii="SimSun"', styles_xml)
+        self.assertNotIn("Microsoft YaHei", styles_xml)
+        self.assertIn('w:styleId="TableHeader"', styles_xml)
 
     def test_pdf_prefers_markdown_unicode_renderer_when_quarto_available(self):
         expected = b"%PDF-quarto"

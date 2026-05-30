@@ -96,6 +96,23 @@ class FastApiAppTest(unittest.TestCase):
         self.assertIn("application/pdf", pdf.headers["content-type"])
         self.assertTrue(pdf.content.startswith(b"%PDF-"))
 
+    def test_docgen_docx_route_returns_word_document(self):
+        created = self.client.post(
+            "/api/projects/satellite-power/branches/main/documents",
+            json={"format": "docx", "template": "# {{model:summary}}"},
+        )
+        self.assertEqual(created.status_code, 200)
+        payload = created.json()["document"]
+        self.assertIn("docx_base64", payload)
+        document_id = payload["id"]
+        docx = self.client.get(f"/api/projects/satellite-power/branches/main/documents/{document_id}?format=docx")
+        self.assertEqual(docx.status_code, 200)
+        self.assertIn(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            docx.headers["content-type"],
+        )
+        self.assertTrue(docx.content.startswith(b"PK"))
+
     def test_project_roles_block_reader_writes(self):
         self.skipTest("Role-based project access was replaced by per-user private samples.")
         response = self.client.post(
@@ -391,6 +408,7 @@ class FastApiAppTest(unittest.TestCase):
         self.assertIn("/api/projects/{project_id}/branches/{branch}/views", paths)
         self.assertIn("/api/projects/{project_id}/branches/{branch}/views/{view_id}", paths)
         self.assertIn("/api/projects/{project_id}/branches/{branch}/views/{view_id}/diagram", paths)
+        self.assertIn("/api/docgen/docx", paths)
         self.assertIn("/api/docgen/pdf", paths)
 
     def test_view_routes_resolve_scoped_elements_and_diagram(self):

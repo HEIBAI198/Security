@@ -545,6 +545,10 @@ export function SysmlWorkbench() {
   const [template, setTemplate] = useState(defaultTemplate)
   const [docViewId, setDocViewId] = useState('all')
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
+  const [documentsContext, setDocumentsContext] = useState<{
+    projectId: string
+    branch: string
+  } | null>(null)
   const [currentDocument, setCurrentDocument] = useState<DocumentRecord | null>(
     null
   )
@@ -595,6 +599,29 @@ export function SysmlWorkbench() {
       commits: projects.reduce((sum, item) => sum + (item.commits || 0), 0),
     }),
     [projects]
+  )
+  const currentBranchSummary = branches.find((item) => item.name === branch)
+  const documentsAreCurrent =
+    documentsContext?.projectId === projectId && documentsContext?.branch === branch
+  const workspaceTotals = useMemo(
+    () => ({
+      projects: project ? 1 : 0,
+      branches: branches.length,
+      elements: allElements.length,
+      views: allElements.filter((item) => item.type === 'View').length,
+      documents: documentsAreCurrent
+        ? documents.length
+        : currentBranchSummary?.documents || 0,
+      commits: project?.commits || 0,
+    }),
+    [
+      allElements,
+      branches.length,
+      currentBranchSummary?.documents,
+      documentsAreCurrent,
+      documents.length,
+      project,
+    ]
   )
   const headerDetail = headerDetails[activeTab] || headerDetails.overview
 
@@ -701,6 +728,7 @@ export function SysmlWorkbench() {
     setTemplate(defaultTemplate)
     setDocViewId('all')
     setDocuments([])
+    setDocumentsContext(null)
     setCurrentDocument(null)
     setAiClosureSuggestions(null)
     setAiVersionImpact(null)
@@ -743,6 +771,7 @@ export function SysmlWorkbench() {
     setRollbackCommit('')
     setMergeSource('')
     setDocuments([])
+    setDocumentsContext(null)
     setCurrentDocument(null)
     setValidation(null)
     startNewElement(types[0] || 'Requirement')
@@ -1214,6 +1243,7 @@ export function SysmlWorkbench() {
         { identity, role }
       )
       setDocuments(payload.documents)
+      setDocumentsContext({ projectId, branch })
     } catch (error) {
       notifyError(error)
     } finally {
@@ -1996,7 +2026,7 @@ export function SysmlWorkbench() {
     }
   }
 
-  function downloadCurrent(format: 'html' | 'markdown' | 'pdf') {
+  function downloadCurrent(format: 'html' | 'markdown' | 'pdf' | 'docx') {
     if (!currentDocument) {
       toast.error('请先生成或打开一个文档')
       return
@@ -2018,6 +2048,18 @@ export function SysmlWorkbench() {
         `${currentDocument.id}.pdf`,
         currentDocument.pdf_base64,
         'application/pdf'
+      )
+      return
+    }
+    if (format === 'docx') {
+      if (!currentDocument.docx_base64) {
+        toast.error('当前文档没有 Word 内容，请重新生成文档')
+        return
+      }
+      downloadBase64(
+        currentDocument.docx_filename || `${currentDocument.id}.docx`,
+        currentDocument.docx_base64,
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       )
       return
     }
@@ -2154,7 +2196,7 @@ export function SysmlWorkbench() {
                 <WorkspaceTab
                   project={project || null}
                   branch={branch}
-                  totals={projectTotals}
+                  totals={workspaceTotals}
                   validation={validation}
                   currentTab={activeTab}
                   onSelect={selectTab}
@@ -2695,29 +2737,37 @@ function IdentityDialog({
           </Badge>
         </Button>
       </DialogTrigger>
-      <DialogContent className='sm:max-w-[520px]'>
-        <DialogHeader>
-          <DialogTitle>Account & Access</DialogTitle>
-          <DialogDescription>
-            Identity controls model writes, commits, rollback, and branch merge permissions.
+      <DialogContent className='gap-5 overflow-hidden rounded-2xl border-slate-200 p-0 shadow-[0_24px_70px_rgba(15,23,42,0.18)] sm:max-w-[560px]'>
+        <DialogHeader className='border-b bg-slate-50/80 px-6 py-5 pr-12'>
+          <DialogTitle className='text-xl tracking-tight'>账号与权限</DialogTitle>
+          <DialogDescription className='leading-6'>
+            登录身份会影响模型写入、提交、回滚和分支合并权限。
           </DialogDescription>
         </DialogHeader>
-        <div className='rounded-lg border bg-muted/30 p-4'>
-          <div className='flex items-center gap-3'>
-            <div className='flex size-11 items-center justify-center rounded-lg bg-primary text-sm font-semibold text-primary-foreground'>
+        <div className='px-6'>
+          <div className='rounded-2xl border bg-white p-4 shadow-sm'>
+            <div className='flex items-center gap-4'>
+              <div className='flex size-14 shrink-0 items-center justify-center rounded-2xl bg-slate-950 text-base font-semibold text-white shadow-sm'>
               {(identity?.username || 'SD').slice(0, 2).toUpperCase()}
-            </div>
-            <div className='min-w-0'>
-              <div className='truncate font-medium'>{signedName}</div>
-              <div className='text-sm text-muted-foreground'>
-                {identity?.username || 'Guest'} / {signedRole}
+              </div>
+              <div className='min-w-0 flex-1'>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <div className='truncate text-lg font-semibold'>{signedName}</div>
+                  <Badge variant='secondary' className='rounded-md'>
+                    {signedRole}
+                  </Badge>
+                </div>
+                <div className='mt-1 text-sm text-muted-foreground'>
+                  {identity?.username || 'Guest'}
+                </div>
               </div>
             </div>
           </div>
         </div>
-        <div className='grid gap-4 sm:grid-cols-2'>
-          <Field label='Username'>
+        <div className='grid gap-4 px-6 sm:grid-cols-2'>
+          <Field label='用户名'>
             <Input
+              className='h-11 rounded-xl bg-slate-50/80 px-4 shadow-none'
               value={loginForm.username}
               onChange={(event) =>
                 setLoginForm((current) => ({
@@ -2727,9 +2777,10 @@ function IdentityDialog({
               }
             />
           </Field>
-          <Field label='Password'>
+          <Field label='密码'>
             <Input
               type='password'
+              className='h-11 rounded-xl bg-slate-50/80 px-4 shadow-none'
               value={loginForm.password}
               onChange={(event) =>
                 setLoginForm((current) => ({
@@ -2740,18 +2791,22 @@ function IdentityDialog({
             />
           </Field>
         </div>
-        <div className='flex flex-wrap justify-end gap-2'>
-          <Button variant='outline' onClick={onLogout}>
+        <div className='flex flex-wrap justify-end gap-2 border-t bg-slate-50/60 px-6 py-4'>
+          <Button variant='outline' className='h-11 rounded-xl' onClick={onLogout}>
             <LogOut className='size-4' />
-            Sign out
+            退出登录
           </Button>
-          <Button onClick={onLogin} disabled={busy === 'login'}>
+          <Button
+            className='h-11 rounded-xl bg-slate-950 hover:bg-slate-800'
+            onClick={onLogin}
+            disabled={busy === 'login'}
+          >
             {busy === 'login' ? (
               <Loader2 className='size-4 animate-spin' />
             ) : (
               <LogIn className='size-4' />
             )}
-            Sign in
+            登录
           </Button>
         </div>
       </DialogContent>
@@ -7300,7 +7355,7 @@ type DocgenTabProps = {
   onAiDraft: (mode: AiDocgenMode) => void
   onAiDocumentReview: () => void
   onOpen: (id: string) => void
-  onDownload: (format: 'html' | 'markdown' | 'pdf') => void
+  onDownload: (format: 'html' | 'markdown' | 'pdf' | 'docx') => void
   busy: string
 }
 
@@ -7422,7 +7477,7 @@ function DocgenTab(props: DocgenTabProps) {
               </Button>
             </div>
 
-            <div className='grid grid-cols-3 gap-2'>
+            <div className='grid grid-cols-4 gap-2'>
               <Button variant='outline' onClick={() => props.onDownload('markdown')}>
                 MD
               </Button>
@@ -7431,6 +7486,9 @@ function DocgenTab(props: DocgenTabProps) {
               </Button>
               <Button variant='outline' onClick={() => props.onDownload('pdf')}>
                 PDF
+              </Button>
+              <Button variant='outline' onClick={() => props.onDownload('docx')}>
+                Word
               </Button>
             </div>
 
