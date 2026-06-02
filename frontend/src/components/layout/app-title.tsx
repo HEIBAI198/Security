@@ -26,9 +26,9 @@ export function AppTitle() {
               className='grid flex-1 text-start text-sm leading-tight'
             >
               <span className='truncate font-bold'>
-                Document Automation System
+                SupplyGuard KG
               </span>
-              <span className='truncate text-xs'>SysML DocGen</span>
+              <span className='truncate text-xs'>LLM Security Platform</span>
             </Link>
             <ToggleSidebar />
           </div>

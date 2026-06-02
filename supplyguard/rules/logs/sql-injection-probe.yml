@@ -1,0 +1,36 @@
+id: runtime.sql-injection-probe
+title: SQL Injection Probe In Request Or Application Log
+description: Detects common SQL injection probes inspired by web attack rule sets such as OWASP CRS.
+source:
+  - web
+  - app
+logsource:
+  category: web
+kind: event
+severity: high
+level: high
+score: 86
+signal: SQL 注入探测
+confidence: 0.88
+fields:
+  - path
+  - message
+regex:
+  - "\\bunion(?:\\s|/\\*.*?\\*/|\\+)+select\\b"
+  - "\\bor\\s+1\\s*=\\s*1\\b"
+  - "\\binformation_schema\\b"
+  - "\\bextractvalue\\s*\\("
+  - "\\bload_file\\s*\\("
+critical_regex:
+  - "\\bsleep\\s*\\(\\s*\\d+"
+  - "\\bbenchmark\\s*\\("
+  - "\\bwaitfor\\s+delay\\b"
+detection:
+  selection:
+    request|contains:
+      - union select
+      - or 1=1
+      - information_schema
+      - sleep(
+      - benchmark(
+  condition: selection

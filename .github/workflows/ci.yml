@@ -1,31 +1,49 @@
-name: SysML DocGen CI
+name: SupplyGuard CI
 
 on:
   push:
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Compile
+
+      - name: Compile backend
         run: |
-          python -m py_compile server.py sysml_docgen/app.py sysml_docgen/auth.py sysml_docgen/config.py sysml_docgen/repository.py sysml_docgen/store.py sysml_docgen/docgen.py sysml_docgen/metamodel.py sysml_docgen/xmi.py tools/mdk_sync.py
-      - name: Unit tests
+          python -B -m py_compile server.py supplyguard/app.py supplyguard/artifact_trust.py supplyguard/routes/security.py supplyguard/knowledge_graph.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
         run: |
-          python -B -m unittest discover -s tests -v
+          npm ci
+          npm run build
 
   docker:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+
       - name: Build image
-        run: docker build --pull -t sysml-docgen:ci .
+        run: docker build --pull -t supplyguard-kg:ci .

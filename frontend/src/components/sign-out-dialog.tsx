@@ -13,16 +13,16 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
 
   const handleSignOut = () => {
     auth.reset()
-    navigate({ to: '/sign-in', replace: true })
+    navigate({ to: '/', replace: true })
   }
 
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title='Sign out'
-      desc='Are you sure you want to sign out? You will need to sign in again to access your account.'
-      confirmText='Sign out'
+      title='Reset session'
+      desc='This clears the local demo session and returns to the security dashboard.'
+      confirmText='Reset'
       destructive
       handleConfirm={handleSignOut}
       className='sm:max-w-sm'

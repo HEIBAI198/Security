@@ -54,7 +54,7 @@ const queryClient = new QueryClient({
         if (error.response?.status === 401) {
           toast.error('Session expired!')
           useAuthStore.getState().auth.reset()
-          router.navigate({ to: '/sign-in', replace: true })
+          router.navigate({ to: '/', replace: true })
         }
         if (error.response?.status === 500) {
           toast.error('Internal Server Error!')
@@ -79,7 +79,7 @@ const router = createRouter({
   defaultPreloadStaleTime: 0,
 })
 
-const startupSessionKey = 'sysml_app_session_started'
+const startupSessionKey = 'supplyguard_app_session_started'
 if (typeof window !== 'undefined') {
   const hasStartupSession = window.sessionStorage.getItem(startupSessionKey)
   if (!hasStartupSession) {

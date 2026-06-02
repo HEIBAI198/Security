@@ -3,22 +3,20 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sysml-docgen"
+name = "supplyguard-kg"
 version = "0.1.0"
-description = "SysML model-based document generation prototype with MMS, VE, MDK, and DocGen."
+description = "LLM and security knowledge graph platform for supply chain attack detection and application security audit."
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.111,<1.0",
+  "python-multipart>=0.0.9,<1.0",
   "uvicorn>=0.30,<1.0",
   "pydantic>=2.7,<3.0",
-  "pymongo>=4.6,<5.0",
   "httpx>=0.27,<1.0",
+  "PyYAML>=6.0,<7.0",
+  "bandit>=1.7,<2.0",
+  "checkov>=3.2,<4.0",
 ]
 
-[project.optional-dependencies]
-jupyter = ["ipython>=8", "notebook>=7"]
-pdf = ["fpdf2>=2.8"]
-all = ["ipython>=8", "notebook>=7", "fpdf2>=2.8"]
-
 [tool.setuptools.packages.find]
-include = ["sysml_docgen*", "mdk*"]
+include = ["supplyguard*"]

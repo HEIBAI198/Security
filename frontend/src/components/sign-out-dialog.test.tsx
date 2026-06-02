@@ -12,29 +12,29 @@ vi.mock('@/stores/auth-store', () => ({
   }),
 }))
 
-  vi.mock('@tanstack/react-router', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@tanstack/react-router')>()
-    return {
-      ...actual,
-      useNavigate: () => navigate,
-    }
-  })
+vi.mock('@tanstack/react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-router')>()
+  return {
+    ...actual,
+    useNavigate: () => navigate,
+  }
+})
 
 describe('SignOutDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('calls auth.reset and navigates to sign-in page', async () => {
+  it('calls auth.reset and returns to the dashboard', async () => {
     const { getByRole } = await render(
       <SignOutDialog open onOpenChange={vi.fn()} />
     )
 
-    await userEvent.click(getByRole('button', { name: /^Sign out$/i }))
+    await userEvent.click(getByRole('button', { name: /^Reset$/i }))
 
     expect(reset).toHaveBeenCalledOnce()
     expect(navigate).toHaveBeenCalledWith({
-      to: '/sign-in',
+      to: '/',
       replace: true,
     })
   })

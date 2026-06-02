@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
-import { saveIdentity } from '@/lib/sysml-api'
 
 const ACCESS_TOKEN = 'thisisjustarandomstring'
 
@@ -39,13 +38,11 @@ export const useAuthStore = create<AuthState>()((set) => {
       resetAccessToken: () =>
         set((state) => {
           removeCookie(ACCESS_TOKEN)
-          saveIdentity(null)
           return { ...state, auth: { ...state.auth, accessToken: '' } }
         }),
       reset: () =>
         set((state) => {
           removeCookie(ACCESS_TOKEN)
-          saveIdentity(null)
           return {
             ...state,
             auth: { ...state.auth, user: null, accessToken: '' },

@@ -10,16 +10,22 @@ RUN npm run build
 
 FROM python:3.12-slim
 
+ARG GITLEAKS_VERSION=8.30.1
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV SYSML_STORAGE=mongodb
-ENV MONGO_URL=mongodb://mongo:27017
-ENV SYSML_PDF_ENGINE=builtin-fallback
+ENV SUPPLYGUARD_FRONTEND_DIST=/app/frontend/dist
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl git \
+  && rm -rf /var/lib/apt/lists/* \
+  && pip install --no-cache-dir -r requirements.txt semgrep bandit checkov \
+  && curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz \
+    | tar -xz -C /usr/local/bin gitleaks \
+  && chmod +x /usr/local/bin/gitleaks
 
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
@@ -29,4 +35,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=3).read()"
 
-CMD ["python", "-m", "uvicorn", "sysml_docgen.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "supplyguard.app:app", "--host", "0.0.0.0", "--port", "8000"]

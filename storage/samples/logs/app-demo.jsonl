@@ -1,0 +1,2 @@
+{"timestamp":"2026-05-30T03:07:04Z","service":"app","message":"egress connect to 8.8.8.8:443 callback beacon","dst_ip":"8.8.8.8"}
+{"timestamp":"2026-05-30T03:07:08Z","service":"app","message":"checkout-api processed order 10081 status=200"}

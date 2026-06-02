@@ -1,0 +1,24 @@
+id: runtime.sensitive-export-path
+title: Sensitive Export Or Configuration Path Access
+description: Detects access to high-impact export and exposed configuration paths.
+source: web
+logsource:
+  category: web
+kind: event
+severity: critical
+level: critical
+score: 94
+signal: 敏感路径访问
+confidence: 0.94
+fields:
+  - path
+keywords:
+  - /admin/export
+  - /.env
+path_prefix: true
+detection:
+  selection:
+    path|startswith:
+      - /admin/export
+      - /.env
+  condition: selection

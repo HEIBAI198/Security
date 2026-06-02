@@ -1,0 +1,17 @@
+action_pinning:
+  official_actions_tag_ok: true
+  require_sha_for_third_party: true
+
+trusted_actions:
+  - actions/*
+  - github/*
+  - docker/*
+
+severity_overrides:
+  github-actions.unpinned-action-ref:
+    official: low
+    third_party: high
+
+external_scanners:
+  zizmor: true
+  actionlint: true

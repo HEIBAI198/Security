@@ -1,0 +1,1084 @@
+﻿export type SecuritySeverity = 'critical' | 'high' | 'medium' | 'low'
+
+export type SecurityModule = {
+  key: string
+  name: string
+  status: string
+  score: number
+  signals: number
+  description: string
+}
+
+export type SecurityFinding = {
+  id: string
+  title: string
+  module: string
+  severity: SecuritySeverity
+  score: number
+  asset: string
+  evidence: string
+  first_seen: string
+  owner: string
+  status: string
+}
+
+export type CodeAuditFinding = {
+  id: string
+  rule_id: string
+  title: string
+  category: string
+  severity: SecuritySeverity
+  score: number
+  risk_file: string
+  line: number
+  end_line?: number | null
+  evidence: string
+  recommendation: string
+  scanner: string
+  confidence: string
+  cwe?: string | null
+  fingerprint: string
+}
+
+export type CodeAuditScanner = {
+  name: string
+  available: boolean
+  command: string
+  version?: string | null
+  error?: string | null
+  state?: 'ok' | 'skipped' | 'missing' | 'fallback' | 'partial' | 'failed' | string
+}
+
+export type CodeAuditResult = {
+  scan_id: string | null
+  generated_at?: string
+  target_path?: string
+  target?: {
+    importId?: string
+    projectName?: string
+    sourceType?: string
+  }
+  summary: {
+    total: number
+    critical?: number
+    high?: number
+    medium?: number
+    low?: number
+    by_category?: Record<string, number>
+    target?: {
+      importId?: string
+      projectName?: string
+      sourceType?: string
+    }
+    tools?: Array<{
+      name: string
+      available: boolean
+      version?: string | null
+      error?: string | null
+      state?: string
+    }>
+    duration_seconds?: number
+    timeout_seconds?: number
+    target_key?: string
+    ignored?: number
+    ignored_total?: number
+    baseline_exists?: boolean
+    baseline_total?: number
+    baseline_created_at?: string | null
+    new?: number
+    fixed?: number
+    trend?: CodeAuditTrendPoint[]
+  }
+  findings: CodeAuditFinding[]
+  scanners?: CodeAuditScanner[]
+  errors?: string[]
+  report: string
+  sarif?: Record<string, unknown>
+}
+
+export type GitHubCodeScanningUploadPayload = {
+  owner: string
+  repo: string
+  ref: string
+  commit_sha?: string
+  checkout_uri?: string
+  token?: string
+}
+
+export type GitHubCodeScanningUploadResult = {
+  repository: string
+  ref: string
+  commit_sha: string
+  sarif_id?: string | null
+  url?: string | null
+  status: string
+  raw?: Record<string, unknown>
+}
+
+export type GitHubCodeScanningStatusPayload = {
+  owner: string
+  repo: string
+  sarif_id: string
+  token?: string
+}
+
+export type GitHubCodeScanningStatusResult = {
+  repository: string
+  sarif_id: string
+  status?: string | null
+  analyses_url?: string | null
+  errors: string[]
+  raw?: Record<string, unknown>
+}
+
+export type CodeAuditTrendPoint = {
+  scan_id: string
+  generated_at: string
+  target_key: string
+  projectName?: string
+  total: number
+  critical: number
+  high: number
+  medium: number
+  low: number
+  new: number
+  fixed: number
+  ignored: number
+  tools?: string[]
+}
+
+export type CodeAuditState = {
+  target_key?: string | null
+  ignored: Array<Record<string, unknown>>
+  baseline?: Record<string, unknown> | null
+  baselines?: Record<string, unknown>
+  trend: CodeAuditTrendPoint[]
+}
+
+export type SecurityDependency = {
+  name: string
+  version: string
+  ecosystem: string
+  scope?: string
+  source_file?: string
+  manifest_type?: string
+  license: string
+  purl?: string
+  risk: number
+  signals: string[]
+  requested_version?: string | null
+  version_source?: 'manifest' | 'lockfile' | 'environment' | 'sbom' | 'osv' | string
+  dependency_type?: 'direct' | 'transitive' | string
+  resolved?: boolean
+  vulnerabilities?: Array<{
+    id: string
+    source: string
+    severity: SecuritySeverity
+    affected: string
+    summary: string
+    confidence: string
+  }>
+  recommendation: string
+}
+
+export type DependencyAuditFinding = {
+  id: string
+  title: string
+  severity: SecuritySeverity
+  score: number
+  dependency: string
+  ecosystem: string
+  source_file: string
+  evidence: string
+  recommendation: string
+  fingerprint: string
+}
+
+export type DependencyAuditResult = {
+  scan_id: string | null
+  generated_at?: string
+  target_path?: string
+  target?: {
+    importId?: string
+    projectName?: string
+    sourceType?: string
+  }
+  summary: {
+    total_dependencies: number
+    manifest_count: number
+    finding_count: number
+    risk_score: number
+    risk_level: SecuritySeverity
+    critical: number
+    high: number
+    medium: number
+    low: number
+    ecosystems: Record<string, number>
+    version_sources?: Record<string, number>
+    unknown_licenses: number
+    vulnerable_dependencies: number
+    osv_matches?: number
+    suspicious_names: number
+    exact_versions?: number
+    transitive_dependencies?: number
+    lockfile_count?: number
+    tools?: DependencyAuditToolStatus[]
+    duration_seconds?: number
+  }
+  dependencies: SecurityDependency[]
+  findings: DependencyAuditFinding[]
+  sbom: Record<string, unknown>
+  report: string
+  warnings: string[]
+  tools?: DependencyAuditToolStatus[]
+}
+
+export type CICDAuditFinding = {
+  id: string
+  rule_id: string
+  title: string
+  severity: SecuritySeverity
+  score: number
+  workflow: string
+  job_id?: string | null
+  job_name?: string | null
+  step_index?: number | null
+  step_name?: string | null
+  line: number
+  evidence: string
+  reason: string
+  recommendation: string
+  fingerprint: string
+  scanner?: string
+  confidence?: string
+}
+
+export type CICDAuditResult = {
+  scan_id: string | null
+  generated_at?: string
+  target_path?: string
+  target?: {
+    importId?: string
+    projectName?: string
+    sourceType?: string
+  }
+  workflows: string[]
+  summary: {
+    workflow_count: number
+    job_count: number
+    total_steps: number
+    finding_count: number
+    risk_score: number
+    risk_level: SecuritySeverity
+    critical: number
+    high: number
+    medium: number
+    low: number
+    by_rule?: Record<string, number>
+    duration_seconds?: number
+    tools?: Array<{
+      name: string
+      available: boolean
+      version?: string | null
+      error?: string | null
+      state?: string
+    }>
+    ignored?: number
+    ignored_total?: number
+    baseline_exists?: boolean
+    baseline_total?: number
+    baseline_created_at?: string | null
+    new?: number
+    fixed?: number
+  }
+  findings: CICDAuditFinding[]
+  scanners?: CodeAuditScanner[]
+  sarif?: Record<string, unknown>
+  state?: CodeAuditState
+  report: string
+  warnings: string[]
+}
+
+export type ArtifactTrustCheckStatus = 'pass' | 'fail' | 'warn' | 'missing' | 'skipped' | string
+
+export type ArtifactTrustCheck = {
+  name: string
+  status: ArtifactTrustCheckStatus
+  evidence?: string
+  severity?: SecuritySeverity | string
+  score?: number
+}
+
+export type ArtifactTrustFinding = {
+  id: string
+  title: string
+  severity: SecuritySeverity
+  score: number
+  evidence: string
+  recommendation: string
+  check: string
+  fingerprint: string
+}
+
+export type ArtifactTrustResult = {
+  scan_id: string | null
+  generated_at?: string
+  artifact: string
+  artifact_path?: string
+  attestation_path?: string
+  digest: string
+  trustScore?: number
+  trust_score: number
+  level: string
+  checks: ArtifactTrustCheck[]
+  findings: ArtifactTrustFinding[]
+  provenance: {
+    subject_name?: string
+    subject_digest?: string
+    predicateType?: string
+    predicate_type?: string
+    builder_id?: string
+    build_type?: string
+    source_repo?: string
+    commit?: string
+    workflow?: string
+    ref?: string
+    runner_environment?: string
+    invocation_id?: string
+    created_at?: string
+    envelope_signature_count?: number
+    has_envelope?: boolean
+  }
+  policy: Record<string, unknown>
+  tools: CodeAuditScanner[]
+  graphEvidence?: {
+    nodes?: Array<Record<string, unknown>>
+    edges?: Array<Record<string, unknown>>
+  }
+  graph_evidence?: {
+    nodes?: Array<Record<string, unknown>>
+    edges?: Array<Record<string, unknown>>
+  }
+  summary: {
+    check_count: number
+    finding_count: number
+    trust_score: number
+    level: string
+    risk_score: number
+    risk_level: SecuritySeverity
+    passed: number
+    failed: number
+    warnings: number
+    missing: number
+    skipped: number
+    critical?: number
+    high?: number
+    medium?: number
+    low?: number
+    duration_seconds?: number
+  }
+  report: string
+  warnings: string[]
+}
+
+export type ArtifactTrustScanOptions = {
+  artifactPath?: string
+  attestationPath?: string
+  policyArtifact?: string
+  expectedRepo?: string
+  expectedCommit?: string
+  allowedBranches?: string[]
+  allowedWorkflows?: string[]
+  allowedBuilders?: string[]
+  requireSignature?: boolean
+  requireProvenance?: boolean
+  allowSelfHostedRunner?: boolean
+  maxAgeHours?: number
+}
+
+export type ArtifactTrustUploadOptions = Omit<ArtifactTrustScanOptions, 'artifactPath' | 'attestationPath'> & {
+  artifact: File
+  attestation: File
+}
+
+export type DependencyAuditToolStatus = {
+  name: string
+  available: boolean
+  command: string
+  version?: string | null
+  state: 'ok' | 'missing' | 'failed' | 'partial' | string
+  error?: string | null
+}
+
+export type SecurityPipelineStep = {
+  step: string
+  name: string
+  status: string
+  detail: string
+  actor: string
+  time: string
+}
+
+export type SecurityLogEvent = {
+  time: string
+  source: string
+  event: string
+  severity: SecuritySeverity
+  signal: string
+  confidence: number
+}
+
+export type LogAuditFinding = {
+  id: string
+  rule_id: string
+  title: string
+  severity: SecuritySeverity
+  score: number
+  time: string
+  source: string
+  event: string
+  signal: string
+  confidence: number
+  evidence: string
+  src_ip?: string | null
+  dst_ip?: string | null
+  user?: string | null
+  path?: string | null
+  count?: number | null
+  fingerprint: string
+}
+
+export type LogAuditResult = {
+  scan_id: string | null
+  generated_at?: string
+  files: Array<{
+    filename: string
+    source: string
+    size_bytes: number
+    total_lines: number
+    parsed_lines: number
+    skipped_lines: number
+  }>
+  summary: {
+    file_count: number
+    total_lines: number
+    total_events: number
+    parsed_events: number
+    skipped_lines: number
+    finding_count: number
+    risk_score: number
+    risk_level: SecuritySeverity
+    critical: number
+    high: number
+    medium: number
+    low: number
+    by_rule?: Record<string, number>
+    by_source?: Record<string, number>
+    rule_count?: number
+    duration_seconds?: number
+  }
+  events: Array<Record<string, unknown>>
+  findings: LogAuditFinding[]
+  report: string
+  warnings: string[]
+}
+
+export type RealtimeLogEvent = {
+  time: string
+  source: string
+  log_type?: string
+  filename?: string
+  line_number?: number
+  src_ip?: string | null
+  dst_ip?: string | null
+  user?: string | null
+  method?: string | null
+  path?: string | null
+  status?: number | null
+  message?: string
+  raw?: string
+}
+
+export type RealtimeLogTrendPoint = {
+  bucket: string
+  events: number
+  findings: number
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+export type RealtimeLogPayload = {
+  mode: 'realtime'
+  accepted?: number
+  storage?: {
+    events: string
+    findings: string
+    state: string
+  }
+  summary: {
+    event_count: number
+    stored_finding_count: number
+    finding_count: number
+    risk_score: number
+    risk_level: SecuritySeverity
+    critical: number
+    high: number
+    medium: number
+    low: number
+    by_source?: Record<string, number>
+    by_rule?: Record<string, number>
+  }
+  events: RealtimeLogEvent[]
+  findings: Array<LogAuditFinding & {
+    dedupe_key?: string
+    last_seen?: string
+    occurrences?: number
+    ignored?: boolean
+    baseline?: boolean
+  }>
+  trend: RealtimeLogTrendPoint[]
+  state: {
+    ignored_count: number
+    baseline?: {
+      created_at?: string
+      note?: string
+      finding_count?: number
+    } | null
+    runs: Array<Record<string, unknown>>
+  }
+  warnings: string[]
+}
+
+export type SecurityGraphNode = {
+  id: string
+  label: string
+  type: string
+  risk: string
+  description: string
+  score?: number
+  source?: string
+  source_model?: string
+  evidence_ids?: string[]
+  properties?: Record<string, unknown>
+  position?: {
+    x: number
+    y: number
+  }
+}
+
+export type SecurityGraphEdge = {
+  id: string
+  source: string
+  target: string
+  type?: string
+  label: string
+  confidence?: number
+  reason?: string
+  evidence_ids?: string[]
+  properties?: Record<string, unknown>
+}
+
+export type SecurityAttackPath = {
+  id: string
+  title: string
+  category: string
+  severity: SecuritySeverity
+  score: number
+  description: string
+  conclusion?: string
+  verdict?: string
+  confidence?: number
+  entry_node_id?: string
+  target_node_id?: string
+  node_ids?: string[]
+  edge_ids?: string[]
+  evidence_ids?: string[]
+  recommendation: string
+  path_steps?: Array<{
+    index?: number
+    source?: string
+    source_type?: string
+    target?: string
+    target_type?: string
+    relationship?: string
+    edge_type?: string
+    confidence?: number
+    why_abusable?: string
+    trust_basis?: string
+    model?: string
+    evidence_ids?: string[]
+  }>
+  evidence_summary?: Array<{
+    id?: string
+    kind?: string
+    title?: string
+    detail?: string
+    source?: string
+    source_model?: string
+    time?: string
+    confidence?: number
+  }>
+  trust_chain?: Array<{
+    model?: string
+    claim?: string
+    subject?: string
+    status?: string
+    basis?: string
+  }>
+  gaps?: string[]
+  choke_points?: Array<{
+    node_id?: string
+    label?: string
+    action?: string
+  }>
+  mappings?: Array<Record<string, unknown>>
+  references?: string[]
+}
+
+export type SecurityFactAsset = {
+  id: string
+  type: string
+  label: string
+  source: string
+  source_model: string
+  risk_score?: number
+  risk_level?: SecuritySeverity | string
+  locator?: Record<string, unknown>
+  properties?: Record<string, unknown>
+}
+
+export type SecurityFactEvidence = {
+  id: string
+  source: string
+  source_model: string
+  kind: string
+  title: string
+  detail: string
+  asset_id?: string
+  time?: string
+  locator?: Record<string, unknown>
+  confidence?: number
+  properties?: Record<string, unknown>
+}
+
+export type SecurityFactFinding = {
+  id: string
+  title: string
+  severity: SecuritySeverity
+  score: number
+  source: string
+  source_model: string
+  asset_ids: string[]
+  evidence_ids: string[]
+  fingerprint: string
+  recommendation: string
+  category?: string
+  first_seen?: string
+  status?: string
+  properties?: Record<string, unknown>
+}
+
+export type SecurityFacts = {
+  schema_version: string
+  generated_at: string
+  references: Array<{
+    name: string
+    url: string
+    used_for: string[]
+  }>
+  summary: {
+    asset_count: number
+    evidence_count: number
+    finding_count: number
+    risk_score: number
+    risk_level: SecuritySeverity
+    critical: number
+    high: number
+    medium: number
+    low: number
+    asset_types: Record<string, number>
+    sources: Record<string, number>
+    source_models: Record<string, number>
+  }
+  assets: SecurityFactAsset[]
+  evidence: SecurityFactEvidence[]
+  findings: SecurityFactFinding[]
+}
+
+export type SecurityAssistantPayload = {
+  default_question: string
+  answer: string
+  retrieval: string[]
+  next_actions: string[]
+}
+
+export type SecurityWorkspace = {
+  generated_at: string
+  workspace: {
+    name: string
+    repository: string
+    branch: string
+    commit: string
+    build: string
+    runtime: string
+    mode: string
+  }
+  summary: {
+    risk_score: number
+    risk_level: string
+    open_findings: number
+    critical_findings: number
+    repositories: number
+    dependencies: number
+    build_steps: number
+    log_events: number
+    attack_paths: number
+    mean_triage_minutes: number
+  }
+  modules: SecurityModule[]
+  trend: Array<{
+    day: string
+    code: number
+    dependency: number
+    build: number
+    runtime: number
+  }>
+  findings: SecurityFinding[]
+  dependencies: SecurityDependency[]
+  pipeline: SecurityPipelineStep[]
+  logs: SecurityLogEvent[]
+  graph?: {
+    schema_version?: string
+    generated_at?: string
+    references?: Array<{
+      name: string
+      url: string
+      used_for: string[]
+    }>
+    summary?: {
+      node_count: number
+      edge_count: number
+      attack_path_count: number
+      actionable_attack_path_count?: number
+      real_attack_path_count?: number
+      path_verdicts?: Record<string, number>
+      average_path_confidence?: number
+      risk_score: number
+      risk_level: SecuritySeverity
+      node_types: Record<string, number>
+      edge_types: Record<string, number>
+    }
+    nodes?: SecurityGraphNode[]
+    edges?: SecurityGraphEdge[]
+    attack_paths?: SecurityAttackPath[]
+  } | null
+  facts: SecurityFacts | null
+  assistant?: SecurityAssistantPayload | null
+  integrations: Array<{
+    name: string
+    status: string
+    records: number
+  }>
+  code_audit?: CodeAuditResult | null
+  dependency_audit?: DependencyAuditResult | null
+  cicd_audit?: CICDAuditResult | null
+  artifact_trust?: ArtifactTrustResult | null
+  log_audit?: LogAuditResult | null
+  report?: string | null
+}
+
+export type SecurityAssistantResponse = {
+  question: string
+  answer: string
+  retrieval: string[]
+  next_actions: string[]
+  model: string
+}
+
+const apiBase = (import.meta.env.VITE_SECURITY_API_BASE || '').replace(/\/$/, '')
+
+async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers)
+  headers.set('Content-Type', headers.get('Content-Type') || 'application/json')
+
+  const response = await fetch(`${apiBase}${path}`, {
+    ...options,
+    headers,
+  })
+
+  if (!response.ok) {
+    let message = response.statusText
+    const errorText = await response.text()
+    try {
+      const payload = JSON.parse(errorText)
+      message = payload.error || payload.detail || message
+    } catch {
+      message = errorText
+    }
+    throw new Error(message || 'Request failed')
+  }
+
+  return response.json() as Promise<T>
+}
+
+export async function loadSecurityWorkspace() {
+  return api<SecurityWorkspace>('/api/security/workspace')
+}
+
+export async function askSecurityAssistant(question: string) {
+  return api<SecurityAssistantResponse>('/api/security/assistant', {
+    method: 'POST',
+    body: JSON.stringify({ question }),
+  })
+}
+
+export type CodeAuditScanOptions = {
+  importId?: string
+  targetPath?: string
+  includeCheckov?: boolean
+  timeoutSeconds?: number
+}
+
+export async function runCodeAuditScan(options: CodeAuditScanOptions = {}) {
+  const controller = new AbortController()
+  const timeoutSeconds = options.timeoutSeconds
+  const timeoutId =
+    timeoutSeconds === undefined
+      ? undefined
+      : setTimeout(() => controller.abort(), (timeoutSeconds + 20) * 1000)
+
+  try {
+    return await api<CodeAuditResult>('/api/security/code-audit/scan', {
+      method: 'POST',
+      signal: controller.signal,
+      body: JSON.stringify({
+        ...(options.importId ? { importId: options.importId } : {}),
+        ...(options.targetPath ? { target_path: options.targetPath } : {}),
+        ...(options.includeCheckov === undefined ? {} : { include_checkov: options.includeCheckov }),
+        ...(timeoutSeconds === undefined ? {} : { timeout_seconds: timeoutSeconds }),
+      }),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('扫描超时，请缩小扫描范围后重试')
+    }
+    throw error
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+  }
+}
+
+export async function ignoreCodeAuditFinding(fingerprint: string, reason = 'false-positive') {
+  return api<{ state: CodeAuditState; code_audit: CodeAuditResult | null }>('/api/security/code-audit/ignore', {
+    method: 'POST',
+    body: JSON.stringify({ fingerprint, reason }),
+  })
+}
+
+export async function createCodeAuditBaseline(note = '') {
+  return api<{ state: CodeAuditState; code_audit: CodeAuditResult | null }>('/api/security/code-audit/baseline', {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
+export async function loadCodeAuditState() {
+  return api<CodeAuditState>('/api/security/code-audit/state')
+}
+
+export async function loadCodeAuditSarif() {
+  return api<Record<string, unknown>>('/api/security/code-audit/sarif')
+}
+
+export type DependencyAuditScanOptions = {
+  importId?: string
+  targetPath?: string
+  includeDev?: boolean
+  includeOsv?: boolean
+  includeCdxgen?: boolean
+  includeCyclonedxPy?: boolean
+  mode?: 'auto' | 'manifest' | 'lockfile' | 'sbom'
+}
+
+export async function runDependencyAuditScan(options: DependencyAuditScanOptions = {}) {
+  return api<DependencyAuditResult>('/api/security/dependencies/scan', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...(options.importId ? { importId: options.importId } : {}),
+      ...(options.targetPath ? { targetPath: options.targetPath } : {}),
+      ...(options.includeDev === undefined ? {} : { includeDev: options.includeDev }),
+      ...(options.includeOsv === undefined ? {} : { includeOsv: options.includeOsv }),
+      ...(options.includeCdxgen === undefined ? {} : { includeCdxgen: options.includeCdxgen }),
+      ...(options.includeCyclonedxPy === undefined ? {} : { includeCyclonedxPy: options.includeCyclonedxPy }),
+      ...(options.mode === undefined ? {} : { mode: options.mode }),
+    }),
+  })
+}
+
+export async function loadDependencyAuditSbom() {
+  return api<Record<string, unknown>>('/api/security/dependencies/sbom')
+}
+
+export type CICDAuditScanOptions = {
+  importId?: string
+  targetPath?: string
+}
+
+export async function runCICDAuditScan(options: CICDAuditScanOptions = {}) {
+  return api<CICDAuditResult>('/api/security/cicd/scan', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...(options.importId ? { importId: options.importId } : {}),
+      ...(options.targetPath ? { targetPath: options.targetPath } : {}),
+    }),
+  })
+}
+
+export async function loadCICDAuditSarif() {
+  return api<Record<string, unknown>>('/api/security/cicd/sarif')
+}
+
+export async function runArtifactTrustScan(options: ArtifactTrustScanOptions = {}) {
+  return api<ArtifactTrustResult>('/api/security/artifact-trust/scan', {
+    method: 'POST',
+    body: JSON.stringify(options),
+  })
+}
+
+export async function uploadArtifactTrustScan(options: ArtifactTrustUploadOptions) {
+  const formData = new FormData()
+  formData.set('artifact', options.artifact)
+  formData.set('attestation', options.attestation)
+  if (options.expectedRepo) formData.set('expectedRepo', options.expectedRepo)
+  if (options.expectedCommit) formData.set('expectedCommit', options.expectedCommit)
+  if (options.allowedBranches?.length) formData.set('allowedBranches', options.allowedBranches.join(','))
+  if (options.allowedWorkflows?.length) formData.set('allowedWorkflows', options.allowedWorkflows.join(','))
+  if (options.allowedBuilders?.length) formData.set('allowedBuilders', options.allowedBuilders.join(','))
+  if (options.requireSignature !== undefined) formData.set('requireSignature', String(options.requireSignature))
+  if (options.requireProvenance !== undefined) formData.set('requireProvenance', String(options.requireProvenance))
+  if (options.allowSelfHostedRunner !== undefined) formData.set('allowSelfHostedRunner', String(options.allowSelfHostedRunner))
+  if (options.maxAgeHours !== undefined) formData.set('maxAgeHours', String(options.maxAgeHours))
+
+  const response = await fetch(`${apiBase}/api/security/artifact-trust/upload`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    let message = response.statusText
+    const errorText = await response.text()
+    try {
+      const payload = JSON.parse(errorText)
+      message = payload.error || payload.detail || message
+    } catch {
+      message = errorText
+    }
+    throw new Error(message || '产物可信验证失败')
+  }
+
+  return response.json() as Promise<ArtifactTrustResult>
+}
+
+export async function loadArtifactTrustReport() {
+  return api<{ format: string; content: string }>('/api/security/artifact-trust/report')
+}
+
+export async function ignoreCICDAuditFinding(fingerprint: string, reason = 'false-positive') {
+  return api<{ state: CodeAuditState; cicd_audit: CICDAuditResult | null }>('/api/security/cicd/ignore', {
+    method: 'POST',
+    body: JSON.stringify({ fingerprint, reason }),
+  })
+}
+
+export async function createCICDAuditBaseline(note = '') {
+  return api<{ state: CodeAuditState; cicd_audit: CICDAuditResult | null }>('/api/security/cicd/baseline', {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
+export async function uploadCICDAuditToGitHubCodeScanning(payload: GitHubCodeScanningUploadPayload) {
+  return api<GitHubCodeScanningUploadResult>('/api/security/cicd/github/code-scanning', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export type LogAuditSource = 'web' | 'app' | 'auth' | 'auto'
+
+export type LogAuditScanOptions = {
+  files: File[]
+  source?: LogAuditSource
+}
+
+export async function runLogAuditScan({ files, source = 'auto' }: LogAuditScanOptions) {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  if (source !== 'auto') formData.set('source', source)
+
+  const response = await fetch(`${apiBase}/api/security/logs/scan`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    let message = response.statusText
+    const errorText = await response.text()
+    try {
+      const payload = JSON.parse(errorText)
+      message = payload.error || payload.detail || message
+    } catch {
+      message = errorText
+    }
+    throw new Error(message || '日志扫描失败')
+  }
+
+  return response.json() as Promise<LogAuditResult>
+}
+
+export async function ingestRealtimeLogs(payload: Record<string, unknown> | Array<Record<string, unknown>>) {
+  return api<RealtimeLogPayload>('/api/security/logs/ingest', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function loadRealtimeLogEvents(limit = 200) {
+  return api<RealtimeLogPayload>(`/api/security/logs/events?limit=${limit}`)
+}
+
+export async function loadRealtimeLogTrend(granularity: 'minute' | 'hour' = 'minute', buckets = 60) {
+  return api<{ granularity: 'minute' | 'hour'; trend: RealtimeLogTrendPoint[]; state: RealtimeLogPayload['state'] }>(
+    `/api/security/logs/trend?granularity=${granularity}&buckets=${buckets}`
+  )
+}
+
+export async function createRealtimeLogBaseline(note = '') {
+  return api<RealtimeLogPayload>('/api/security/logs/baseline', {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
+export async function ignoreRealtimeLogFinding(fingerprint: string, reason = '') {
+  return api<RealtimeLogPayload>('/api/security/logs/ignore', {
+    method: 'POST',
+    body: JSON.stringify({ fingerprint, reason }),
+  })
+}
+
+export async function uploadCodeAuditToGitHubCodeScanning(payload: GitHubCodeScanningUploadPayload) {
+  return api<GitHubCodeScanningUploadResult>('/api/security/code-audit/github/code-scanning', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function loadGitHubCodeScanningUploadStatus(payload: GitHubCodeScanningStatusPayload) {
+  return api<GitHubCodeScanningStatusResult>('/api/security/code-audit/github/code-scanning/status', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}

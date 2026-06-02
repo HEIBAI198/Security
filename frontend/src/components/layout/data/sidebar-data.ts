@@ -1,104 +1,75 @@
 import {
-  Archive,
-  Boxes,
-  Eye,
-  FileCheck2,
+  Bot,
   FileText,
-  GitBranch,
+  FolderOpen,
   LayoutDashboard,
-  MessageCircle,
   Network,
-  Wrench,
-  Workflow,
+  Radar,
+  ShieldAlert,
 } from 'lucide-react'
 import { type SidebarData } from '../types'
 
 export const sidebarData: SidebarData = {
   user: {
-    name: 'engineer',
-    email: 'engineer / author',
+    name: 'security-analyst',
+    email: 'soc / appsec',
     avatar: '',
   },
   teams: [
     {
-      name: '文档自动生成系统',
-      logo: FileCheck2,
-      plan: 'SysML DocGen',
+      name: 'SupplyGuard KG',
+      logo: ShieldAlert,
+      plan: 'LLM + Knowledge Graph',
     },
     {
-      name: 'Project Workspace',
-      logo: Boxes,
-      plan: 'Model / Trace / Version',
+      name: 'Security Operations',
+      logo: Radar,
+      plan: 'Code / SBOM / Logs',
     },
     {
-      name: 'External Tools',
-      logo: Archive,
-      plan: 'Models / Evidence / MDK',
+      name: 'Evidence Graph',
+      logo: Network,
+      plan: 'Attack Path / Report',
     },
   ],
   navGroups: [
     {
-      title: 'Portfolio',
+      title: 'Security Platform',
       items: [
+        {
+          title: 'Project Import',
+          url: '/project-import',
+          icon: FolderOpen,
+        },
         {
           title: 'Overview',
           url: '/#overview',
           icon: LayoutDashboard,
         },
         {
-          title: 'Projects',
-          url: '/#projects',
-          icon: Boxes,
-        },
-        {
-          title: 'Workspace',
-          url: '/#workspace',
-          icon: Boxes,
+          title: 'Evidence Analysis',
+          url: '/#code',
+          icon: Radar,
         },
       ],
     },
     {
-      title: 'Project Workspace',
+      title: 'Evidence Chain',
       items: [
         {
-          title: 'Model',
-          url: '/#model',
-          icon: Archive,
-        },
-        {
-          title: 'Views',
-          url: '/#views',
-          icon: Eye,
-        },
-        {
-          title: 'Graph',
-          url: '/#diagram',
+          title: 'Knowledge Graph',
+          url: '/#graph',
           icon: Network,
         },
         {
-          title: 'Trace',
-          url: '/#trace',
-          icon: Workflow,
+          title: 'Copilot Report',
+          url: '/#copilot',
+          icon: Bot,
         },
         {
-          title: 'Versions',
-          url: '/#version',
-          icon: GitBranch,
-        },
-        {
-          title: 'Docs',
-          url: '/#docgen',
+          title: 'Reports',
+          url: '/#copilot',
           icon: FileText,
-        },
-        {
-          title: 'MDK',
-          url: '/#mdk',
-          icon: Wrench,
-        },
-        {
-          title: 'Assistant',
-          url: '/#assistant',
-          icon: MessageCircle,
         },
       ],
     },

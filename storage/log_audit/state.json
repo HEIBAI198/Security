@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "ignored": {},
+  "baseline": {
+    "created_at": "2026-06-02T07:20:53.106623+00:00",
+    "note": "前端手动建立实时日志基线",
+    "keys": [
+      "0b1a8cfacb555d48e1ee4ef178968adc495fa56732e85b2b7d52482b5c4d655c",
+      "0f98de095fde0266e51f73435fb7a9cca34bb3b29d6a13c2ea216f7f09e3d8e4",
+      "2669ae1bc696812eee7395226f05e1a654978f46a680bcd84938c33674bae590",
+      "28f10ea4af5e21aba2108f2bc8bbe6c5226b18f8f454cb82fc3f78ae12f81496",
+      "338c4de4859169bb62cdff3cc06c8ebefa71e8be22a220ece9cec3bd16aeb36a",
+      "3827d2ba7f012d11d9b51c971233ec2c33bbd844b208a7abfbdd607aa14a6744",
+      "65f715194bf2791a80a3ac21f77f2214fb3fd8f7c07f4eaad1ef3bb83cad88e3",
+      "7bac18c33f710a7980e8acb40e5faa883434bc59a4180f941e60e7bf987c35f2",
+      "82a709eae5f9b9abf03ea4013c849e8f49a007c889bae18b12b8791de26e40c9",
+      "85aa40a1575813803f114ba6a27b547b150bfce735dd8700bdae06650bb35254",
+      "892a9133c7125e838d7f645b3c144d487aecea34ee8fa8e3d4b161c5d8ff3ea3",
+      "8e72a01c2eb8a78a8eb03593a696f97ddded217f467c99a1416f67bf63419d67",
+      "956c047f81340eaaf426db8b26b6cf12ffe235630b3f2eb7cf152073802ee765",
+      "9ebc793db1580e54a6a841f4b03c0f370cd1bf935ed8ca551b2f20a880eb9237",
+      "a19fcf5c7c9fc4ea41cc1e1bb76ecf11f2817c9ce78bc83653e1182171c05f3e",
+      "a4776ec9ea85adbfd94493a7dbdded54fe0adb51b08c74b5e87b3fb0f7e4c7d6",
+      "b0e358134b75f248723c51a7a7f75c773e2232b9b84397a49e2d0ae36437bfec",
+      "d3c7054c3d2ac7f05363038219188fde686ba3fc1a5f3d92cd0b6d04dba37149",
+      "f5c51e3717ef5c7cbd1864fc70dabce5e6b0815cb7c8453abcbbf34ff63f9529"
+    ],
+    "finding_count": 19
+  },
+  "runs": [
+    {
+      "time": "2026-06-02T07:09:37.889326+00:00",
+      "accepted": 22,
+      "event_count": 70,
+      "finding_count": 12,
+      "risk_score": 98
+    },
+    {
+      "time": "2026-06-02T07:12:10.499733+00:00",
+      "accepted": 2,
+      "event_count": 72,
+      "finding_count": 14,
+      "risk_score": 98
+    },
+    {
+      "time": "2026-06-02T07:13:03.438533+00:00",
+      "accepted": 2,
+      "event_count": 74,
+      "finding_count": 14,
+      "risk_score": 98
+    },
+    {
+      "time": "2026-06-02T07:19:24.624886+00:00",
+      "accepted": 25,
+      "event_count": 99,
+      "finding_count": 19,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T07:19:28.939317+00:00",
+      "accepted": 25,
+      "event_count": 124,
+      "finding_count": 19,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T07:19:33.482151+00:00",
+      "accepted": 25,
+      "event_count": 149,
+      "finding_count": 19,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T07:19:58.215889+00:00",
+      "accepted": 25,
+      "event_count": 174,
+      "finding_count": 19,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T07:21:08.835856+00:00",
+      "accepted": 25,
+      "event_count": 199,
+      "finding_count": 3,
+      "risk_score": 95
+    },
+    {
+      "time": "2026-06-02T08:42:03.719326+00:00",
+      "accepted": 25,
+      "event_count": 224,
+      "finding_count": 8,
+      "risk_score": 96
+    },
+    {
+      "time": "2026-06-02T08:42:04.804756+00:00",
+      "accepted": 25,
+      "event_count": 249,
+      "finding_count": 10,
+      "risk_score": 97
+    },
+    {
+      "time": "2026-06-02T08:42:05.977537+00:00",
+      "accepted": 25,
+      "event_count": 274,
+      "finding_count": 10,
+      "risk_score": 97
+    },
+    {
+      "time": "2026-06-02T12:36:10.036447+00:00",
+      "accepted": 25,
+      "event_count": 299,
+      "finding_count": 15,
+      "risk_score": 99
+    },
+    {
+      "time": "2026-06-02T14:41:30.225719+00:00",
+      "accepted": 25,
+      "event_count": 324,
+      "finding_count": 19,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T14:41:33.881536+00:00",
+      "accepted": 25,
+      "event_count": 349,
+      "finding_count": 21,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T14:41:35.345002+00:00",
+      "accepted": 25,
+      "event_count": 374,
+      "finding_count": 21,
+      "risk_score": 100
+    },
+    {
+      "time": "2026-06-02T14:41:51.646510+00:00",
+      "accepted": 25,
+      "event_count": 399,
+      "finding_count": 22,
+      "risk_score": 100
+    }
+  ],
+  "updated_at": "2026-06-02T14:41:51.647515+00:00"
+}

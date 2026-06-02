@@ -1,0 +1,14 @@
+artifacts:
+  checkout-api:
+    expected_repo: "https://github.com/acme/checkout-service"
+    expected_commit: "8f42c19"
+    allowed_branches:
+      - "refs/heads/main"
+    allowed_workflows:
+      - ".github/workflows/release.yml"
+    trusted_builders:
+      - "https://github.com/actions/runner"
+    require_signature: true
+    require_provenance: true
+    allow_self_hosted_runner: false
+    max_age_hours: 24

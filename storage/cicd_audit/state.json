@@ -1,0 +1,129 @@
+{
+  "ignored": {},
+  "baselines": {},
+  "runs": [
+    {
+      "scan_id": "cicd-20260602080640",
+      "generated_at": "2026-06-02T08:06:40.525990+00:00",
+      "target_key": "import:imp_414d706a7210",
+      "projectName": "supplyguard-kg",
+      "total": 11,
+      "critical": 0,
+      "high": 3,
+      "medium": 5,
+      "low": 3,
+      "new": 11,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260602084155",
+      "generated_at": "2026-06-02T08:41:55.613734+00:00",
+      "target_key": "import:imp_4c3bfb21dc35",
+      "projectName": "supplyguard-kg",
+      "total": 11,
+      "critical": 0,
+      "high": 3,
+      "medium": 5,
+      "low": 3,
+      "new": 11,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260602110915",
+      "generated_at": "2026-06-02T11:09:15.055598+00:00",
+      "target_key": "import:imp_74484b156bf9",
+      "projectName": "supplyguard-kg",
+      "total": 11,
+      "critical": 0,
+      "high": 3,
+      "medium": 5,
+      "low": 3,
+      "new": 11,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260602123614",
+      "generated_at": "2026-06-02T12:36:14.934147+00:00",
+      "target_key": "import:imp_da6554d077dd",
+      "projectName": "supplyguard-kg",
+      "total": 11,
+      "critical": 0,
+      "high": 3,
+      "medium": 5,
+      "low": 3,
+      "new": 11,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260602144032",
+      "generated_at": "2026-06-02T14:40:32.288136+00:00",
+      "target_key": "import:imp_ad1263e07b56",
+      "projectName": "supplyguard-kg",
+      "total": 11,
+      "critical": 0,
+      "high": 3,
+      "medium": 5,
+      "low": 3,
+      "new": 11,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260602152444",
+      "generated_at": "2026-06-02T15:24:44.917996+00:00",
+      "target_key": "import:imp_ad1263e07b56",
+      "projectName": "supplyguard-kg",
+      "total": 9,
+      "critical": 0,
+      "high": 0,
+      "medium": 1,
+      "low": 8,
+      "new": 9,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": []
+    },
+    {
+      "scan_id": "cicd-20260602152707",
+      "generated_at": "2026-06-02T15:27:07.770692+00:00",
+      "target_key": "import:imp_ad1263e07b56",
+      "projectName": "supplyguard-kg",
+      "total": 21,
+      "critical": 0,
+      "high": 9,
+      "medium": 4,
+      "low": 8,
+      "new": 21,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    }
+  ]
+}

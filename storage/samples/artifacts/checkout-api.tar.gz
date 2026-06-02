@@ -1,0 +1,4 @@
+SupplyGuard demo artifact: checkout-api release bundle
+dist/server.js
+dist/routes/checkout.js
+build-id=github-actions/deploy-prod-2481

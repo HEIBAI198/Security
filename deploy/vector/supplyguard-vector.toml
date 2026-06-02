@@ -1,0 +1,74 @@
+# Vector demo pipeline for SupplyGuard realtime log ingest.
+# Run after starting the backend:
+#   vector --config deploy/vector/supplyguard-vector.toml
+
+[sources.demo_logs]
+type = "file"
+include = ["storage/samples/logs/*.log", "storage/samples/logs/*.jsonl"]
+read_from = "beginning"
+
+[transforms.normalize_for_supplyguard]
+type = "remap"
+inputs = ["demo_logs"]
+source = '''
+raw_message = string!(.message)
+parsed_json, err = parse_json(raw_message)
+
+if err == null && is_object(parsed_json) {
+  . = parsed_json
+} else {
+  .raw = raw_message
+  .message = raw_message
+}
+
+if !exists(.timestamp) && exists(."@timestamp") {
+  .timestamp = ."@timestamp"
+}
+
+if !exists(.timestamp) {
+  .timestamp = now()
+}
+
+if !exists(.source) {
+  file_name = string!(.file)
+  if contains(file_name, "access") {
+    .source = "web"
+  } else if contains(file_name, "auth") {
+    .source = "auth"
+  } else {
+    .source = "app"
+  }
+}
+
+if !exists(.path) {
+  path_match, path_err = parse_regex(raw_message, r'(?P<method>GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(?P<path>/\S+)')
+  if path_err == null {
+    .method = path_match.method
+    .path = path_match.path
+  }
+}
+
+if !exists(.src_ip) {
+  ip_match, ip_err = parse_regex(raw_message, r'(?P<src_ip>(?:\d{1,3}\.){3}\d{1,3})')
+  if ip_err == null {
+    .src_ip = ip_match.src_ip
+  }
+}
+
+if !exists(.status) {
+  status_match, status_err = parse_regex(raw_message, r'(?P<status>\s[1-5]\d\d\s)')
+  if status_err == null {
+    .status = to_int(strip_whitespace(status_match.status)) ?? null
+  }
+}
+'''
+
+[sinks.supplyguard_ingest]
+type = "http"
+inputs = ["normalize_for_supplyguard"]
+uri = "http://127.0.0.1:8011/api/security/logs/ingest"
+method = "post"
+encoding.codec = "json"
+request.headers.Content-Type = "application/json"
+batch.max_events = 20
+batch.timeout_secs = 2
