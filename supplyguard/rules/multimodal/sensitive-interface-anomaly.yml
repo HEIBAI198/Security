@@ -1,0 +1,23 @@
+id: multimodal-sensitive-interface-anomaly
+title: 语音或截图中出现敏感接口异常访问
+status: experimental
+description: 多模态文本提到敏感导出、管理员接口或异常访问，并能抽取到 API 路径或服务名。
+references:
+  - https://sigmahq.io/sigma-specification/
+  - https://wazuh.com/platform/overview/
+tags:
+  - attack.collection
+  - attack.exfiltration
+  - multimodal.asr
+  - sigma-style
+severity: high
+score: 84
+match:
+  any_keywords:
+    - 敏感接口访问
+    - 敏感导出
+    - admin/export
+    - 异常访问
+  entity_types:
+    - api_path
+recommendation: 将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。

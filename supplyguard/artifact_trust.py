@@ -29,6 +29,7 @@ ARTIFACT_TRUST_STATE_DIR = ROOT / "storage" / "artifact_trust"
 ARTIFACT_UPLOAD_DIR = ARTIFACT_TRUST_STATE_DIR / "uploads"
 DEFAULT_SCAN_TIMEOUT_SECONDS = 30
 SLSA_PROVENANCE_V1 = "https://slsa.dev/provenance/v1"
+TOOL_PATH_CACHE: dict[str, str] = {}
 
 
 class ArtifactTrustRequest(BaseModel):
@@ -342,6 +343,7 @@ def extract_statement(document: dict[str, Any]) -> tuple[dict[str, Any] | None, 
 
     envelope = find_dsse_envelope(document)
     if envelope:
+        envelope = attach_bundle_timestamp(envelope, document)
         payload = envelope.get("payload")
         if isinstance(payload, str):
             decoded = decode_json_payload(payload)
@@ -383,6 +385,37 @@ def find_dsse_envelope(payload: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def attach_bundle_timestamp(envelope: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+    created_at = extract_bundle_timestamp(document)
+    if not created_at:
+        return envelope
+    enriched = dict(envelope)
+    enriched["_supplyguard_created_at"] = created_at
+    return enriched
+
+
+def extract_bundle_timestamp(document: dict[str, Any]) -> str:
+    verification = document.get("verificationResult") if isinstance(document.get("verificationResult"), dict) else {}
+    timestamps = verification.get("verifiedTimestamps") if isinstance(verification.get("verifiedTimestamps"), list) else []
+    for item in timestamps:
+        if isinstance(item, dict):
+            timestamp = item.get("timestamp")
+            if isinstance(timestamp, str) and parse_datetime(timestamp):
+                return timestamp
+
+    material = document.get("verificationMaterial") if isinstance(document.get("verificationMaterial"), dict) else {}
+    entries = material.get("tlogEntries") if isinstance(material.get("tlogEntries"), list) else []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        integrated_time = entry.get("integratedTime")
+        try:
+            return datetime.fromtimestamp(int(integrated_time), UTC).isoformat()
+        except (TypeError, ValueError, OSError, OverflowError):
+            continue
+    return ""
+
+
 def decode_json_payload(value: str) -> dict[str, Any] | None:
     padded = value + "=" * (-len(value) % 4)
     for decoder in (base64.b64decode, base64.urlsafe_b64decode):
@@ -421,7 +454,7 @@ def provenance_info(statement: dict[str, Any], envelope: dict[str, Any] | None) 
         ref=extract_ref(statement, external, internal),
         runner_environment=extract_runner_environment(statement),
         invocation_id=extract_invocation_id(run_details, predicate),
-        created_at=extract_created_at(statement),
+        created_at=extract_created_at(statement, envelope),
         raw_subjects=subjects,
         external_parameters=external,
     )
@@ -534,7 +567,11 @@ def extract_invocation_id(run_details: dict[str, Any], predicate: dict[str, Any]
     return str(metadata.get("invocationId") or predicate_metadata.get("buildInvocationId") or "")
 
 
-def extract_created_at(statement: dict[str, Any]) -> str:
+def extract_created_at(statement: dict[str, Any], envelope: dict[str, Any] | None = None) -> str:
+    if isinstance(envelope, dict):
+        created_at = envelope.get("_supplyguard_created_at")
+        if isinstance(created_at, str) and parse_datetime(created_at):
+            return created_at
     for key, value in deep_items(statement):
         if not isinstance(value, str):
             continue
@@ -791,7 +828,7 @@ def check_signature(
 
     if repo and tools[0].available:
         result = run_command(
-            ["gh", "attestation", "verify", str(artifact_path), "-R", repo, "--format", "json"],
+            [tool_command("gh"), "attestation", "verify", str(artifact_path), "-R", repo, "--format", "json"],
             timeout_seconds,
         )
         tools[0] = ArtifactTrustToolStatus(
@@ -818,7 +855,7 @@ def check_signature(
     image_reference = str(policy.get("subject_name") or info.subject_name or "")
     if is_image_reference(image_reference) and tools[1].available:
         target = image_reference.removeprefix("oci://")
-        result = run_command(["cosign", "verify-attestation", target], timeout_seconds)
+        result = run_command([tool_command("cosign"), "verify-attestation", target], timeout_seconds)
         tools[1] = ArtifactTrustToolStatus(
             name="cosign",
             available=True,
@@ -857,11 +894,13 @@ def check_signature(
 
 
 def tool_status(name: str) -> ArtifactTrustToolStatus:
-    path = shutil.which(name)
+    path = resolve_tool_path(name)
     if not path:
         return ArtifactTrustToolStatus(name=name, available=False, command=name, state="missing", error="Tool is not installed.")
-    result = run_command([name, "--version"], 8)
-    version = first_line(result.stdout or result.stderr)
+    TOOL_PATH_CACHE[name] = path
+    version_args = [path, "version"] if name == "cosign" else [path, "--version"]
+    result = run_command(version_args, 8)
+    version = tool_version(name, result.stdout or result.stderr)
     return ArtifactTrustToolStatus(
         name=name,
         available=True,
@@ -870,6 +909,60 @@ def tool_status(name: str) -> ArtifactTrustToolStatus:
         version=version or None,
         error=None if result.returncode == 0 else short_text(result.stderr or result.stdout, 160),
     )
+
+
+def tool_command(name: str) -> str:
+    return TOOL_PATH_CACHE.get(name) or resolve_tool_path(name) or name
+
+
+def resolve_tool_path(name: str) -> str | None:
+    candidates: list[str | Path | None] = [shutil.which(name)]
+    if name == "gh":
+        candidates.extend(
+            [
+                Path("C:/Program Files/GitHub CLI/gh.exe"),
+                Path("C:/Program Files (x86)/GitHub CLI/gh.exe"),
+                shutil.which("gh.exe"),
+            ]
+        )
+    elif name == "cosign":
+        candidates.extend(
+            [
+                shutil.which("cosign.exe"),
+                shutil.which("cosign.cmd"),
+                shutil.which("cosign-windows-amd64"),
+                shutil.which("cosign-windows-amd64.exe"),
+                Path.home() / "AppData/Local/Microsoft/WindowsApps/cosign.cmd",
+                *cosign_winget_candidates(),
+            ]
+        )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(str(candidate))
+        if path.exists():
+            return str(path)
+    return None
+
+
+def cosign_winget_candidates() -> list[Path]:
+    root = Path.home() / "AppData/Local/Microsoft/WinGet/Packages"
+    if not root.exists():
+        return []
+    candidates: list[Path] = []
+    for directory in root.glob("Sigstore.Cosign*"):
+        candidates.extend(directory.rglob("cosign*.exe"))
+        candidates.extend(directory.rglob("cosign*.cmd"))
+    return candidates
+
+
+def tool_version(name: str, value: str) -> str:
+    if name == "cosign":
+        for line in value.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("GitVersion:"):
+                return stripped.replace("GitVersion:", "", 1).strip()
+    return first_line(value)
 
 
 @dataclass(frozen=True)
@@ -885,6 +978,8 @@ def run_command(command: list[str], timeout_seconds: int) -> CommandResult:
             command,
             cwd=str(ROOT),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout_seconds,
             check=False,

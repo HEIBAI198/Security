@@ -75,6 +75,15 @@ from ..log_audit import (
     run_log_audit,
     serialize_log_audit,
 )
+from ..multimodal_audit import (
+    MultimodalAuditResult,
+    MultimodalFileInput,
+    MultimodalTextInput,
+    latest_multimodal_payload,
+    run_multimodal_audit,
+    run_multimodal_text_audit,
+    serialize_multimodal_audit,
+)
 from ..knowledge_graph import build_knowledge_graph, build_unified_facts
 from ..llm_assistant import ask_deepseek_security_assistant
 
@@ -85,6 +94,7 @@ LAST_DEPENDENCY_AUDIT: DependencyAuditResult | None = None
 LAST_CICD_AUDIT: CICDAuditResult | None = None
 LAST_LOG_AUDIT: LogAuditResult | None = None
 LAST_ARTIFACT_TRUST: ArtifactTrustResult | None = None
+LAST_MULTIMODAL_AUDIT: MultimodalAuditResult | None = None
 
 
 class AssistantQuestion(BaseModel):
@@ -103,6 +113,16 @@ class BaselineRequest(BaseModel):
 class LogIgnoreRequest(BaseModel):
     fingerprint: str = Field(min_length=8, max_length=128)
     reason: str = Field(default="", max_length=300)
+
+
+class MultimodalTextAnalyzeRequest(BaseModel):
+    recognized_text: str = Field(min_length=1, max_length=20000)
+    source_type: str = Field(default="image", pattern="^(audio|image|video)$")
+    evidence_type: str = Field(default="visual_ocr", max_length=80)
+    source_name: str = Field(default="manual-recognized-text.txt", max_length=180)
+    confidence: float = Field(default=0.9, ge=0, le=1)
+    engine: str = Field(default="manual-asr-ocr-text", max_length=120)
+    language: str | None = Field(default="zh-CN", max_length=40)
 
 
 SECURITY_WORKSPACE: dict[str, Any] = {
@@ -167,6 +187,14 @@ SECURITY_WORKSPACE: dict[str, Any] = {
             "score": 69,
             "signals": 17,
             "description": "结合规则与异常检测识别异常登录、敏感接口访问和可疑外联。",
+        },
+        {
+            "key": "multimodal",
+            "name": "多模态证据接入层",
+            "status": "observed",
+            "score": 58,
+            "signals": 0,
+            "description": "上传音频、截图和视频帧，统一落盘为可追溯证据来源，并记录 FFmpeg/OpenCV 处理状态。",
         },
         {
             "key": "knowledge_graph",
@@ -485,6 +513,7 @@ def build_security_report_from_payload(payload: dict[str, Any]) -> str:
         render_evidence_row(item, nodes, index)
         for index, item in enumerate(evidence_for_report(attack_paths, evidence), start=1)
     )
+    multimodal_section = render_multimodal_fusion_section(payload)
     actions = "\n".join(render_recommendation(item, index) for index, item in enumerate(attack_paths[:8], start=1))
     if not actions:
         actions = "\n".join(f"- {action}" for action in payload["assistant"]["next_actions"])
@@ -515,7 +544,7 @@ def build_security_report_from_payload(payload: dict[str, Any]) -> str:
 - 高度可信真实路径：{real_paths} 条
 - 平均路径置信度：{round(float(average_confidence or 0) * 100)}%
 - 路径判定分布：{verdict_summary or '-'}
-- 参考模型：GUAC 软件树/证据树可达性、in-toto/SLSA 可信证据链、BloodHound 式入口到目标路径呈现
+- 参考模型：GUAC 软件树/证据树可达性、OpenCTI observable 关系与置信度、NetworkX 路径评分、in-toto/SLSA 可信证据链、BloodHound 式入口到目标路径呈现
 
 ## 路径判定
 
@@ -536,6 +565,10 @@ def build_security_report_from_payload(payload: dict[str, Any]) -> str:
 | 序号 | 时间 | 证据类型 | 关联资产 | 证据摘要 | 来源模型 |
 | ---: | --- | --- | --- | --- | --- |
 {evidence_rows or '| 1 | - | - | - | 暂无证据 | - |'}
+
+## 多模态证据融合
+
+{multimodal_section}
 
 ## 修复建议
 
@@ -564,7 +597,7 @@ def top_graph_findings(payload: dict[str, Any], *, limit: int) -> list[dict[str,
             "source": node.get("source_model") or node.get("source"),
         }
         for node in nodes
-        if isinstance(node, dict) and node.get("type") == "Finding"
+        if isinstance(node, dict) and node.get("type") in {"Finding", "MultimodalFinding"}
     ]
     if graph_findings:
         return sorted(graph_findings, key=lambda item: (-int(item.get("score") or 0), str(item.get("title") or "")))[:limit]
@@ -581,6 +614,49 @@ def graph_finding_asset(finding_node: dict[str, Any], nodes: list[dict[str, Any]
     return str(finding_node.get("source") or "-")
 
 
+def render_multimodal_fusion_section(payload: dict[str, Any]) -> str:
+    multimodal = payload.get("multimodal_audit") if isinstance(payload.get("multimodal_audit"), dict) else {}
+    summary = multimodal.get("summary") if isinstance(multimodal.get("summary"), dict) else {}
+    evidence = [item for item in multimodal.get("evidence", []) if isinstance(item, dict)]
+    if not evidence:
+        return "暂无多模态证据。"
+    rows: list[str] = []
+    for item in evidence[:8]:
+        entities = [
+            str(entity.get("value") or "")
+            for entity in item.get("entities", [])
+            if isinstance(entity, dict) and entity.get("value")
+        ]
+        rules = [
+            str(finding.get("rule_id") or "")
+            for finding in item.get("findings", [])
+            if isinstance(finding, dict) and finding.get("rule_id")
+        ]
+        text = ""
+        recognitions = item.get("recognitions") if isinstance(item.get("recognitions"), list) else []
+        if recognitions and isinstance(recognitions[0], dict):
+            text = str(recognitions[0].get("recognized_text") or "")
+        rows.append(
+            "| {id} | {type} | {risk} | {entities} | {rules} | {text} |".format(
+                id=markdown_cell(item.get("evidence_id") or "-"),
+                type=markdown_cell(item.get("source_type") or "-"),
+                risk=markdown_cell(f"{item.get('risk_level') or 'low'} / {item.get('risk_score') or 0}"),
+                entities=markdown_cell(", ".join(stable_unique_text(entities)[:8]) or "-"),
+                rules=markdown_cell(", ".join(stable_unique_text(rules)[:5]) or "-"),
+                text=markdown_cell(short_text(text, 120) or "-"),
+            )
+        )
+    return f"""- 多模态证据：{summary.get('evidence_count', 0)} 条
+- 安全实体：{summary.get('entity_count', 0)} 个
+- 规则命中：{summary.get('finding_count', 0)} 条
+- 多模态风险：{summary.get('risk_level', 'low')} / {summary.get('risk_score', 0)}
+- 参考模型：GUAC 负责软件供应链可达关系，OpenCTI 负责 observable/置信度/first seen 语义，NetworkX 负责路径评分和多源证据连通性。
+
+| Evidence ID | 类型 | 风险 | 关联实体 | 命中规则 | 识别文本摘要 |
+| --- | --- | --- | --- | --- | --- |
+{chr(10).join(rows) or '| - | - | - | - | - | - |'}"""
+
+
 def render_attack_path_section(
     path: dict[str, Any],
     nodes: list[dict[str, Any]],
@@ -595,7 +671,7 @@ def render_attack_path_section(
     impact_assets = [
         node_label(node_map[node_id])
         for node_id in node_ids
-        if node_id in node_map and node_map[node_id].get("type") not in {"AttackStage", "Finding"}
+        if node_id in node_map and node_map[node_id].get("type") not in {"AttackStage", "Finding", "MultimodalFinding"}
     ]
     mermaid = render_mermaid_path(node_ids, edge_ids, node_map, edge_map)
     evidence_rows = "\n".join(
@@ -692,9 +768,51 @@ def render_mermaid_path(
         lines.append(f"  {alias}[\"{label}\"]")
     for index, (source, target) in enumerate(zip(node_ids, node_ids[1:])):
         edge = edge_map.get(edge_ids[index]) if index < len(edge_ids) else None
+        edge = best_render_edge(source, target, edge_map, edge if isinstance(edge, dict) else None)
         label = mermaid_label(edge.get("label") if isinstance(edge, dict) else "关联")
         lines.append(f"  {aliases[source]} -->|{label}| {aliases[target]}")
     return "\n".join(lines)
+
+
+def best_render_edge(
+    source: str,
+    target: str,
+    edge_map: dict[str, dict[str, Any]],
+    fallback: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    matches = [
+        item for item in edge_map.values()
+        if isinstance(item, dict)
+        and (
+            (str(item.get("source")) == source and str(item.get("target")) == target)
+            or (str(item.get("source")) == target and str(item.get("target")) == source)
+        )
+    ]
+    if fallback and fallback not in matches:
+        matches.append(fallback)
+    if not matches:
+        return None
+    priority = {
+        "MULTIMODAL_TRIGGERS_RULE": 0,
+        "MULTIMODAL_FINDING_REFERENCES_ENTITY": 1,
+        "MULTIMODAL_EXTRACTS_ENTITY": 2,
+        "ENTITY_CORRELATES_DEPENDENCY": 3,
+        "ENTITY_CORRELATES_LOG": 3,
+        "ENTITY_OBSERVED_IN_BUILD": 4,
+        "DEPENDENCY_REACHES_BUILD": 5,
+        "STEP_PRODUCES_ARTIFACT": 6,
+        "ARTIFACT_DEPLOYED_AS": 7,
+        "SERVICE_EMITS_LOG": 8,
+        "FINDING_AFFECTS": 20,
+    }
+    return sorted(
+        matches,
+        key=lambda item: (
+            priority.get(str(item.get("type") or ""), 10),
+            0 if str(item.get("source")) == source and str(item.get("target")) == target else 1,
+            str(item.get("id") or ""),
+        ),
+    )[0]
 
 
 def node_label(node: dict[str, Any]) -> str:
@@ -763,13 +881,21 @@ def render_report_appendices(payload: dict[str, Any]) -> str:
         if isinstance(item, dict)
     )
     sbom_components = len(dependency_audit.get("dependencies") or [])
+    dependency_summary = dependency_audit.get("summary") if isinstance(dependency_audit.get("summary"), dict) else {}
+    vex_summary = dependency_summary.get("vex") if isinstance(dependency_summary.get("vex"), dict) else {}
+    reachability_summary = dependency_summary.get("reachability") if isinstance(dependency_summary.get("reachability"), dict) else {}
     sarif_results = count_sarif_results(code_audit.get("sarif")) + count_sarif_results(cicd_audit.get("sarif"))
     log_findings = len(log_audit.get("findings") or [])
     return f"""### SBOM / Dependency-Track 风险摘要
 
 - SBOM 组件数量：{sbom_components}
-- 依赖风险数量：{dependency_audit.get('summary', {}).get('finding_count', 0) if isinstance(dependency_audit.get('summary'), dict) else 0}
-- 最高依赖风险：{dependency_audit.get('summary', {}).get('risk_score', 0) if isinstance(dependency_audit.get('summary'), dict) else 0} / 100
+- 依赖风险数量：{dependency_summary.get('finding_count', 0)}
+- 最高依赖风险：{dependency_summary.get('risk_score', 0)} / 100
+- VEX statement：{vex_summary.get('statement_count', 0)}
+- VEX affected / under investigation：{int(vex_summary.get('affected', 0)) + int(vex_summary.get('under_investigation', 0))}
+- VEX not affected / fixed：{int(vex_summary.get('not_affected', 0)) + int(vex_summary.get('fixed', 0))}
+- 代码可达依赖：{reachability_summary.get('imported_dependencies', 0)}
+- 运行期日志命中：{reachability_summary.get('runtime_trace_dependencies', 0)}
 
 ### SARIF / DefectDojo 风险摘要
 
@@ -822,6 +948,7 @@ def build_workspace_payload() -> dict[str, Any]:
     payload["cicd_audit"] = serialize_cicd_audit(LAST_CICD_AUDIT)
     payload["artifact_trust"] = serialize_artifact_trust(LAST_ARTIFACT_TRUST)
     payload["log_audit"] = serialize_log_audit(LAST_LOG_AUDIT)
+    payload["multimodal_audit"] = latest_multimodal_payload()
 
     if LAST_CODE_AUDIT is not None:
         app_findings = [finding for finding in payload["findings"] if finding.get("module") != "代码审计"]
@@ -952,6 +1079,40 @@ def build_workspace_payload() -> dict[str, Any]:
             LAST_LOG_AUDIT.summary["risk_score"],
         )
 
+    multimodal_summary = payload["multimodal_audit"].get("summary") if isinstance(payload.get("multimodal_audit"), dict) else {}
+    multimodal_count = int(multimodal_summary.get("evidence_count") or 0) if isinstance(multimodal_summary, dict) else 0
+    if multimodal_count > 0:
+        multimodal_findings = multimodal_payload_to_workspace_findings(payload["multimodal_audit"])
+        if multimodal_findings:
+            payload["findings"] = multimodal_findings + [
+                finding for finding in payload["findings"] if not is_multimodal_workspace_finding(finding)
+            ]
+        multimodal_module = next((module for module in payload["modules"] if module["key"] == "multimodal"), None)
+        if multimodal_module is not None:
+            derived_count = int(multimodal_summary.get("derived_count") or 0)
+            finding_count = int(multimodal_summary.get("finding_count") or 0)
+            risk_score = int(multimodal_summary.get("risk_score") or 0)
+            multimodal_module["signals"] = max(multimodal_count, finding_count)
+            multimodal_module["status"] = (
+                multimodal_summary.get("risk_level")
+                if finding_count and multimodal_summary.get("risk_level") != "low"
+                else "active"
+            )
+            multimodal_module["score"] = max(risk_score, min(92, 58 + multimodal_count * 3 + derived_count * 2))
+            multimodal_module["description"] = (
+                "已接入音频、截图/图像和视频证据上传，使用 Sigma 风格 YAML 规则抽取实体并生成 Wazuh 风格风险告警。"
+            )
+        payload["summary"]["multimodal_evidence"] = multimodal_count
+        payload["summary"]["open_findings"] = len(payload["findings"])
+        payload["summary"]["critical_findings"] = sum(
+            1 for finding in payload["findings"] if finding.get("severity") == "critical"
+        )
+        payload["summary"]["risk_score"] = max(
+            payload["summary"]["risk_score"],
+            int(multimodal_summary.get("risk_score") or 0),
+        )
+        augment_assistant_with_multimodal(payload)
+
     realtime_logs = realtime_log_events(limit=200)
     realtime_summary = realtime_logs.get("summary") if isinstance(realtime_logs.get("summary"), dict) else {}
     if int(realtime_summary.get("event_count") or 0) > 0:
@@ -1026,6 +1187,11 @@ def is_artifact_trust_workspace_finding(finding: dict[str, Any]) -> bool:
 def is_log_workspace_finding(finding: dict[str, Any]) -> bool:
     module = str(finding.get("module") or "")
     return module == "日志风险" or "日志" in module
+
+
+def is_multimodal_workspace_finding(finding: dict[str, Any]) -> bool:
+    module = str(finding.get("module") or "")
+    return module == "多模态证据" or "多模态" in module
 
 
 def workspace_risk_level(score: int) -> str:
@@ -1192,6 +1358,93 @@ def log_audit_to_workspace_findings(result: LogAuditResult) -> list[dict[str, An
             }
         )
     return findings
+
+
+def multimodal_payload_to_workspace_findings(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    evidence_items = payload.get("evidence") if isinstance(payload.get("evidence"), list) else []
+    for item in evidence_items:
+        if not isinstance(item, dict):
+            continue
+        evidence_id = str(item.get("evidence_id") or "")
+        source_name = str(item.get("original_filename") or item.get("filename") or evidence_id)
+        findings = item.get("findings") if isinstance(item.get("findings"), list) else []
+        for finding in findings:
+            if not isinstance(finding, dict):
+                continue
+            entities = finding.get("entities") if isinstance(finding.get("entities"), list) else []
+            entity_values = [
+                str(entity.get("value") or entity.get("normalized") or "")
+                for entity in entities
+                if isinstance(entity, dict) and (entity.get("value") or entity.get("normalized"))
+            ]
+            results.append(
+                {
+                    "id": finding.get("id") or stable_fallback_id("MMF", evidence_id, finding.get("rule_id")),
+                    "title": finding.get("title") or "多模态规则命中",
+                    "module": "多模态证据",
+                    "severity": finding.get("severity") or "medium",
+                    "score": int(finding.get("score") or 0),
+                    "asset": f"{source_name} ({evidence_id})",
+                    "evidence": (
+                        f"命中规则 {finding.get('rule_id') or '-'}；"
+                        f"关键词：{', '.join(str(value) for value in (finding.get('matched_keywords') or [])) or '-'}；"
+                        f"关联实体：{', '.join(entity_values[:8]) or '-'}。"
+                    ),
+                    "first_seen": str(finding.get("first_seen") or payload.get("generated_at") or "")[:16].replace("T", " "),
+                    "owner": "soc",
+                    "status": finding.get("recommendation") or "复核该多模态证据，并与日志、CI/CD 和 SBOM 证据交叉验证。",
+                }
+            )
+    return sorted(results, key=lambda value: (-int(value.get("score") or 0), str(value.get("id") or "")))[:20]
+
+
+def stable_fallback_id(prefix: str, *parts: Any) -> str:
+    raw = "|".join(str(part or "") for part in parts)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8].upper()
+    return f"{prefix}-{digest}"
+
+
+def augment_assistant_with_multimodal(payload: dict[str, Any]) -> None:
+    assistant = payload.get("assistant") if isinstance(payload.get("assistant"), dict) else {}
+    multimodal = payload.get("multimodal_audit") if isinstance(payload.get("multimodal_audit"), dict) else {}
+    summary = multimodal.get("summary") if isinstance(multimodal.get("summary"), dict) else {}
+    if not assistant or int(summary.get("evidence_count") or 0) <= 0:
+        return
+    evidence = [item for item in multimodal.get("evidence", []) if isinstance(item, dict)]
+    entity_values: list[str] = []
+    rule_values: list[str] = []
+    for item in evidence:
+        for entity in item.get("entities", []) if isinstance(item.get("entities"), list) else []:
+            if isinstance(entity, dict) and entity.get("value"):
+                entity_values.append(str(entity["value"]))
+        for finding in item.get("findings", []) if isinstance(item.get("findings"), list) else []:
+            if isinstance(finding, dict) and finding.get("rule_id"):
+                rule_values.append(str(finding["rule_id"]))
+    retrieval = list(assistant.get("retrieval") or [])
+    retrieval.extend(
+        [
+            f"Multimodal: evidence={summary.get('evidence_count', 0)} entities={summary.get('entity_count', 0)} findings={summary.get('finding_count', 0)}",
+            f"Multimodal entities: {', '.join(stable_unique_text(entity_values)[:8]) or '-'}",
+            f"Multimodal rules: {', '.join(stable_unique_text(rule_values)[:5]) or '-'}",
+        ]
+    )
+    assistant["retrieval"] = stable_unique_text(retrieval)
+    next_actions = list(assistant.get("next_actions") or [])
+    next_actions.insert(0, "将 OCR/ASR 识别到的依赖包、外联 IP、服务名和接口与 SBOM、CI/CD、日志同时间窗复核。")
+    assistant["next_actions"] = stable_unique_text(next_actions)[:8]
+
+
+def stable_unique_text(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        key = value.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(key)
+    return result
 
 
 def realtime_log_payload_to_workspace_logs(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1679,6 +1932,13 @@ async def dependency_audit_sbom() -> dict[str, Any]:
     return LAST_DEPENDENCY_AUDIT.sbom
 
 
+@router.get("/dependencies/vex")
+async def dependency_audit_vex() -> dict[str, Any]:
+    if LAST_DEPENDENCY_AUDIT is None:
+        return empty_dependency_audit_payload()["vex"]
+    return LAST_DEPENDENCY_AUDIT.vex
+
+
 @router.get("/dependencies/report")
 async def dependency_audit_report() -> dict[str, str]:
     if LAST_DEPENDENCY_AUDIT is None:
@@ -1789,6 +2049,67 @@ async def artifact_trust_report() -> dict[str, str]:
     if LAST_ARTIFACT_TRUST is None:
         return {"format": "markdown", "content": empty_artifact_trust_payload()["report"]}
     return {"format": "markdown", "content": LAST_ARTIFACT_TRUST.report}
+
+
+@router.post("/multimodal/scan")
+@router.post("/multimodal/scan/")
+async def multimodal_audit_scan(
+    files: list[UploadFile] | None = File(default=None),
+    file: UploadFile | None = File(default=None),
+) -> dict[str, Any]:
+    global LAST_MULTIMODAL_AUDIT
+    uploads = list(files or [])
+    if file is not None:
+        uploads.append(file)
+    try:
+        inputs = [
+            MultimodalFileInput(
+                filename=upload.filename or f"multimodal-{index + 1}.bin",
+                content=await upload.read(),
+                content_type=upload.content_type,
+            )
+            for index, upload in enumerate(uploads)
+        ]
+        LAST_MULTIMODAL_AUDIT = run_multimodal_audit(inputs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return latest_multimodal_payload(limit=500)
+
+
+@router.post("/multimodal/analyze-text")
+@router.post("/multimodal/analyze-text/")
+async def multimodal_text_analyze(payload: MultimodalTextAnalyzeRequest) -> dict[str, Any]:
+    global LAST_MULTIMODAL_AUDIT
+    evidence_type = payload.evidence_type or ("audio_asr" if payload.source_type == "audio" else "visual_ocr")
+    try:
+        LAST_MULTIMODAL_AUDIT = run_multimodal_text_audit(
+            [
+                MultimodalTextInput(
+                    recognized_text=payload.recognized_text,
+                    source_type=payload.source_type,
+                    evidence_type=evidence_type,
+                    source_name=payload.source_name,
+                    confidence=payload.confidence,
+                    engine=payload.engine,
+                    language=payload.language,
+                )
+            ]
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return latest_multimodal_payload(limit=500)
+
+
+@router.get("/multimodal/latest")
+@router.get("/multimodal/latest/")
+async def multimodal_audit_latest(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+    return latest_multimodal_payload(limit=limit)
+
+
+@router.get("/multimodal/report")
+@router.get("/multimodal/report/")
+async def multimodal_audit_report() -> dict[str, str]:
+    return {"format": "markdown", "content": latest_multimodal_payload()["report"]}
 
 
 @router.get("/cicd/state")
@@ -2109,7 +2430,32 @@ def fallback_assistant_answer(question: str, default_answer: str, workspace: dic
             if isinstance(step, dict)
         )
 
+    multimodal_answer = multimodal_corroboration_answer(question, workspace or {})
+    if multimodal_answer and (
+        "误报" in question
+        or "不是误报" in question
+        or "多模态" in question
+        or "截图" in question
+        or "语音" in question
+        or "ocr" in lower_question
+        or "asr" in lower_question
+    ):
+        return multimodal_answer
+
     if "误报" in question or "false" in lower_question:
+        dependency_audit = workspace.get("dependency_audit") if isinstance(workspace.get("dependency_audit"), dict) else {}
+        dependency_summary = dependency_audit.get("summary") if isinstance(dependency_audit.get("summary"), dict) else {}
+        vex_summary = dependency_summary.get("vex") if isinstance(dependency_summary.get("vex"), dict) else {}
+        if vex_summary:
+            affected = int(vex_summary.get("affected") or 0)
+            not_affected = int(vex_summary.get("not_affected") or 0)
+            fixed = int(vex_summary.get("fixed") or 0)
+            investigation = int(vex_summary.get("under_investigation") or 0)
+            return (
+                f"当前 VEX 降噪结论：affected {affected} 条，under_investigation {investigation} 条，"
+                f"not_affected/fixed {not_affected + fixed} 条。建议优先处理 affected；"
+                "not_affected 需要保留代码不可达、服务未暴露或日志无痕迹的证据，代码 import/路由/日志变化后重新生成 VEX。"
+            )
         if path:
             return f"误报概率取决于证据缺口。当前路径判定为 {path.get('verdict')}，置信度 {confidence}%。{conclusion} 需要重点复核：{gap_text}"
         return "误报概率需要结合路径证据判断：至少要有入口、可达关系、运行期行为或 provenance 证据。当前还没有足够图谱路径可判定。"
@@ -2122,6 +2468,49 @@ def fallback_assistant_answer(question: str, default_answer: str, workspace: dic
             return f"{conclusion} 路径大致为：{step_text or '入口 -> 构建 -> 产物 -> 运行期目标'}。证据缺口：{gap_text}"
         return "当前证据还不能串成真实攻击路径。需要补齐 GUAC 式软件依赖可达关系、in-toto/SLSA 构建 provenance，以及运行期日志或目标资产触达证据。"
     return default_answer
+
+
+def multimodal_corroboration_answer(question: str, workspace: dict[str, Any]) -> str | None:
+    multimodal = workspace.get("multimodal_audit") if isinstance(workspace.get("multimodal_audit"), dict) else {}
+    summary = multimodal.get("summary") if isinstance(multimodal.get("summary"), dict) else {}
+    if int(summary.get("evidence_count") or 0) <= 0:
+        return None
+    evidence = [item for item in multimodal.get("evidence", []) if isinstance(item, dict)]
+    entities_by_type: dict[str, list[str]] = {}
+    rules: list[str] = []
+    source_types: set[str] = set()
+    for item in evidence:
+        source_types.add(str(item.get("source_type") or "multimodal"))
+        for entity in item.get("entities", []) if isinstance(item.get("entities"), list) else []:
+            if isinstance(entity, dict) and entity.get("value"):
+                entities_by_type.setdefault(str(entity.get("type") or "entity"), []).append(str(entity["value"]))
+        for finding in item.get("findings", []) if isinstance(item.get("findings"), list) else []:
+            if isinstance(finding, dict) and finding.get("rule_id"):
+                rules.append(str(finding["rule_id"]))
+    ip_values = stable_unique_text(entities_by_type.get("ip", []))
+    package_values = stable_unique_text(entities_by_type.get("package", []))
+    service_values = stable_unique_text(entities_by_type.get("service", []))
+    api_values = stable_unique_text(entities_by_type.get("api_path", []))
+    action_values = stable_unique_text(entities_by_type.get("action", []))
+    log_hits = [
+        log for log in workspace.get("logs", [])
+        if isinstance(log, dict)
+        and any(value and value in str(log.get("event") or "") for value in ip_values + api_values + service_values)
+    ]
+    source_label = "、".join(sorted(source_types)) or "多模态"
+    log_text = "运行日志中也出现相同 IP、服务或接口。" if log_hits else "当前多模态证据已成链，但还需要补充同时间窗运行日志来进一步降低误报。"
+    return (
+        f"不是只靠一段文字下结论。当前 {source_label} 证据共 {summary.get('evidence_count', 0)} 条，"
+        f"抽取到 {summary.get('entity_count', 0)} 个安全实体，命中 {summary.get('finding_count', 0)} 条规则，"
+        f"最高风险 {summary.get('risk_score', 0)}。"
+        f"OCR/ASR 证据显示构建阶段存在 {', '.join(action_values[:4]) or '可疑行为'}，"
+        f"关联依赖 {', '.join(package_values[:3]) or '-'}，"
+        f"外联目标 {', '.join(ip_values[:3]) or '-'}，"
+        f"服务/接口 {', '.join((service_values + api_values)[:4]) or '-'}。"
+        f"{log_text} "
+        f"因此它更像跨模态证据互相印证的供应链攻击路径，而不是单点 OCR/ASR 误报。"
+        f"命中规则：{', '.join(stable_unique_text(rules)[:5]) or '-'}。"
+    )
 
 
 def primary_attack_path(workspace: dict[str, Any]) -> dict[str, Any] | None:

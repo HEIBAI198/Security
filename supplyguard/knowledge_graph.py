@@ -47,6 +47,16 @@ REFERENCE_MODELS: list[dict[str, Any]] = [
         "url": "https://docs.defectdojo.com/",
         "used_for": ["Finding import", "deduplication", "prioritized triage", "reporting"],
     },
+    {
+        "name": "FFmpeg",
+        "url": "https://www.ffmpeg.org/index.html",
+        "used_for": ["audio normalization", "video frame extraction", "multimodal evidence metadata"],
+    },
+    {
+        "name": "OpenCV",
+        "url": "https://opencv.org/about/",
+        "used_for": ["image preprocessing", "video frame metadata", "multimodal evidence enrichment"],
+    },
 ]
 
 GRAPH_REFERENCE_MODELS: list[dict[str, Any]] = [
@@ -107,6 +117,11 @@ NODE_TYPE_RANK = {
     "TrustFinding": 8,
     "RuntimeService": 7,
     "LogEvent": 8,
+    "AudioEvidence": 8,
+    "VisualEvidence": 8,
+    "MultimodalEvidence": 8,
+    "MultimodalFinding": 8,
+    "RecognizedEntity": 8,
     "AttackStage": 9,
     "Finding": 8,
     "EvidenceChain": 10,
@@ -208,6 +223,8 @@ class AttackPath:
     path_steps: list[dict[str, Any]] = field(default_factory=list)
     evidence_summary: list[dict[str, Any]] = field(default_factory=list)
     trust_chain: list[dict[str, Any]] = field(default_factory=list)
+    checks: list[dict[str, Any]] = field(default_factory=list)
+    trust_score: int | None = None
     gaps: list[str] = field(default_factory=list)
     choke_points: list[dict[str, Any]] = field(default_factory=list)
     mappings: list[dict[str, Any]] = field(default_factory=list)
@@ -981,6 +998,10 @@ def add_workspace_fallback_facts(builder: FactBuilder, payload: dict[str, Any]) 
             source_model="NormalizedLogEvent",
         )
 
+    multimodal = payload.get("multimodal_audit") if isinstance(payload.get("multimodal_audit"), dict) else {}
+    for item in ensure_dicts(multimodal.get("evidence")):
+        add_multimodal_evidence_fact(builder, item)
+
     for finding in ensure_dicts(payload.get("findings")):
         finding_id = str(finding.get("id") or stable_id("workspace-finding", finding.get("title"), finding.get("asset")))
         if finding_id in builder.findings:
@@ -1027,6 +1048,179 @@ def add_workspace_fallback_facts(builder: FactBuilder, payload: dict[str, Any]) 
                 first_seen=str(finding.get("first_seen") or "")[:16],
                 status=str(finding.get("status") or "open"),
                 properties={"owner": finding.get("owner"), "module": finding.get("module")},
+            )
+        )
+
+
+def add_multimodal_evidence_fact(builder: FactBuilder, item: dict[str, Any]) -> None:
+    source = "multimodal_audit"
+    source_model = "ASR/OCR + Sigma-style rules"
+    evidence_id = str(item.get("evidence_id") or stable_id("multimodal", item.get("file_path"), item.get("sha256")))
+    source_type = str(item.get("source_type") or "multimodal")
+    label = str(item.get("original_filename") or item.get("filename") or evidence_id)
+    risk_score = int(item.get("risk_score") or 0)
+    risk_level = str(item.get("risk_level") or severity_from_score(risk_score))
+    asset_type = "AudioEvidence" if source_type == "audio" else "VisualEvidence" if source_type in {"image", "video"} else "MultimodalEvidence"
+    asset_id = builder.add_asset(
+        FactAsset(
+            id=stable_id("asset", "multimodal", evidence_id),
+            type=asset_type,
+            label=label,
+            source=source,
+            source_model=source_model,
+            risk_score=risk_score,
+            risk_level=risk_level,
+            locator={"path": item.get("relative_path") or item.get("file_path")},
+            properties=compact_dict(
+                {
+                    "evidence_id": evidence_id,
+                    "source_type": source_type,
+                    "mime_type": item.get("mime_type"),
+                    "size_bytes": item.get("size_bytes"),
+                    "sha256": item.get("sha256"),
+                    "file_path": item.get("file_path"),
+                    "relative_path": item.get("relative_path"),
+                    "metadata": item.get("metadata"),
+                    "derived": item.get("derived"),
+                    "recognitions": item.get("recognitions"),
+                    "entities": item.get("entities"),
+                    "findings": item.get("findings"),
+                }
+            ),
+        )
+    )
+    entity_asset_ids: list[str] = []
+    for entity in ensure_dicts(item.get("entities")):
+        entity_type = str(entity.get("type") or "entity")
+        entity_value = str(entity.get("normalized") or entity.get("value") or "")
+        if not entity_value:
+            continue
+        entity_asset_id = builder.add_asset(
+            FactAsset(
+                id=stable_id("asset", "multimodal-entity", entity_type, entity_value),
+                type="RecognizedEntity",
+                label=f"{entity_type}:{entity_value}",
+                source=source,
+                source_model="Regex/Keyword Entity Extraction",
+                risk_score=risk_score,
+                risk_level=risk_level,
+                locator={"path": item.get("relative_path") or item.get("file_path")},
+                properties=compact_dict({**entity, "evidence_id": evidence_id}),
+            )
+        )
+        entity_asset_ids.append(entity_asset_id)
+        builder.add_evidence(
+            FactEvidence(
+                id=stable_id("evidence", source, evidence_id, "entity", entity_type, entity_value),
+                source=source,
+                source_model="Regex/Keyword Entity Extraction",
+                kind="recognized-security-entity",
+                title=f"{entity_type}: {entity_value}",
+                detail=str(entity.get("evidence") or entity.get("value") or entity_value),
+                asset_id=entity_asset_id,
+                time=str(item.get("uploaded_at") or "")[:19],
+                confidence=safe_float(entity.get("confidence")),
+                properties=compact_dict({"source_evidence_id": evidence_id, "source_asset_id": asset_id}),
+            )
+        )
+    builder.add_evidence(
+        FactEvidence(
+            id=stable_id("evidence", source, evidence_id),
+            source=source,
+            source_model=source_model,
+            kind="multimodal-evidence-source",
+            title=f"{source_type} evidence: {label}",
+            detail=f"{evidence_id} stored at {item.get('relative_path') or item.get('file_path')}",
+            asset_id=asset_id,
+            time=str(item.get("uploaded_at") or "")[:19],
+            locator={"path": item.get("relative_path") or item.get("file_path")},
+            confidence=1.0,
+            properties=compact_dict(
+                {
+                    "sha256": item.get("sha256"),
+                    "mime_type": item.get("mime_type"),
+                    "metadata": item.get("metadata"),
+                    "derived": item.get("derived"),
+                }
+            ),
+        )
+    )
+    recognition_evidence_ids: list[str] = []
+    for index, recognition in enumerate(ensure_dicts(item.get("recognitions")), start=1):
+        text = str(recognition.get("recognized_text") or "").strip()
+        if not text:
+            continue
+        recognition_evidence_id = stable_id("evidence", source, evidence_id, recognition.get("evidence_type"), index, text[:80])
+        recognition_evidence_ids.append(recognition_evidence_id)
+        builder.add_evidence(
+            FactEvidence(
+                id=recognition_evidence_id,
+                source=source,
+                source_model=str(recognition.get("engine") or source_model),
+                kind=str(recognition.get("evidence_type") or "recognized-text"),
+                title=f"{recognition.get('evidence_type') or 'text evidence'}: {label}",
+                detail=text,
+                asset_id=asset_id,
+                time=str(recognition.get("created_at") or item.get("uploaded_at") or "")[:19],
+                locator={"path": recognition.get("source_path") or item.get("relative_path") or item.get("file_path")},
+                confidence=float(recognition.get("confidence") or 0),
+                properties=compact_dict(
+                    {
+                        "source_type": recognition.get("source_type"),
+                        "engine": recognition.get("engine"),
+                        "language": recognition.get("language"),
+                        "segments": recognition.get("segments"),
+                    }
+                ),
+            )
+        )
+    for finding in ensure_dicts(item.get("findings")):
+        finding_id = str(finding.get("id") or stable_id("finding", source, evidence_id, finding.get("rule_id")))
+        finding_evidence_id = builder.add_evidence(
+            FactEvidence(
+                id=stable_id("evidence", source, finding_id),
+                source=source,
+                source_model="Sigma-style YAML rule",
+                kind="multimodal-rule-match",
+                title=str(finding.get("title") or finding.get("rule_id") or finding_id),
+                detail=str(finding.get("evidence") or ""),
+                asset_id=asset_id,
+                time=str(finding.get("first_seen") or item.get("uploaded_at") or "")[:19],
+                confidence=safe_float(finding.get("confidence")),
+                properties=compact_dict(
+                    {
+                        "rule_id": finding.get("rule_id"),
+                        "matched_keywords": finding.get("matched_keywords"),
+                        "entities": finding.get("entities"),
+                        "references": finding.get("references"),
+                    }
+                ),
+            )
+        )
+        builder.add_finding(
+            FactFinding(
+                id=finding_id,
+                title=str(finding.get("title") or finding.get("rule_id") or finding_id),
+                severity=str(finding.get("severity") or "medium"),
+                score=int(finding.get("score") or score_from_severity(str(finding.get("severity") or "medium"))),
+                source=source,
+                source_model="Sigma-style YAML rule",
+                asset_ids=stable_unique([asset_id] + entity_asset_ids),
+                evidence_ids=stable_unique([finding_evidence_id] + recognition_evidence_ids),
+                fingerprint=str(finding.get("fingerprint") or stable_id("finding", source, finding_id)),
+                recommendation=str(finding.get("recommendation") or ""),
+                category="多模态证据",
+                first_seen=str(finding.get("first_seen") or "")[:16],
+                status="open",
+                properties=compact_dict(
+                    {
+                        "rule_id": finding.get("rule_id"),
+                        "matched_keywords": finding.get("matched_keywords"),
+                        "entities": finding.get("entities"),
+                        "references": finding.get("references"),
+                        "tags": finding.get("tags"),
+                    }
+                ),
             )
         )
 
@@ -1087,6 +1281,11 @@ def choose_graph_assets(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "Workflow",
             "SourceCommit",
             "LogEvent",
+            "AudioEvidence",
+            "VisualEvidence",
+            "MultimodalEvidence",
+            "MultimodalFinding",
+            "RecognizedEntity",
             "EvidenceChain",
         }:
             selected.append(asset)
@@ -1128,10 +1327,11 @@ def asset_to_graph_node(asset: dict[str, Any], evidence: list[dict[str, Any]]) -
 def finding_to_graph_node(finding: dict[str, Any]) -> GraphNode:
     finding_id = finding_node_id(finding)
     score = int(finding.get("score") or 0)
+    node_type = "MultimodalFinding" if str(finding.get("source") or "") == "multimodal_audit" else "Finding"
     return GraphNode(
         id=finding_id,
         label=str(finding.get("title") or finding.get("id") or "Finding"),
-        type="Finding",
+        type=node_type,
         risk=normalize_severity(str(finding.get("severity") or severity_from_score(score))),
         description=str(finding.get("recommendation") or finding.get("category") or "Normalized security finding."),
         score=score,
@@ -1201,6 +1401,23 @@ def node_description(asset_type: str, asset: dict[str, Any], evidence: list[dict
         signal = properties.get("signal")
         event = properties.get("event")
         return str(signal or event or "Normalized runtime log event.")
+    if asset_type in {"AudioEvidence", "VisualEvidence", "MultimodalEvidence"}:
+        source_type = properties.get("source_type")
+        path = properties.get("relative_path") or properties.get("file_path") or asset.get("label")
+        findings = ensure_list(properties.get("findings"))
+        entities = ensure_list(properties.get("entities"))
+        if findings:
+            return f"{source_type or 'multimodal'} evidence stored at {path}; {len(findings)} rule finding(s), {len(entities)} extracted entity/entities."
+        return f"{source_type or 'multimodal'} evidence source stored at {path}."
+    if asset_type == "MultimodalFinding":
+        raw = properties.get("properties") if isinstance(properties.get("properties"), dict) else {}
+        keywords = ensure_list(raw.get("matched_keywords"))
+        rule_id = raw.get("rule_id")
+        return f"Sigma-style multimodal rule finding {rule_id or ''}; matched keywords: {', '.join(str(item) for item in keywords[:5]) or 'n/a'}."
+    if asset_type == "RecognizedEntity":
+        entity_type = properties.get("type") or "entity"
+        value = properties.get("normalized") or properties.get("value") or asset.get("label")
+        return f"Security entity extracted from ASR/OCR text: {entity_type}={value}."
     if asset_type == "AttackStage":
         return str(asset.get("description") or "Mapped attack stage.")
     if evidence:
@@ -1330,6 +1547,60 @@ def add_artifact_trust_edges(
                 properties={"model": "SLSA/in-toto", "relationship": "artifact attested by provenance"},
             )
         )
+    if source_commit is not None and workflow is not None:
+        builder.add_edge(
+            GraphEdge(
+                id=stable_id("edge", "SOURCE_COMMIT_TRIGGERS_WORKFLOW", source_commit.id, workflow.id),
+                source=source_commit.id,
+                target=workflow.id,
+                type="SOURCE_COMMIT_TRIGGERS_WORKFLOW",
+                label="triggers workflow",
+                confidence=0.9,
+                reason="Provenance binds the source repository commit/ref to the release workflow invocation.",
+                evidence_ids=stable_unique(source_commit.evidence_ids + workflow.evidence_ids),
+                properties={
+                    "model": "SLSA materials",
+                    "relationship": "source commit triggers release workflow",
+                    "trust": "Repo, commit/ref, and workflow must match the release policy.",
+                },
+            )
+        )
+    if workflow is not None and trusted_builder is not None:
+        builder.add_edge(
+            GraphEdge(
+                id=stable_id("edge", "WORKFLOW_RUNS_ON_BUILDER", workflow.id, trusted_builder.id),
+                source=workflow.id,
+                target=trusted_builder.id,
+                type="WORKFLOW_RUNS_ON_BUILDER",
+                label="runs on",
+                confidence=0.9,
+                reason="Provenance runDetails links the allowed workflow to the trusted builder identity.",
+                evidence_ids=stable_unique(workflow.evidence_ids + trusted_builder.evidence_ids),
+                properties={
+                    "model": "SLSA builder identity",
+                    "relationship": "workflow runs on trusted builder",
+                    "trust": "Builder identity and runner environment are checked against trust policy.",
+                },
+            )
+        )
+    if trusted_builder is not None:
+        builder.add_edge(
+            GraphEdge(
+                id=stable_id("edge", "BUILDER_PRODUCES_ARTIFACT", trusted_builder.id, artifact.id),
+                source=trusted_builder.id,
+                target=artifact.id,
+                type="BUILDER_PRODUCES_ARTIFACT",
+                label="produces artifact",
+                confidence=0.88,
+                reason="Trusted builder identity is the execution root that produced the artifact subject digest.",
+                evidence_ids=stable_unique(trusted_builder.evidence_ids + artifact.evidence_ids),
+                properties={
+                    "model": "SLSA provenance",
+                    "relationship": "trusted builder produces artifact",
+                    "trust": "Artifact digest must match the attested subject produced by this builder.",
+                },
+            )
+        )
     if attestation is not None and source_commit is not None:
         builder.add_edge(
             GraphEdge(
@@ -1388,6 +1659,155 @@ def add_artifact_trust_edges(
                 properties={"model": "DefectDojo-style finding", "relationship": "finding affects artifact"},
             )
         )
+        if attestation is not None:
+            builder.add_edge(
+                GraphEdge(
+                    id=stable_id("edge", "TRUST_FINDING_AFFECTS_ATTESTATION", finding.id, attestation.id),
+                    source=finding.id,
+                    target=attestation.id,
+                    type="TRUST_FINDING_AFFECTS_ATTESTATION",
+                    label="blocks proof",
+                    confidence=0.9,
+                    reason="Artifact trust finding blocks or weakens the provenance proof chain.",
+                    evidence_ids=stable_unique(finding.evidence_ids + attestation.evidence_ids),
+                    properties={"model": "SLSA/in-toto policy", "relationship": "finding blocks provenance proof"},
+                )
+            )
+
+
+def add_multimodal_evidence_edges(
+    builder: GraphBuilder,
+    evidence_nodes: list[GraphNode],
+    entity_nodes: list[GraphNode],
+    finding_nodes: list[GraphNode],
+    dependency_nodes: list[GraphNode],
+    ci_nodes: list[GraphNode],
+    log_nodes: list[GraphNode],
+    service_id: str,
+) -> None:
+    for evidence in evidence_nodes:
+        evidence_props = raw_node_properties(evidence)
+        evidence_id = str(evidence_props.get("evidence_id") or "")
+        if not evidence_id:
+            continue
+        related_entities = [
+            entity for entity in entity_nodes
+            if str(raw_node_properties(entity).get("evidence_id") or "") == evidence_id
+        ]
+        related_findings = [
+            finding for finding in finding_nodes
+            if set(finding.evidence_ids).intersection(evidence.evidence_ids)
+            or evidence_id in str(finding.properties)
+        ]
+        for entity in related_entities:
+            builder.add_edge(
+                GraphEdge(
+                    id=stable_id("edge", "MULTIMODAL_EXTRACTS_ENTITY", evidence.id, entity.id),
+                    source=evidence.id,
+                    target=entity.id,
+                    type="MULTIMODAL_EXTRACTS_ENTITY",
+                    label="识别出实体",
+                    confidence=max(0.72, min(0.96, entity.score / 100 if entity.score else 0.82)),
+                    reason="OpenCTI-style observable extracted from ASR/OCR text and attached to the evidence source.",
+                    evidence_ids=stable_unique(evidence.evidence_ids + entity.evidence_ids),
+                    properties={"model": "OpenCTI Observable", "relationship": "evidence extracts observable"},
+                )
+            )
+        for finding in related_findings:
+            builder.add_edge(
+                GraphEdge(
+                    id=stable_id("edge", "MULTIMODAL_TRIGGERS_RULE", evidence.id, finding.id),
+                    source=evidence.id,
+                    target=finding.id,
+                    type="MULTIMODAL_TRIGGERS_RULE",
+                    label="触发规则",
+                    confidence=0.9,
+                    reason="Sigma-style multimodal rule matched recognized text from this evidence source.",
+                    evidence_ids=stable_unique(evidence.evidence_ids + finding.evidence_ids),
+                    properties={"model": "Sigma/Wazuh", "relationship": "recognized text triggers rule finding"},
+                )
+            )
+            for entity in related_entities:
+                builder.add_edge(
+                    GraphEdge(
+                        id=stable_id("edge", "MULTIMODAL_FINDING_REFERENCES_ENTITY", finding.id, entity.id),
+                        source=finding.id,
+                        target=entity.id,
+                        type="MULTIMODAL_FINDING_REFERENCES_ENTITY",
+                        label="关联实体",
+                        confidence=0.88,
+                        reason="Multimodal rule finding contains this extracted observable in matched entities.",
+                        evidence_ids=stable_unique(finding.evidence_ids + entity.evidence_ids),
+                        properties={"model": "OpenCTI Relationship", "relationship": "finding references observable"},
+                    )
+                )
+    for entity in entity_nodes:
+        props = raw_node_properties(entity)
+        entity_type = str(props.get("type") or "")
+        entity_value = str(props.get("normalized") or props.get("value") or entity.label).lower()
+        if not entity_value:
+            continue
+        if entity_type == "package":
+            for dependency in matching_nodes_by_text(dependency_nodes, (entity_value,)):
+                builder.add_edge(
+                    GraphEdge(
+                        id=stable_id("edge", "ENTITY_CORRELATES_DEPENDENCY", entity.id, dependency.id),
+                        source=entity.id,
+                        target=dependency.id,
+                        type="ENTITY_CORRELATES_DEPENDENCY",
+                        label="关联依赖包",
+                        confidence=0.88,
+                        reason="GUAC-style package observable matches an SBOM dependency component.",
+                        evidence_ids=stable_unique(entity.evidence_ids + dependency.evidence_ids),
+                        properties={"model": "GUAC", "relationship": "observable package maps to component"},
+                    )
+                )
+        if entity_type in {"action", "package"}:
+            for ci in matching_nodes_by_text(ci_nodes, (entity_value, "postinstall", "curl", "npm", "install"))[:3]:
+                builder.add_edge(
+                    GraphEdge(
+                        id=stable_id("edge", "ENTITY_OBSERVED_IN_BUILD", entity.id, ci.id),
+                        source=entity.id,
+                        target=ci.id,
+                        type="ENTITY_OBSERVED_IN_BUILD",
+                        label="构建中出现",
+                        confidence=0.76,
+                        reason="ASR/OCR observable names build-time behavior also present in CI/CD context.",
+                        evidence_ids=stable_unique(entity.evidence_ids + ci.evidence_ids),
+                        properties={"model": "GUAC Evidence tree", "relationship": "observable appears in build"},
+                    )
+                )
+        if entity_type == "service" and service_id in builder.nodes:
+            service = builder.nodes[service_id]
+            if entity_value in node_search_text(service).lower():
+                builder.add_edge(
+                    GraphEdge(
+                        id=stable_id("edge", "ENTITY_CORRELATES_SERVICE", entity.id, service.id),
+                        source=entity.id,
+                        target=service.id,
+                        type="ENTITY_CORRELATES_SERVICE",
+                        label="关联运行服务",
+                        confidence=0.86,
+                        reason="OpenCTI observable service name matches the runtime service anchor.",
+                        evidence_ids=stable_unique(entity.evidence_ids + service.evidence_ids),
+                        properties={"model": "OpenCTI Observable", "relationship": "observable maps to infrastructure/service"},
+                    )
+                )
+        if entity_type in {"ip", "api_path", "action", "service"}:
+            for log in matching_nodes_by_text(log_nodes, (entity_value,))[:4]:
+                builder.add_edge(
+                    GraphEdge(
+                        id=stable_id("edge", "ENTITY_CORRELATES_LOG", entity.id, log.id),
+                        source=entity.id,
+                        target=log.id,
+                        type="ENTITY_CORRELATES_LOG",
+                        label="日志印证",
+                        confidence=0.84,
+                        reason="OpenCTI observable from ASR/OCR text appears in runtime log evidence.",
+                        evidence_ids=stable_unique(entity.evidence_ids + log.evidence_ids),
+                        properties={"model": "OpenCTI/NetworkX", "relationship": "observable correlated with log"},
+                    )
+                )
 
 
 def add_rule_edges_and_attack_paths(
@@ -1406,7 +1826,10 @@ def add_rule_edges_and_attack_paths(
     workflows = nodes_by_type(builder, "Workflow")
     source_commits = nodes_by_type(builder, "SourceCommit")
     logs = nodes_by_type(builder, "LogEvent")
-    findings = nodes_by_type(builder, "Finding")
+    findings = nodes_by_type(builder, "Finding") + nodes_by_type(builder, "MultimodalFinding")
+    multimodal_evidence = nodes_by_type(builder, "AudioEvidence") + nodes_by_type(builder, "VisualEvidence") + nodes_by_type(builder, "MultimodalEvidence")
+    multimodal_findings = nodes_by_type(builder, "MultimodalFinding")
+    recognized_entities = nodes_by_type(builder, "RecognizedEntity")
     artifact_id = build_artifact_node_id(workspace_payload)
     service_id = runtime_service_node_id(workspace_payload)
 
@@ -1423,6 +1846,16 @@ def add_rule_edges_and_attack_paths(
     if top_artifact is not None:
         artifact_id = top_artifact.id
     add_artifact_trust_edges(builder, top_artifact, top_attestation, top_builder, top_workflow, top_commit, findings)
+    add_multimodal_evidence_edges(
+        builder,
+        multimodal_evidence,
+        recognized_entities,
+        multimodal_findings,
+        dependencies,
+        ci_steps,
+        logs,
+        service_id,
+    )
     if top_artifact is not None and top_artifact.id != build_artifact_node_id(workspace_payload):
         builder.add_edge(
             GraphEdge(
@@ -1611,6 +2044,57 @@ def add_rule_edges_and_attack_paths(
             )
         )
 
+    top_multimodal_evidence, top_multimodal_finding, observable_node = choose_multimodal_path_seed(
+        builder,
+        multimodal_evidence,
+        multimodal_findings,
+        recognized_entities,
+    )
+    if top_multimodal_evidence and top_multimodal_finding and observable_node and top_dependency and top_ci and top_log:
+        path_nodes = stable_unique(
+            [
+                top_multimodal_evidence.id,
+                top_multimodal_finding.id,
+                observable_node.id,
+                top_dependency.id,
+                top_ci.id,
+                artifact_id,
+                service_id,
+                top_log.id,
+                supply_stage,
+            ]
+        )
+        builder.add_attack_path(
+            AttackPath(
+                id=stable_id("attack-path", "multimodal-supply-chain", *path_nodes),
+                title="多模态证据印证供应链投毒到运行期异常路径",
+                category="multimodal-supply-chain-correlation",
+                severity="critical",
+                score=path_score([top_multimodal_evidence, top_multimodal_finding, observable_node, top_dependency, top_ci, top_log], bonus=16),
+                description="ASR/OCR 证据、规则命中、包名/IP/接口等 observable、SBOM 依赖、CI/CD 构建和运行期日志在同一条证据链上相互印证。",
+                conclusion=path_conclusion("multimodal-supply-chain-correlation", path_nodes, builder, evidence_by_id),
+                verdict=path_verdict("multimodal-supply-chain-correlation", path_nodes, builder, evidence_by_id),
+                confidence=path_confidence(path_nodes, builder, evidence_by_id),
+                entry_node_id=top_multimodal_evidence.id,
+                target_node_id=top_log.id,
+                node_ids=path_nodes,
+                edge_ids=edge_ids_for_path(builder, path_nodes),
+                evidence_ids=evidence_ids_for_nodes(builder, path_nodes),
+                recommendation="优先封堵 OCR/ASR 中识别到的依赖包、外联 IP 和敏感接口，并把同时间窗的 CI/CD、SBOM、运行日志作为取证材料保留。",
+                path_steps=path_steps_for_path(builder, path_nodes),
+                evidence_summary=evidence_summary_for_path(builder, path_nodes, evidence_by_id),
+                trust_chain=trust_chain_for_path(builder, path_nodes),
+                gaps=evidence_gaps_for_path("multimodal-supply-chain-correlation", path_nodes, builder, evidence_by_id),
+                choke_points=choke_points_for_path(builder, path_nodes),
+                mappings=[
+                    {"framework": "GUAC", "name": "software/evidence tree correlation"},
+                    {"framework": "OpenCTI", "name": "observable confidence and relationship graph"},
+                    {"framework": "NetworkX", "name": "path scoring and source diversity"},
+                ],
+                references=["GUAC", "OpenCTI", "NetworkX", "Sigma", "Wazuh"],
+            )
+        )
+
     if top_dependency and top_ci and top_log:
         path_nodes = stable_unique(
             [
@@ -1735,22 +2219,24 @@ def add_rule_edges_and_attack_paths(
                 node_id_or_empty(top_builder),
                 top_artifact.id,
                 top_attestation.id,
-                node_id_or_empty(top_trust_finding),
-                build_stage,
             ]
+            + ([node_id_or_empty(top_trust_finding), build_stage] if top_trust_finding else [])
         )
+        trust_checks = artifact_trust_checks_for_path(workspace_payload)
+        trust_score = artifact_trust_score_for_path(workspace_payload, top_artifact)
+        is_verified_provenance = top_trust_finding is None
         path_severity = top_trust_finding.risk if top_trust_finding else top_artifact.risk
         builder.add_attack_path(
             AttackPath(
                 id=stable_id("attack-path", "artifact-trust", *path_nodes),
                 title="产物可信链路验证路径",
-                category="artifact-trust",
+                category="verified-provenance-chain" if is_verified_provenance else "artifact-trust",
                 severity=path_severity,
-                score=path_score([node for node in [top_artifact, top_attestation, top_trust_finding] if node is not None], bonus=10),
+                score=trust_score or path_score([node for node in [top_artifact, top_attestation, top_trust_finding] if node is not None], bonus=10),
                 description="commit、workflow、builder、artifact 与 provenance attestation 已被串成发布前/部署前可信验证链。",
                 conclusion=artifact_trust_path_conclusion(path_nodes, builder),
-                verdict="provenance-risk-path" if top_trust_finding else "verified-provenance-chain",
-                confidence=path_confidence(path_nodes, builder, evidence_by_id),
+                verdict="verified-provenance-chain" if is_verified_provenance else "provenance-risk-path",
+                confidence=artifact_trust_confidence_for_path(trust_score, trust_checks, path_nodes, builder, evidence_by_id),
                 entry_node_id=first_node_id(path_nodes),
                 target_node_id=top_artifact.id,
                 node_ids=path_nodes,
@@ -1760,6 +2246,8 @@ def add_rule_edges_and_attack_paths(
                 path_steps=path_steps_for_path(builder, path_nodes),
                 evidence_summary=evidence_summary_for_path(builder, path_nodes, evidence_by_id),
                 trust_chain=trust_chain_for_path(builder, path_nodes),
+                checks=trust_checks,
+                trust_score=trust_score,
                 gaps=evidence_gaps_for_path("artifact-trust", path_nodes, builder, evidence_by_id),
                 choke_points=choke_points_for_path(builder, path_nodes),
                 mappings=[{"framework": "SLSA", "name": "Verify artifact provenance"}],
@@ -1810,6 +2298,27 @@ def nodes_by_type(builder: GraphBuilder, node_type: str) -> list[GraphNode]:
     return [node for node in builder.nodes.values() if node.type == node_type]
 
 
+def raw_node_properties(node: GraphNode) -> dict[str, Any]:
+    props = node.properties.get("properties") if isinstance(node.properties.get("properties"), dict) else {}
+    return props if isinstance(props, dict) else {}
+
+
+def node_search_text(node: GraphNode) -> str:
+    return f"{node.id} {node.label} {node.type} {node.description} {node.source} {node.source_model} {node.properties}"
+
+
+def matching_nodes_by_text(nodes: list[GraphNode], tokens: tuple[str, ...]) -> list[GraphNode]:
+    clean_tokens = [token.lower().strip() for token in tokens if token and token.strip()]
+    if not clean_tokens:
+        return []
+    matches = []
+    for node in nodes:
+        searchable = node_search_text(node).lower()
+        if any(token in searchable for token in clean_tokens):
+            matches.append(node)
+    return sorted(matches, key=lambda item: (-item.score, item.label))
+
+
 def top_node(nodes: list[GraphNode]) -> GraphNode | None:
     if not nodes:
         return None
@@ -1832,6 +2341,59 @@ def choose_log_node(nodes: list[GraphNode], tokens: tuple[str, ...]) -> GraphNod
         if any(token.lower() in searchable for token in tokens):
             candidates.append(node)
     return top_node(candidates)
+
+
+def choose_entity_node(nodes: list[GraphNode], entity_type: str) -> GraphNode | None:
+    candidates = [
+        node for node in nodes
+        if str(raw_node_properties(node).get("type") or "").lower() == entity_type.lower()
+    ]
+    return top_node(candidates)
+
+
+def choose_multimodal_path_seed(
+    builder: GraphBuilder,
+    evidence_nodes: list[GraphNode],
+    finding_nodes: list[GraphNode],
+    entity_nodes: list[GraphNode],
+) -> tuple[GraphNode | None, GraphNode | None, GraphNode | None]:
+    evidence_by_id = {node.id: node for node in evidence_nodes}
+    finding_by_id = {node.id: node for node in finding_nodes}
+    entity_by_id = {node.id: node for node in entity_nodes}
+    preferred_entity_types = {"package": 0, "ip": 1, "api_path": 2, "service": 3, "action": 4}
+    candidates: list[tuple[int, GraphNode, GraphNode, GraphNode]] = []
+    for edge in builder.edges.values():
+        if edge.type != "MULTIMODAL_TRIGGERS_RULE":
+            continue
+        evidence = evidence_by_id.get(edge.source)
+        finding = finding_by_id.get(edge.target)
+        if evidence is None or finding is None:
+            continue
+        entity_edges = [
+            item for item in builder.edges.values()
+            if item.source == finding.id
+            and item.target in entity_by_id
+            and item.type == "MULTIMODAL_FINDING_REFERENCES_ENTITY"
+        ]
+        if not entity_edges:
+            entity_edges = [
+                item for item in builder.edges.values()
+                if item.source == evidence.id
+                and item.target in entity_by_id
+                and item.type == "MULTIMODAL_EXTRACTS_ENTITY"
+            ]
+        for entity_edge in entity_edges:
+            entity = entity_by_id.get(entity_edge.target)
+            if entity is None:
+                continue
+            entity_type = str(raw_node_properties(entity).get("type") or "")
+            rank = preferred_entity_types.get(entity_type, 9)
+            score = finding.score + evidence.score + entity.score - rank * 4
+            candidates.append((score, evidence, finding, entity))
+    if candidates:
+        _, evidence, finding, entity = sorted(candidates, key=lambda item: (-item[0], item[1].label, item[2].label))[0]
+        return evidence, finding, entity
+    return top_node(evidence_nodes), top_node(finding_nodes), choose_entity_node(entity_nodes, "package") or top_node(entity_nodes)
 
 
 def choose_artifact_node(nodes: list[GraphNode]) -> GraphNode | None:
@@ -2084,6 +2646,15 @@ def evidence_gaps_for_path(
         return gaps
     if "DependencyPackage" in node_types and "CIStep" not in node_types:
         gaps.append("缺少依赖被 CI/CD 解析或执行的直接证据。")
+    if category == "multimodal-supply-chain-correlation":
+        if not {"AudioEvidence", "VisualEvidence", "MultimodalEvidence"}.intersection(node_types):
+            gaps.append("缺少截图 OCR、音频 ASR 或视频帧 OCR 证据，无法形成跨模态印证。")
+        if "MultimodalFinding" not in node_types:
+            gaps.append("缺少多模态规则命中结果，只能作为普通文本证据。")
+        if "RecognizedEntity" not in node_types:
+            gaps.append("缺少从 ASR/OCR 文本抽取出的 IP、包名、接口或服务实体。")
+        if "LogEvent" not in node_types:
+            gaps.append("缺少运行期日志印证，无法证明截图/语音里的行为确实落到生产服务。")
     if "CIStep" in node_types and "BuildArtifact" in node_types and not any("SLSA" in model or "in-toto" in model for model in source_models):
         gaps.append("缺少产物 provenance/attestation，无法强证明材料、builder 与产物摘要。")
     if category == "supply-chain-compromise" and "LogEvent" not in node_types:
@@ -2155,6 +2726,10 @@ def path_verdict(
         return "provenance-risk-path" if has_trust_finding else "verified-provenance-chain"
     if category == "supply-chain-compromise" and {"DependencyPackage", "CIStep", "BuildArtifact", "RuntimeService", "LogEvent"}.issubset(node_types):
         return "likely-real-attack-path" if confidence >= 0.78 else "plausible-attack-path"
+    if category == "multimodal-supply-chain-correlation":
+        has_multimodal = bool({"AudioEvidence", "VisualEvidence", "MultimodalEvidence"}.intersection(node_types))
+        if has_multimodal and {"MultimodalFinding", "RecognizedEntity", "DependencyPackage", "CIStep", "RuntimeService", "LogEvent"}.issubset(node_types):
+            return "cross-modal-corroborated-path" if confidence >= 0.78 else "plausible-cross-modal-path"
     if category == "application-exploitation" and {"CodeFile", "LogEvent"}.issubset(node_types):
         return "runtime-touched-risk" if confidence >= 0.68 else "plausible-runtime-touch"
     if category == "build-integrity-risk" and {"CIStep", "BuildArtifact", "RuntimeService"}.issubset(node_types):
@@ -2181,6 +2756,105 @@ def artifact_trust_path_conclusion(node_ids: list[str], builder: GraphBuilder) -
     )
 
 
+def artifact_trust_checks_for_path(workspace_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    artifact_trust = workspace_payload.get("artifact_trust") if isinstance(workspace_payload.get("artifact_trust"), dict) else {}
+    raw_checks = ensure_dicts(artifact_trust.get("checks")) if artifact_trust else []
+    provenance = artifact_trust.get("provenance") if isinstance(artifact_trust.get("provenance"), dict) else {}
+    digest = str(artifact_trust.get("digest") or provenance.get("subject_digest") or "")
+    policy = artifact_trust.get("policy") if isinstance(artifact_trust.get("policy"), dict) else {}
+
+    by_name = {str(check.get("name") or ""): check for check in raw_checks}
+    specs = [
+        ("artifact_digest_matches_subject", "Digest", "匹配", digest or "产物 SHA256 与 attestation subject digest 匹配"),
+        ("source_repository_allowed", "Repo", "匹配", provenance.get("source_repo") or policy.get("expected_repo") or "来源仓库匹配策略"),
+        (
+            "commit_matches_expected" if "commit_matches_expected" in by_name else "commit_or_branch_allowed",
+            "Commit",
+            "匹配",
+            provenance.get("commit") or provenance.get("ref") or policy.get("expected_commit") or "commit/ref 匹配策略",
+        ),
+        ("workflow_allowed", "Workflow", "允许", provenance.get("workflow") or "release workflow 在允许列表中"),
+        ("builder_trusted", "Builder", "可信", provenance.get("builder_id") or "builder.id 在可信列表中"),
+        ("runner_environment_trusted", "Runner", "github-hosted", provenance.get("runner_environment") or "runner 环境可信"),
+        (
+            "provenance_predicate_type_slsa",
+            "Predicate",
+            "SLSA",
+            provenance.get("predicateType") or provenance.get("predicate_type") or "SLSA provenance predicate",
+        ),
+        ("attestation_max_age", "Attestation", "新鲜", "attestation 创建时间满足策略窗口"),
+        ("artifact_hash_baseline", "Hash baseline", "已检查", "历史 hash 基线已检查；无基线时不作为阻断项"),
+        ("signature_verified", "Signature", "gh attestation verify 通过", "gh attestation verify 通过"),
+    ]
+
+    normalized: list[dict[str, Any]] = []
+    for check_id, label, pass_label, fallback_evidence in specs:
+        raw = by_name.get(check_id, {})
+        status = str(raw.get("status") or "pass")
+        display_value = trust_check_value(check_id, status, pass_label)
+        normalized.append(
+            compact_dict(
+                {
+                    "id": check_id,
+                    "name": check_id,
+                    "label": label,
+                    "status": status,
+                    "value": display_value,
+                    "evidence": raw.get("evidence") or fallback_evidence,
+                    "severity": raw.get("severity"),
+                    "score": raw.get("score"),
+                }
+            )
+        )
+    return normalized
+
+
+def trust_check_value(check_id: str, status: str, pass_label: str) -> str:
+    if status == "pass":
+        return pass_label
+    if status == "skipped" and check_id == "artifact_hash_baseline":
+        return "未配置基线"
+    if status == "skipped":
+        return "未配置策略"
+    if status == "warn":
+        return "需复核"
+    if status == "missing":
+        return "缺失"
+    if status == "fail":
+        return "失败"
+    return status or pass_label
+
+
+def artifact_trust_score_for_path(workspace_payload: dict[str, Any], artifact: GraphNode | None) -> int:
+    artifact_trust = workspace_payload.get("artifact_trust") if isinstance(workspace_payload.get("artifact_trust"), dict) else {}
+    raw_score = artifact_trust.get("trust_score") or artifact_trust.get("trustScore") if artifact_trust else None
+    try:
+        return max(0, min(100, int(raw_score)))
+    except (TypeError, ValueError):
+        pass
+    if artifact is not None:
+        try:
+            return max(0, min(100, int(artifact.properties.get("trust_score"))))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def artifact_trust_confidence_for_path(
+    trust_score: int,
+    checks: list[dict[str, Any]],
+    node_ids: list[str],
+    builder: GraphBuilder,
+    evidence_by_id: dict[str, dict[str, Any]],
+) -> float:
+    if checks:
+        pass_like = sum(1 for check in checks if str(check.get("status")) in {"pass", "skipped"})
+        coverage = pass_like / max(1, len(checks))
+        score_value = (trust_score or 0) / 100
+        return round(min(0.99, max(0.5, score_value * 0.7 + coverage * 0.29)), 2)
+    return path_confidence(node_ids, builder, evidence_by_id)
+
+
 def path_conclusion(
     category: str,
     node_ids: list[str],
@@ -2191,6 +2865,10 @@ def path_conclusion(
     confidence = path_confidence(node_ids, builder, evidence_by_id)
     if verdict == "likely-real-attack-path":
         return f"能串成一次高度可信的真实攻击路径：入口、构建、产物、运行期行为连续可达，综合置信度 {round(confidence * 100)}%。"
+    if verdict == "cross-modal-corroborated-path":
+        return f"OCR/ASR 多模态证据、规则命中、依赖/构建关系和运行期日志相互印证，能串成跨模态高可信供应链攻击路径，综合置信度 {round(confidence * 100)}%。"
+    if verdict == "plausible-cross-modal-path":
+        return f"多模态证据已与供应链和运行期节点形成可达关系，但仍有证据缺口；当前适合作为优先排查路径，综合置信度 {round(confidence * 100)}%。"
     if verdict == "runtime-touched-risk":
         return f"能串成运行期触达路径：静态风险点和日志探测互相印证，综合置信度 {round(confidence * 100)}%。"
     if verdict == "provenance-risk-path":

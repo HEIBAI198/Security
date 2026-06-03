@@ -1,5 +1,7 @@
 ﻿export type SecuritySeverity = 'critical' | 'high' | 'medium' | 'low'
 
+export type VexStatus = 'affected' | 'not_affected' | 'under_investigation' | 'fixed'
+
 export type SecurityModule = {
   key: string
   name: string
@@ -177,8 +179,63 @@ export type SecurityDependency = {
     affected: string
     summary: string
     confidence: string
+    fixed_versions?: string[]
+    vex?: VexStatement
+    analysis?: {
+      state?: string
+      justification?: string
+      response?: string[]
+      detail?: string
+    }
   }>
+  reachability?: DependencyReachability
+  vex?: VexStatement[]
   recommendation: string
+}
+
+export type DependencyReachability = {
+  imported?: boolean
+  called?: boolean
+  attack_surface?: boolean
+  runtime_trace?: boolean
+  confidence?: number
+  import_candidates?: string[]
+  code_evidence?: ReachabilityEvidence[]
+  call_evidence?: ReachabilityEvidence[]
+  attack_surface_evidence?: ReachabilityEvidence[]
+  runtime_evidence?: ReachabilityEvidence[]
+}
+
+export type ReachabilityEvidence = {
+  path?: string
+  line?: number
+  snippet?: string
+  kind?: string
+  id?: string
+  rule_id?: string
+  severity?: string
+  time?: string
+  source?: string
+  event?: string
+  evidence?: string
+}
+
+export type VexStatement = {
+  id: string
+  source?: string
+  dependency?: string
+  purl?: string
+  status: VexStatus
+  cyclonedx_state?: string
+  justification?: string
+  response?: string[]
+  detail?: string
+  confidence?: string
+  severity?: SecuritySeverity | string
+  fixed_versions?: string[]
+  reachability?: DependencyReachability & {
+    nearby_high_signal?: boolean
+  }
 }
 
 export type DependencyAuditFinding = {
@@ -222,12 +279,38 @@ export type DependencyAuditResult = {
     exact_versions?: number
     transitive_dependencies?: number
     lockfile_count?: number
+    vex?: {
+      statement_count: number
+      component_count: number
+      affected: number
+      not_affected: number
+      under_investigation: number
+      fixed: number
+      actionable: number
+      noise_reduced: number
+      false_positive_reduction_percent: number
+      states?: Record<VexStatus, number>
+    }
+    reachability?: {
+      imported_dependencies: number
+      called_dependencies: number
+      attack_surface_dependencies: number
+      runtime_trace_dependencies: number
+      source_files_scanned: number
+      source_files_skipped: number
+      service_exposed: boolean
+      service_hints: string[]
+      runtime_log_findings: number
+      runtime_log_events: number
+      runtime_categories: Record<string, number>
+    }
     tools?: DependencyAuditToolStatus[]
     duration_seconds?: number
   }
   dependencies: SecurityDependency[]
   findings: DependencyAuditFinding[]
   sbom: Record<string, unknown>
+  vex?: Record<string, unknown>
   report: string
   warnings: string[]
   tools?: DependencyAuditToolStatus[]
@@ -483,6 +566,124 @@ export type LogAuditResult = {
   warnings: string[]
 }
 
+export type MultimodalSourceType = 'audio' | 'image' | 'video'
+
+export type MultimodalToolStatus = {
+  name: string
+  available: boolean
+  command: string
+  version?: string | null
+  state: 'ok' | 'missing' | 'failed' | 'partial' | string
+  error?: string | null
+}
+
+export type MultimodalDerivedArtifact = {
+  kind: string
+  path: string
+  relative_path: string
+  mime_type: string
+  size_bytes: number
+  created_at: string
+  tool: string
+}
+
+export type MultimodalRecognition = {
+  source_type: MultimodalSourceType
+  recognized_text: string
+  confidence: number
+  evidence_type: 'audio_asr' | 'visual_ocr' | string
+  engine: string
+  source_path: string
+  language?: string | null
+  created_at: string
+  segments: Array<Record<string, unknown>>
+}
+
+export type MultimodalEntity = {
+  type: string
+  value: string
+  normalized: string
+  start: number
+  end: number
+  confidence: number
+  source: string
+  evidence: string
+}
+
+export type MultimodalFinding = {
+  id: string
+  rule_id: string
+  title: string
+  severity: SecuritySeverity
+  score: number
+  evidence_id: string
+  source_type: MultimodalSourceType
+  source_name: string
+  evidence_type: string
+  matched_keywords: string[]
+  entities: MultimodalEntity[]
+  evidence: string
+  confidence: number
+  recommendation: string
+  references: string[]
+  tags: string[]
+  first_seen: string
+  fingerprint: string
+}
+
+export type MultimodalEvidence = {
+  evidence_id: string
+  filename: string
+  original_filename: string
+  file_path: string
+  relative_path: string
+  source_type: MultimodalSourceType
+  mime_type: string
+  size_bytes: number
+  sha256: string
+  uploaded_at: string
+  metadata: Record<string, unknown>
+  derived: MultimodalDerivedArtifact[]
+  recognitions: MultimodalRecognition[]
+  entities: MultimodalEntity[]
+  findings: MultimodalFinding[]
+  risk_score: number
+  risk_level: SecuritySeverity
+}
+
+export type MultimodalAuditResult = {
+  scan_id: string | null
+  generated_at?: string | null
+  evidence: MultimodalEvidence[]
+  tools: MultimodalToolStatus[]
+  summary: {
+    evidence_count: number
+    audio: number
+    image: number
+    video: number
+    derived_count: number
+    recognition_count: number
+    asr_count: number
+    ocr_count: number
+    entity_count: number
+    finding_count: number
+    risk_score: number
+    risk_level: SecuritySeverity
+    critical: number
+    high: number
+    medium: number
+    low: number
+    by_entity_type?: Record<string, number>
+    by_rule?: Record<string, number>
+    total_size_bytes: number
+    storage_dir: string
+    storage_relative_dir: string
+    duration_seconds?: number
+  }
+  report: string
+  warnings: string[]
+}
+
 export type RealtimeLogEvent = {
   time: string
   source: string
@@ -627,6 +828,17 @@ export type SecurityAttackPath = {
     status?: string
     basis?: string
   }>
+  checks?: Array<{
+    id?: string
+    name?: string
+    label?: string
+    status?: ArtifactTrustCheckStatus
+    value?: string
+    evidence?: string
+    severity?: SecuritySeverity | string
+    score?: number
+  }>
+  trust_score?: number
   gaps?: string[]
   choke_points?: Array<{
     node_id?: string
@@ -734,6 +946,7 @@ export type SecurityWorkspace = {
     dependencies: number
     build_steps: number
     log_events: number
+    multimodal_evidence?: number
     attack_paths: number
     mean_triage_minutes: number
   }
@@ -786,6 +999,7 @@ export type SecurityWorkspace = {
   cicd_audit?: CICDAuditResult | null
   artifact_trust?: ArtifactTrustResult | null
   log_audit?: LogAuditResult | null
+  multimodal_audit?: MultimodalAuditResult | null
   report?: string | null
 }
 
@@ -921,6 +1135,10 @@ export async function loadDependencyAuditSbom() {
   return api<Record<string, unknown>>('/api/security/dependencies/sbom')
 }
 
+export async function loadDependencyAuditVex() {
+  return api<Record<string, unknown>>('/api/security/dependencies/vex')
+}
+
 export type CICDAuditScanOptions = {
   importId?: string
   targetPath?: string
@@ -1036,6 +1254,55 @@ export async function runLogAuditScan({ files, source = 'auto' }: LogAuditScanOp
   }
 
   return response.json() as Promise<LogAuditResult>
+}
+
+export async function runMultimodalEvidenceScan(files: File[]) {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+
+  const response = await fetch(`${apiBase}/api/security/multimodal/scan`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    let message = response.statusText
+    const errorText = await response.text()
+    try {
+      const payload = JSON.parse(errorText)
+      message = payload.error || payload.detail || message
+    } catch {
+      message = errorText
+    }
+    throw new Error(message || '多模态证据上传失败')
+  }
+
+  return response.json() as Promise<MultimodalAuditResult>
+}
+
+export type MultimodalTextAnalyzeOptions = {
+  recognizedText: string
+  sourceType?: MultimodalSourceType
+  evidenceType?: string
+  sourceName?: string
+  confidence?: number
+}
+
+export async function analyzeMultimodalRecognizedText(options: MultimodalTextAnalyzeOptions) {
+  return api<MultimodalAuditResult>('/api/security/multimodal/analyze-text', {
+    method: 'POST',
+    body: JSON.stringify({
+      recognized_text: options.recognizedText,
+      source_type: options.sourceType ?? 'image',
+      evidence_type: options.evidenceType ?? ((options.sourceType ?? 'image') === 'audio' ? 'audio_asr' : 'visual_ocr'),
+      source_name: options.sourceName ?? 'manual-recognized-text.txt',
+      confidence: options.confidence ?? 0.9,
+    }),
+  })
+}
+
+export async function loadMultimodalEvidenceLatest(limit = 100) {
+  return api<MultimodalAuditResult>(`/api/security/multimodal/latest?limit=${limit}`)
 }
 
 export async function ingestRealtimeLogs(payload: Record<string, unknown> | Array<Record<string, unknown>>) {
