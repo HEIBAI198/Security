@@ -25,6 +25,7 @@ from .config import IMPORT_WORKSPACE_DIR
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 20000
 MAX_WALK_FILES = 100000
+MAX_WINDOWS_EXTRACT_PATH = 240
 
 IGNORED_DIRS = {
     ".git",
@@ -537,6 +538,8 @@ def _safe_unpack_zip(archive_path: Path, destination: Path) -> None:
             raise ImportErrorDetail("Archive contains too many entries.")
         for info in infos:
             target = _archive_member_target(destination, info.filename)
+            if _is_windows_extract_path_too_long(target):
+                continue
             if info.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
@@ -554,6 +557,8 @@ def _safe_unpack_tar(archive_path: Path, destination: Path) -> None:
             if member.issym() or member.islnk():
                 raise ImportErrorDetail("Archives with symbolic or hard links are not supported.")
             target = _archive_member_target(destination, member.name)
+            if _is_windows_extract_path_too_long(target):
+                continue
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue
@@ -575,6 +580,10 @@ def _archive_member_target(destination: Path, member_name: str) -> Path:
     target = destination.joinpath(*parts).resolve()
     target.relative_to(destination.resolve())
     return target
+
+
+def _is_windows_extract_path_too_long(path: Path) -> bool:
+    return os.name == "nt" and len(str(path)) >= MAX_WINDOWS_EXTRACT_PATH
 
 
 def _collapse_single_root(source_dir: Path) -> Path:
@@ -604,8 +613,14 @@ def _is_runtime_workspace(path: Path, scan_root: Path, workspace_root: Path) -> 
     resolved = path.resolve()
     if resolved == scan_root:
         return False
+    import_workspace = IMPORT_WORKSPACE_DIR.resolve()
     try:
-        resolved.relative_to(IMPORT_WORKSPACE_DIR.resolve())
+        scan_root.relative_to(import_workspace)
+        return False
+    except ValueError:
+        pass
+    try:
+        resolved.relative_to(import_workspace)
         return True
     except ValueError:
         pass

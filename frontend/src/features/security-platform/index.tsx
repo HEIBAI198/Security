@@ -959,7 +959,7 @@ function CodeAuditPanel({
   const total = audit?.summary.total ?? 0
   const findings = audit?.findings ?? []
   const scanners = audit?.scanners ?? []
-  const trend = audit?.summary.trend ?? state?.trend ?? []
+  const trend = state?.trend ?? []
 
   return (
     <div className='space-y-4'>

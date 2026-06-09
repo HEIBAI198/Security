@@ -20,8 +20,8 @@ import {
   checkImportApiReady,
   importGitProject,
   importLocalProject,
-  loadLatestProjectImport,
   startProjectScan,
+  tryLoadLatestProjectImport,
   uploadProjectArchive,
   type ProjectImportRecord,
   type ScanJob,
@@ -82,7 +82,7 @@ export function ProjectImportPage() {
         if (ignore) return undefined
         setApiReady(true)
         setApiError('')
-        return loadLatestProjectImport()
+        return tryLoadLatestProjectImport()
       })
       .then((latestRecord) => {
         if (!ignore && latestRecord) setRecord(latestRecord)

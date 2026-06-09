@@ -498,7 +498,7 @@ def run_semgrep(
 
     local_deadline = min(deadline or (time.monotonic() + timeout_seconds), time.monotonic() + timeout_seconds)
     version_timeout = max(1, min(VERSION_TIMEOUT_SECONDS, timeout_seconds))
-    version = get_tool_version([command, "--version"], timeout_seconds=version_timeout)
+    version = None if os.name == "nt" else get_tool_version(semgrep_command([command, "--version"]), timeout_seconds=version_timeout)
     command_timeout = scanner_timeout(local_deadline, timeout_seconds)
     if command_timeout is None:
         return scanner_budget_exhausted("Semgrep CE", command)
@@ -509,6 +509,7 @@ def run_semgrep(
         str(RULES_DIR),
         "--json",
         "--no-git-ignore",
+        "--disable-version-check",
         "--metrics",
         "off",
     ]
@@ -516,7 +517,7 @@ def run_semgrep(
         cmd.extend(["--exclude", excluded])
     cmd.append(str(target))
 
-    process = run_command(cmd, command_timeout)
+    process = run_command(semgrep_command(cmd), command_timeout)
     if process.timeout:
         return (
             [],
@@ -1175,6 +1176,7 @@ def tool_env() -> dict[str, str]:
     env["PATH"] = os.pathsep.join(str(path) for path in script_dirs) + os.pathsep + env.get("PATH", "")
     venv_dir = project_venv_dir() or Path(sys.executable).resolve().parents[1]
     env["VIRTUAL_ENV"] = str(venv_dir)
+    env.setdefault("SEMGREP_SEND_METRICS", "off")
     return env
 
 
@@ -1187,6 +1189,22 @@ def find_python_tool(name: str) -> str | None:
             if candidate.exists():
                 return str(candidate)
     return shutil.which(name, path=tool_env().get("PATH"))
+
+
+def semgrep_command(cmd: list[str]) -> list[str]:
+    if os.name != "nt":
+        return cmd
+    executable = cmd[0]
+    try:
+        executable = str(Path(executable).resolve().relative_to(ROOT.resolve()))
+    except (OSError, ValueError):
+        pass
+    command = " ".join(["$env:SEMGREP_SEND_METRICS='off';", "&", powershell_quote(executable), *[powershell_quote(arg) for arg in cmd[1:]]])
+    return ["powershell", "-NoProfile", "-Command", command]
+
+
+def powershell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def project_venv_dir() -> Path | None:
@@ -2125,9 +2143,4 @@ def sarif_level(severity: str) -> str:
     if severity == "medium":
         return "warning"
     return "note"
-
-
-
-
-
 
