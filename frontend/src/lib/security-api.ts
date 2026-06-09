@@ -89,7 +89,6 @@ export type CodeAuditResult = {
     baseline_created_at?: string | null
     new?: number
     fixed?: number
-    trend?: CodeAuditTrendPoint[]
   }
   findings: CodeAuditFinding[]
   scanners?: CodeAuditScanner[]
@@ -373,6 +372,7 @@ export type CICDAuditResult = {
     baseline_created_at?: string | null
     new?: number
     fixed?: number
+    trend?: CodeAuditTrendPoint[]
   }
   findings: CICDAuditFinding[]
   scanners?: CodeAuditScanner[]

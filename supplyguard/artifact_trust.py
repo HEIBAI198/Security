@@ -831,26 +831,39 @@ def check_signature(
             [tool_command("gh"), "attestation", "verify", str(artifact_path), "-R", repo, "--format", "json"],
             timeout_seconds,
         )
-        tools[0] = ArtifactTrustToolStatus(
-            name="gh",
-            available=True,
-            command="gh attestation verify",
-            state="ok" if result.returncode == 0 else "failed",
-            version=tools[0].version,
-            error=None if result.returncode == 0 else short_text(result.stderr or result.stdout, 240),
-        )
-        if result.returncode == 0:
+        if gh_token_required(result):
+            tools[0] = ArtifactTrustToolStatus(
+                name="gh",
+                available=True,
+                command="gh attestation verify",
+                state="skipped",
+                version=tools[0].version,
+                error="GH_TOKEN is not configured; skipped GitHub attestation verification.",
+            )
+        else:
+            tools[0] = ArtifactTrustToolStatus(
+                name="gh",
+                available=True,
+                command="gh attestation verify",
+                state="ok" if result.returncode == 0 else "failed",
+                version=tools[0].version,
+                error=None if result.returncode == 0 else short_text(result.stderr or result.stdout, 240),
+            )
+        if gh_token_required(result):
+            pass
+        elif result.returncode == 0:
             return ArtifactTrustCheck("signature_verified", "pass", "gh attestation verify completed successfully."), tools
-        return (
-            ArtifactTrustCheck(
-                "signature_verified",
-                "fail" if require_signature else "warn",
-                short_text(result.stderr or result.stdout or "gh attestation verify failed.", 260),
-                "high" if require_signature else "medium",
-                88 if require_signature else 64,
-            ),
-            tools,
-        )
+        else:
+            return (
+                ArtifactTrustCheck(
+                    "signature_verified",
+                    "fail" if require_signature else "warn",
+                    short_text(result.stderr or result.stdout or "gh attestation verify failed.", 260),
+                    "high" if require_signature else "medium",
+                    88 if require_signature else 64,
+                ),
+                tools,
+            )
 
     image_reference = str(policy.get("subject_name") or info.subject_name or "")
     if is_image_reference(image_reference) and tools[1].available:
@@ -909,6 +922,11 @@ def tool_status(name: str) -> ArtifactTrustToolStatus:
         version=version or None,
         error=None if result.returncode == 0 else short_text(result.stderr or result.stdout, 160),
     )
+
+
+def gh_token_required(result: CommandResult) -> bool:
+    output = f"{result.stderr}\n{result.stdout}".lower()
+    return "gh_token" in output and "set the gh_token environment variable" in output
 
 
 def tool_command(name: str) -> str:

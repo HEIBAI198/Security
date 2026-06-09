@@ -8,10 +8,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import FRONTEND_DIST_DIR, resolve_frontend_dir
 from .routes.imports import router as imports_router
 from .routes.security import router as security_router
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve index.html for client-side routes in the bundled React app."""
+
+    async def get_response(self, path: str, scope: dict[str, Any]):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            method = scope.get("method", "GET")
+            last_segment = path.rsplit("/", 1)[-1]
+            is_asset_like = "." in last_segment
+            if exc.status_code == 404 and method in {"GET", "HEAD"} and not is_asset_like:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 def create_app() -> FastAPI:
@@ -66,7 +82,7 @@ def create_app() -> FastAPI:
     app.include_router(security_router)
 
     if frontend_dir is not None:
-        app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+        app.mount("/", SPAStaticFiles(directory=frontend_dir, html=True), name="frontend")
     else:
 
         @app.get("/", include_in_schema=False)

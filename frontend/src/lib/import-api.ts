@@ -96,6 +96,20 @@ async function apiJson<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export async function tryLoadLatestProjectImport() {
+  const response = await fetch(`${apiBase}/api/imports/latest`)
+
+  if (response.status === 404) {
+    return null
+  }
+
+  if (!response.ok) {
+    throw new Error(await readError(response))
+  }
+
+  return response.json() as Promise<ProjectImportRecord>
+}
+
 export async function uploadProjectArchive(file: File) {
   const response = await fetch(`${apiBase}/api/imports/upload`, {
     method: 'POST',
