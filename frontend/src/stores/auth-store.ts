@@ -1,21 +1,18 @@
 import { create } from 'zustand'
-import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
+import { getCookie, removeCookie, setCookie } from '@/lib/cookies'
 
 const ACCESS_TOKEN = 'thisisjustarandomstring'
-const LOCAL_USERS_KEY = 'supplyguard.local-users'
-const LOCAL_SESSION_KEY = 'supplyguard.local-session'
+const USER_SESSION = 'supplyguard.auth-user'
 
-export type AuthMethod = 'phone' | 'qq' | 'wechat' | 'github' | 'email'
+export type AuthMethod = 'phone' | 'github' | 'email'
 
 export const authMethodLabels: Record<AuthMethod, string> = {
   phone: '手机号',
-  qq: 'QQ',
-  wechat: '微信',
   github: 'GitHub',
   email: '邮箱',
 }
 
-interface AuthUser {
+export interface AuthUser {
   accountNo: string
   email: string
   displayName?: string
@@ -23,21 +20,6 @@ interface AuthUser {
   identifier?: string
   role: string[]
   exp: number
-}
-
-interface StoredUser {
-  id: string
-  method: AuthMethod
-  identifier: string
-  displayName: string
-  passwordHash: string
-  createdAt: string
-}
-
-interface LocalSession {
-  userId: string
-  token: string
-  expiresAt: number
 }
 
 interface AuthState {
@@ -51,151 +33,71 @@ interface AuthState {
   }
 }
 
-function browserStorage() {
-  return typeof window === 'undefined' ? null : window.localStorage
+type AuthPayload = {
+  method: AuthMethod
+  identifier: string
+  password: string
+  displayName?: string
 }
 
-function normalizeIdentifier(method: AuthMethod, value: string) {
-  const trimmed = value.trim()
-  if (method === 'phone') return trimmed.replace(/\s+/g, '')
-  return trimmed.toLowerCase()
+type AuthResponse = {
+  accessToken: string
+  user: AuthUser
 }
 
-function readStoredUsers(): StoredUser[] {
-  const storage = browserStorage()
-  if (!storage) return []
+function readStoredUser() {
+  if (typeof window === 'undefined') return null
   try {
-    const parsed = JSON.parse(storage.getItem(LOCAL_USERS_KEY) || '[]')
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function writeStoredUsers(users: StoredUser[]) {
-  browserStorage()?.setItem(LOCAL_USERS_KEY, JSON.stringify(users))
-}
-
-function readLocalSession(): LocalSession | null {
-  const storage = browserStorage()
-  if (!storage) return null
-  try {
-    const session = JSON.parse(storage.getItem(LOCAL_SESSION_KEY) || 'null') as LocalSession | null
-    if (!session || session.expiresAt < Date.now()) {
-      storage.removeItem(LOCAL_SESSION_KEY)
-      return null
-    }
-    return session
+    return JSON.parse(window.localStorage.getItem(USER_SESSION) || 'null') as AuthUser | null
   } catch {
     return null
   }
 }
 
-function writeLocalSession(session: LocalSession) {
-  browserStorage()?.setItem(LOCAL_SESSION_KEY, JSON.stringify(session))
+function writeStoredUser(user: AuthUser | null) {
+  if (typeof window === 'undefined') return
+  if (user) window.localStorage.setItem(USER_SESSION, JSON.stringify(user))
+  else window.localStorage.removeItem(USER_SESSION)
 }
 
-function removeLocalSession() {
-  browserStorage()?.removeItem(LOCAL_SESSION_KEY)
-}
-
-async function hashPassword(value: string) {
-  const encoder = new TextEncoder()
-  const hash = await crypto.subtle.digest('SHA-256', encoder.encode(value))
-  return Array.from(new Uint8Array(hash))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
-}
-
-function toAuthUser(user: StoredUser): AuthUser {
-  return {
-    accountNo: user.id,
-    email: user.method === 'email' ? user.identifier : `${user.identifier}@${user.method}.local`,
-    displayName: user.displayName,
-    method: user.method,
-    identifier: user.identifier,
-    role: ['security-analyst'],
-    exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
-  }
-}
-
-function currentSessionUser() {
-  const session = readLocalSession()
-  if (!session) return null
-  return readStoredUsers().find((user) => user.id === session.userId) ?? null
-}
-
-export async function registerLocalUser({
-  method,
-  identifier,
-  password,
-  displayName,
-}: {
-  method: AuthMethod
-  identifier: string
-  password: string
-  displayName?: string
-}) {
-  const normalizedIdentifier = normalizeIdentifier(method, identifier)
-  const users = readStoredUsers()
-  if (users.some((user) => user.method === method && user.identifier === normalizedIdentifier)) {
-    throw new Error(`${authMethodLabels[method]}账号已注册，请直接登录。`)
-  }
-
-  const nextUser: StoredUser = {
-    id: crypto.randomUUID(),
-    method,
-    identifier: normalizedIdentifier,
-    displayName:
-      displayName?.trim() ||
-      `${authMethodLabels[method]}用户 ${normalizedIdentifier.slice(-4)}`,
-    passwordHash: await hashPassword(password),
-    createdAt: new Date().toISOString(),
-  }
-  writeStoredUsers([...users, nextUser])
-  return toAuthUser(nextUser)
-}
-
-export async function authenticateLocalUser({
-  method,
-  identifier,
-  password,
-}: {
-  method: AuthMethod
-  identifier: string
-  password: string
-}) {
-  const normalizedIdentifier = normalizeIdentifier(method, identifier)
-  const users = readStoredUsers()
-  const user = users.find(
-    (item) => item.method === method && item.identifier === normalizedIdentifier
-  )
-  if (!user) throw new Error('该账号尚未注册，请先完成注册。')
-
-  const passwordHash = await hashPassword(password)
-  if (user.passwordHash !== passwordHash) {
-    throw new Error('账号或密码不正确，请重新输入。')
-  }
-
-  const token = `sg_${user.id}_${Date.now()}`
-  writeLocalSession({
-    userId: user.id,
-    token,
-    expiresAt: Date.now() + 1000 * 60 * 60 * 24 * 30,
+async function requestAuth(path: 'login' | 'register', payload: AuthPayload) {
+  const response = await fetch(`/api/auth/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      method: payload.method,
+      identifier: payload.identifier,
+      password: payload.password,
+      display_name: payload.displayName,
+    }),
   })
-  return { user: toAuthUser(user), token }
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(body.detail || '认证失败，请稍后重试。')
+  }
+  return body as AuthResponse
+}
+
+export function registerUser(payload: AuthPayload) {
+  return requestAuth('register', payload)
+}
+
+export function loginUser(payload: AuthPayload) {
+  return requestAuth('login', payload)
 }
 
 export const useAuthStore = create<AuthState>()((set) => {
   const cookieState = getCookie(ACCESS_TOKEN)
-  const localSession = readLocalSession()
-  const initToken = cookieState ? JSON.parse(cookieState) : localSession?.token || ''
-  const initUser = currentSessionUser()
+  const initToken = cookieState ? JSON.parse(cookieState) : ''
+  const initUser = initToken ? readStoredUser() : null
   return {
     auth: {
-      user: initUser ? toAuthUser(initUser) : null,
+      user: initUser,
       setUser: (user) =>
-        set((state) => ({ ...state, auth: { ...state.auth, user } })),
+        set((state) => {
+          writeStoredUser(user)
+          return { ...state, auth: { ...state.auth, user } }
+        }),
       accessToken: initToken,
       setAccessToken: (accessToken) =>
         set((state) => {
@@ -210,7 +112,7 @@ export const useAuthStore = create<AuthState>()((set) => {
       reset: () =>
         set((state) => {
           removeCookie(ACCESS_TOKEN)
-          removeLocalSession()
+          writeStoredUser(null)
           return {
             ...state,
             auth: { ...state.auth, user: null, accessToken: '' },

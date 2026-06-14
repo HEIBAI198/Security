@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import FRONTEND_DIST_DIR, resolve_frontend_dir
+from .routes.auth import router as auth_router
 from .routes.imports import router as imports_router
 from .routes.security import router as security_router
 
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
             ],
         }
 
+    app.include_router(auth_router)
     app.include_router(imports_router)
     app.include_router(security_router)
 
