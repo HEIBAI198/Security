@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
 import { Route as AuthenticatedProjectPreflightRouteImport } from './routes/_authenticated/project-preflight'
@@ -19,6 +20,11 @@ import { Route as errors404RouteImport } from './routes/(errors)/404'
 import { Route as errors403RouteImport } from './routes/(errors)/403'
 import { Route as errors401RouteImport } from './routes/(errors)/401'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
   id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
@@ -68,6 +74,7 @@ const errors401Route = errors401RouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
+  '/login': typeof LoginRoute
   '/401': typeof errors401Route
   '/403': typeof errors403Route
   '/404': typeof errors404Route
@@ -77,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/project-preflight': typeof AuthenticatedProjectPreflightRoute
 }
 export interface FileRoutesByTo {
+  '/login': typeof LoginRoute
   '/401': typeof errors401Route
   '/403': typeof errors403Route
   '/404': typeof errors404Route
@@ -89,6 +97,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
+  '/login': typeof LoginRoute
   '/(errors)/401': typeof errors401Route
   '/(errors)/403': typeof errors403Route
   '/(errors)/404': typeof errors404Route
@@ -102,6 +111,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/login'
     | '/401'
     | '/403'
     | '/404'
@@ -111,6 +121,7 @@ export interface FileRouteTypes {
     | '/project-preflight'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/login'
     | '/401'
     | '/403'
     | '/404'
@@ -122,6 +133,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_authenticated'
+    | '/login'
     | '/(errors)/401'
     | '/(errors)/403'
     | '/(errors)/404'
@@ -134,6 +146,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
+  LoginRoute: typeof LoginRoute
   errors401Route: typeof errors401Route
   errors403Route: typeof errors403Route
   errors404Route: typeof errors404Route
@@ -143,6 +156,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated': {
       id: '/_authenticated'
       path: ''
@@ -226,6 +246,7 @@ const AuthenticatedRouteRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
+  LoginRoute: LoginRoute,
   errors401Route: errors401Route,
   errors403Route: errors403Route,
   errors404Route: errors404Route,
