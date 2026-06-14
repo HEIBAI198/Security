@@ -1,4 +1,5 @@
 import useDialogState from '@/hooks/use-dialog-state'
+import { useAuthStore } from '@/stores/auth-store'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,6 +15,9 @@ import { SignOutDialog } from '@/components/sign-out-dialog'
 
 export function ProfileDropdown() {
   const [open, setOpen] = useDialogState()
+  const user = useAuthStore((state) => state.auth.user)
+  const displayName = user?.displayName || 'security-analyst'
+  const identifier = user?.identifier || 'soc / appsec'
 
   return (
     <>
@@ -28,16 +32,16 @@ export function ProfileDropdown() {
         <DropdownMenuContent className='w-56' align='end' forceMount>
           <DropdownMenuLabel className='font-normal'>
             <div className='flex flex-col gap-1.5'>
-              <p className='text-sm leading-none font-medium'>security-analyst</p>
+              <p className='text-sm leading-none font-medium'>{displayName}</p>
               <p className='text-xs leading-none text-muted-foreground'>
-                soc / appsec
+                {identifier}
               </p>
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem variant='destructive' onClick={() => setOpen(true)}>
-            Reset session
-            <DropdownMenuShortcut className='text-current'>R</DropdownMenuShortcut>
+            退出登录
+            <DropdownMenuShortcut className='text-current'>Esc</DropdownMenuShortcut>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

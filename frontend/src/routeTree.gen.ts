@@ -9,8 +9,10 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedProjectPreflightRouteImport } from './routes/_authenticated/project-preflight'
 import { Route as AuthenticatedProjectImportRouteImport } from './routes/_authenticated/project-import'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
@@ -18,6 +20,11 @@ import { Route as errors404RouteImport } from './routes/(errors)/404'
 import { Route as errors403RouteImport } from './routes/(errors)/403'
 import { Route as errors401RouteImport } from './routes/(errors)/401'
 
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedRouteRoute = AuthenticatedRouteRouteImport.update({
   id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
@@ -27,6 +34,12 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedProjectPreflightRoute =
+  AuthenticatedProjectPreflightRouteImport.update({
+    id: '/project-preflight',
+    path: '/project-preflight',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedProjectImportRoute =
   AuthenticatedProjectImportRouteImport.update({
     id: '/project-import',
@@ -61,59 +74,79 @@ const errors401Route = errors401RouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
+  '/login': typeof LoginRoute
   '/401': typeof errors401Route
   '/403': typeof errors403Route
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/project-import': typeof AuthenticatedProjectImportRoute
+  '/project-preflight': typeof AuthenticatedProjectPreflightRoute
 }
 export interface FileRoutesByTo {
+  '/login': typeof LoginRoute
   '/401': typeof errors401Route
   '/403': typeof errors403Route
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/project-import': typeof AuthenticatedProjectImportRoute
+  '/project-preflight': typeof AuthenticatedProjectPreflightRoute
   '/': typeof AuthenticatedIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
+  '/login': typeof LoginRoute
   '/(errors)/401': typeof errors401Route
   '/(errors)/403': typeof errors403Route
   '/(errors)/404': typeof errors404Route
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
   '/_authenticated/project-import': typeof AuthenticatedProjectImportRoute
+  '/_authenticated/project-preflight': typeof AuthenticatedProjectPreflightRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/login'
     | '/401'
     | '/403'
     | '/404'
     | '/500'
     | '/503'
     | '/project-import'
+    | '/project-preflight'
   fileRoutesByTo: FileRoutesByTo
-  to: '/401' | '/403' | '/404' | '/500' | '/503' | '/project-import' | '/'
+  to:
+    | '/login'
+    | '/401'
+    | '/403'
+    | '/404'
+    | '/500'
+    | '/503'
+    | '/project-import'
+    | '/project-preflight'
+    | '/'
   id:
     | '__root__'
     | '/_authenticated'
+    | '/login'
     | '/(errors)/401'
     | '/(errors)/403'
     | '/(errors)/404'
     | '/(errors)/500'
     | '/(errors)/503'
     | '/_authenticated/project-import'
+    | '/_authenticated/project-preflight'
     | '/_authenticated/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
+  LoginRoute: typeof LoginRoute
   errors401Route: typeof errors401Route
   errors403Route: typeof errors403Route
   errors404Route: typeof errors404Route
@@ -123,6 +156,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated': {
       id: '/_authenticated'
       path: ''
@@ -135,6 +175,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/project-preflight': {
+      id: '/_authenticated/project-preflight'
+      path: '/project-preflight'
+      fullPath: '/project-preflight'
+      preLoaderRoute: typeof AuthenticatedProjectPreflightRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/project-import': {
@@ -184,11 +231,13 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedProjectImportRoute: typeof AuthenticatedProjectImportRoute
+  AuthenticatedProjectPreflightRoute: typeof AuthenticatedProjectPreflightRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedProjectImportRoute: AuthenticatedProjectImportRoute,
+  AuthenticatedProjectPreflightRoute: AuthenticatedProjectPreflightRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
 }
 
@@ -197,6 +246,7 @@ const AuthenticatedRouteRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
+  LoginRoute: LoginRoute,
   errors401Route: errors401Route,
   errors403Route: errors403Route,
   errors404Route: errors404Route,

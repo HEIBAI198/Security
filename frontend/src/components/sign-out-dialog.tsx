@@ -13,16 +13,16 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
 
   const handleSignOut = () => {
     auth.reset()
-    navigate({ to: '/', replace: true })
+    navigate({ to: '/login', replace: true })
   }
 
   return (
     <ConfirmDialog
       open={open}
       onOpenChange={onOpenChange}
-      title='Reset session'
-      desc='This clears the local demo session and returns to the security dashboard.'
-      confirmText='Reset'
+      title='退出登录'
+      desc='这会清除当前本地登录会话，并返回登录页面。'
+      confirmText='退出'
       destructive
       handleConfirm={handleSignOut}
       className='sm:max-w-sm'

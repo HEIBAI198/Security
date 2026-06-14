@@ -79,15 +79,6 @@ const router = createRouter({
   defaultPreloadStaleTime: 0,
 })
 
-const startupSessionKey = 'supplyguard_app_session_started'
-if (typeof window !== 'undefined') {
-  const hasStartupSession = window.sessionStorage.getItem(startupSessionKey)
-  if (!hasStartupSession) {
-    useAuthStore.getState().auth.reset()
-    window.sessionStorage.setItem(startupSessionKey, '1')
-  }
-}
-
 // Register the router instance for type safety
 declare module '@tanstack/react-router' {
   interface Register {
