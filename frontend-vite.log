@@ -1,0 +1,34 @@
+
+> supplyguard-kg@0.1.0 dev
+> vite --host 0.0.0.0 --port 5173
+
+
+  [32m[1mVITE[22m v8.0.10[39m  [2mready in [0m[1m2989[22m[2m[0m ms[22m
+
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+  [32m➜[39m  [1mNetwork[22m: [36mhttp://192.168.10.104:[1m5173[22m/[39m
+[2m[32m  ➜[39m[22m[2m  press [22m[1mh + enter[22m[2m to show help[22m
+[2m11:13:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/security/workspace[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:13:56[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/security/workspace[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:14:01[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/ready[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:14:01[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/ready[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:14:02[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/imports/latest[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:14:02[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/imports/latest[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:14:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/security/workspace[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
+[2m11:14:06[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/security/workspace[39m
+Error: connect ECONNREFUSED 127.0.0.1:8000
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1705:16)
