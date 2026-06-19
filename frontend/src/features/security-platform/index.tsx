@@ -707,7 +707,6 @@ function defaultWorkspaceTabs(initialTab: PlatformTab = 'overview') {
 }
 
 const agentModuleTabs: PlatformTab[] = [
-  'code',
   'supply',
   'pipeline',
   'artifact',
@@ -2082,12 +2081,12 @@ const evidenceModuleCards: Partial<Record<PlatformTab, {
   icon: LucideIcon
 }>> = {
   code: {
-    title: '可达性佐证',
+    title: '供应链可达性研判',
     icon: Route,
   },
   supply: {
-    title: '供应链风险发现',
-    icon: Boxes,
+    title: '供应链可达性研判',
+    icon: Route,
   },
   pipeline: {
     icon: GitBranch,
@@ -2160,7 +2159,7 @@ function ModuleLaunchGrid({
   )
   const statusSummary = modules.reduce(
     (summary, module) => {
-      const step = stepByModule.get(module === 'report' ? 'graph' : module)
+      const step = moduleLaunchStep(module, stepByModule)
       if (analysisStarted && !scanRunning && step?.status === 'skipped') summary.pending += 1
       else if (analysisStarted && !scanRunning && step?.status === 'completed') summary.completed += 1
       return summary
@@ -2190,7 +2189,7 @@ function ModuleLaunchGrid({
       </div>
       <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
         {modules.map((module, index) => {
-          const step = stepByModule.get(module === 'report' ? 'graph' : module)
+          const step = moduleLaunchStep(module, stepByModule)
           const isReady = analysisStarted && !scanRunning
           const isSkipped = step?.status === 'skipped'
           const isFailed = step?.status === 'failed'
@@ -2259,6 +2258,21 @@ function ModuleLaunchGrid({
       </div>
     </div>
   )
+}
+
+function moduleLaunchStep(
+  module: PlatformTab,
+  stepByModule: Map<ScanStepState['id'], ScanStepState>
+): ScanStepState | undefined {
+  if (module === 'supply') {
+    const code = stepByModule.get('code')
+    const supply = stepByModule.get('supply')
+    if (code?.status === 'running' || supply?.status === 'running') return code?.status === 'running' ? code : supply
+    if (code?.status === 'failed' || supply?.status === 'failed') return code?.status === 'failed' ? code : supply
+    if (code?.status === 'completed' && supply?.status === 'completed') return { ...(supply ?? code), status: 'completed' }
+    return supply ?? code
+  }
+  return stepByModule.get(module === 'report' ? 'graph' : module)
 }
 
 function ScanProgressPanel({
@@ -3041,6 +3055,14 @@ function SupplyReachabilityPanel({
     dependencies.find((dependency) => dependencyKey(dependency) === selectedKey) ??
     dependencies.find((dependency) => dependency.name === reachability.targetDependency?.name) ??
     dependencies[0]
+  const selectedEvidence = selectedDependency ? dependencyEvidenceCounts(selectedDependency, workspace.code_audit?.findings ?? []) : {
+    code: 0,
+    entry: 0,
+    execution: 0,
+    runtime: 0,
+  }
+  const selectedRisk = selectedDependency?.risk ?? reachability.targetRisk ?? workspace.summary.risk_score ?? 0
+  const selectedState = selectedDependency ? dependencyReachabilityState(selectedDependency) : 'pending'
   const filteredDependencies = dependencies.filter((dependency) => {
     const state = dependencyReachabilityState(dependency)
     if (filter === 'reachable') return state === 'reachable'
@@ -3048,27 +3070,16 @@ function SupplyReachabilityPanel({
     if (filter === 'critical') return dependencySeverity(dependency.risk) === 'critical'
     return true
   })
-  const summaryMetrics = [
-    { label: '风险评分', value: reachability.targetRisk || selectedDependency?.risk || workspace.summary.risk_score || 0, tone: 'text-red-300' },
-    { label: '命中入口', value: reachability.entryHits, tone: 'text-cyan-200' },
-    { label: '引用证据', value: reachability.importHits, tone: 'text-cyan-200' },
-    { label: '证据缺口', value: Math.min(9, reachability.gapCount), tone: 'text-amber-200' },
-  ]
+  const visibleDependencies = filteredDependencies.slice(0, 6)
   const pathSteps = [
-    { id: 'dependency', label: '可疑依赖', value: '高风险', tone: 'risk' as const },
-    { id: 'code', label: '代码引用', value: reachability.importHits, tone: 'hit' as const },
-    { id: 'entry', label: '入口路径', value: reachability.entryHits, tone: 'hit' as const },
-    { id: 'execution', label: '执行证据', value: reachability.executionHits, tone: 'hit' as const },
+    { id: 'dependency', label: '可疑依赖', value: selectedDependency?.name || '-', tone: 'risk' as const },
+    { id: 'code', label: '代码引用', value: selectedEvidence.code, tone: selectedEvidence.code > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'entry', label: '入口命中', value: selectedEvidence.entry, tone: selectedEvidence.entry > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'execution', label: '执行证据', value: selectedEvidence.execution + selectedEvidence.runtime, tone: selectedEvidence.execution + selectedEvidence.runtime > 0 ? 'hit' as const : 'gap' as const },
     { id: 'graph', label: '攻击链关联', value: reachability.graphHits, tone: reachability.graphHits > 0 ? 'hit' as const : 'gap' as const },
   ]
   const matrixRows = buildUnifiedEvidenceRows(dependencies, workspace.code_audit?.findings ?? [], reachability)
   const visibleMatrixRows = matrixExpanded ? matrixRows : matrixRows.slice(0, 5)
-  const selectedEvidence = selectedDependency ? dependencyEvidenceCounts(selectedDependency, workspace.code_audit?.findings ?? []) : {
-    code: 0,
-    entry: 0,
-    execution: 0,
-    runtime: 0,
-  }
   const selectedSources = selectedDependency ? dependencySources(selectedDependency) : []
   const vulnerabilityIds = selectedDependency?.vulnerabilities?.map((item) => item.id).filter(Boolean) ?? []
   const gapLabels = reachability.runtimeHits === 0 ? ['运行日志'] : []
@@ -3125,17 +3136,32 @@ function SupplyReachabilityPanel({
             </Button>
           </div>
         </div>
-        <div className='mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-          {summaryMetrics.map((metric) => (
-            <div key={metric.label} className='rounded-md border border-slate-400/15 bg-slate-900/70 px-4 py-3'>
-              <div className='text-xs text-slate-400'>{metric.label}</div>
-              <div className={cn('mt-1 text-2xl font-semibold tabular-nums', metric.tone)}>{metric.value}</div>
-            </div>
-          ))}
-        </div>
       </section>
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
+      <div className='grid gap-4 xl:grid-cols-[0.72fr_1.08fr_0.7fr]'>
+        <RiskScoreWorkbenchCard
+          score={selectedRisk}
+          entryHits={selectedEvidence.entry}
+          codeHits={selectedEvidence.code}
+          gapCount={gapLabels.length || reachability.gapCount}
+        />
+        <ReachabilityFlowWorkbench
+          steps={pathSteps}
+          activeEvidence={activeEvidence}
+          onActiveEvidence={setActiveEvidence}
+        />
+        <DependencyDetailWorkbench
+          dependency={selectedDependency}
+          state={selectedState}
+          risk={selectedRisk}
+          sources={selectedSources}
+          evidence={selectedEvidence}
+          gapLabels={gapLabels}
+          vulnerabilityIds={vulnerabilityIds}
+        />
+      </div>
+
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_390px]'>
         <div className='space-y-4'>
           <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
             <CardHeader className='pb-3'>
@@ -3174,13 +3200,12 @@ function SupplyReachabilityPanel({
                       <TableHead>当前版本</TableHead>
                       <TableHead>请求版本</TableHead>
                       <TableHead>来源</TableHead>
-                      <TableHead>证据类型</TableHead>
                       <TableHead>可达性</TableHead>
                       <TableHead>风险</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredDependencies.length ? filteredDependencies.map((dependency) => {
+                    {visibleDependencies.length ? visibleDependencies.map((dependency) => {
                       const selected = selectedDependency && dependencyKey(dependency) === dependencyKey(selectedDependency)
                       const state = dependencyReachabilityState(dependency)
                       return (
@@ -3192,15 +3217,8 @@ function SupplyReachabilityPanel({
                           <TableCell className='font-medium text-slate-100'>{dependency.name}</TableCell>
                           <TableCell className='text-slate-300'>{dependency.version || '-'}</TableCell>
                           <TableCell className='text-slate-400'>{dependency.requested_version || '-'}</TableCell>
-                          <TableCell className='text-slate-400'>{dependency.source_file || dependency.manifest_type || '-'}</TableCell>
-                          <TableCell>
-                            <div className='flex flex-wrap gap-1'>
-                              {dependencyEvidenceLabels(dependency).map((label) => (
-                                <span key={label} className='rounded-full border border-slate-400/15 bg-slate-900/60 px-2 py-0.5 text-[11px] text-slate-300'>
-                                  {label}
-                                </span>
-                              ))}
-                            </div>
+                          <TableCell className='max-w-[180px] truncate text-slate-400' title={dependency.source_file || dependency.manifest_type || dependency.purl || ''}>
+                            {dependency.source_file || dependency.manifest_type || '-'}
                           </TableCell>
                           <TableCell>
                             <ReachabilityStatePill state={state} />
@@ -3212,7 +3230,7 @@ function SupplyReachabilityPanel({
                       )
                     }) : (
                       <TableRow>
-                        <TableCell colSpan={7} className='h-24 text-center text-sm text-slate-500'>
+                        <TableCell colSpan={6} className='h-24 text-center text-sm text-slate-500'>
                           无匹配依赖
                         </TableCell>
                       </TableRow>
@@ -3223,148 +3241,285 @@ function SupplyReachabilityPanel({
             </CardContent>
           </Card>
 
-          <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
-            <CardHeader className='pb-3'>
-              <CardTitle className='text-base text-slate-100'>风险触达路径</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className='grid gap-2 md:grid-cols-5'>
-                {pathSteps.map((step) => (
-                  <button
-                    key={step.id}
-                    type='button'
-                    onClick={() => setActiveEvidence(step.id)}
-                    className={cn(
-                      'rounded-md border p-3 text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5',
-                      activeEvidence === step.id
-                        ? 'border-cyan-300/45 bg-cyan-400/10'
-                        : 'border-slate-400/15 bg-slate-900/55 hover:border-slate-300/30'
-                    )}
-                  >
-                    <div className='text-xs text-slate-400'>{step.label}</div>
-                    <div className='mt-2 flex items-center justify-between gap-2'>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', reachabilityStepTone(step.tone))}>
-                        {step.tone === 'gap' ? '待补' : step.tone === 'risk' ? '高风险' : '命中'}
-                      </span>
-                      <span className='text-sm font-semibold text-slate-100'>{step.value}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
-            <CardHeader className='pb-3'>
-              <div className='flex items-center justify-between gap-3'>
-                <CardTitle className='text-base text-slate-100'>证据覆盖矩阵</CardTitle>
-                {matrixRows.length > 5 ? (
-                  <Button variant='ghost' size='sm' onClick={() => setMatrixExpanded((value) => !value)}>
-                    {matrixExpanded ? '收起' : '展开全部'}
-                  </Button>
-                ) : null}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className='overflow-x-auto rounded-md border border-slate-400/10'>
-                <div className='min-w-[760px]'>
-                  <div className='grid border-b border-slate-400/10 bg-slate-900/70 text-xs text-slate-400' style={{ gridTemplateColumns: '1.4fr repeat(6, minmax(76px, 0.7fr))' }}>
-                    {[
-                      ['risk', '风险'],
-                      ['dependency', '依赖'],
-                      ['code', '代码'],
-                      ['entry', '入口'],
-                      ['execution', '执行'],
-                      ['external', '外部'],
-                      ['graph', '关联'],
-                    ].map(([id, column]) => (
-                      <div key={id} className={cn('px-3 py-2', activeEvidence === id && 'bg-cyan-400/10 text-cyan-100')}>{column}</div>
-                    ))}
-                  </div>
-                  {visibleMatrixRows.map((row) => (
-                    <div key={row.id} className='grid border-b border-slate-400/10 last:border-b-0' style={{ gridTemplateColumns: '1.4fr repeat(6, minmax(76px, 0.7fr))' }}>
-                      <div className='px-3 py-2 text-sm text-slate-200'>{row.signal}</div>
-                      {row.cells.map((cell, index) => (
-                        <div
-                          key={`${row.id}-${index}`}
-                          className={cn(
-                            'px-3 py-2 transition-colors',
-                            activeEvidence === ['dependency', 'code', 'entry', 'execution', 'external', 'graph'][index] && 'bg-cyan-400/5'
-                          )}
-                        >
-                          <MatrixPill cell={cell} />
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
-
-        <aside className='space-y-4'>
-          <Card className='rounded-md border-slate-400/15 bg-slate-950/70'>
-            <CardHeader className='pb-3'>
-              <CardTitle className='text-base text-slate-100'>
-                {selectedDependency ? `${selectedDependency.name}@${selectedDependency.version || '-'}` : '依赖详情'}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-4'>
-              <div className='flex flex-wrap gap-2'>
-                <ReachabilityStatePill state={selectedDependency ? dependencyReachabilityState(selectedDependency) : 'pending'} />
-                <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
-                  风险 {selectedDependency?.risk ?? 0}
-                </span>
-              </div>
-              <div className='grid gap-2 text-sm'>
-                <DetailRow label='来源' value={selectedSources.join(' / ') || '-'} />
-                <DetailRow label='代码引用' value={selectedEvidence.code} />
-                <DetailRow label='入口命中' value={selectedEvidence.entry} />
-                <DetailRow label='执行证据' value={selectedEvidence.execution} />
-              </div>
-              {vulnerabilityIds.length ? (
-                <Collapsible>
-                  <CollapsibleTrigger asChild>
-                    <Button variant='outline' size='sm' className='w-full justify-between'>
-                      风险编号
-                      <ChevronDown className='size-4' />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
-                    {vulnerabilityIds.slice(0, 6).map((id) => (
-                      <span key={id} className='rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
-                        {id}
-                      </span>
-                    ))}
-                  </CollapsibleContent>
-                </Collapsible>
-              ) : null}
-              <div className='rounded-md border border-amber-300/20 bg-amber-400/10 p-3'>
-                <div className='text-xs text-amber-100/80'>缺失项</div>
-                <div className='mt-2 flex flex-wrap gap-1.5'>
-                  {(gapLabels.length ? gapLabels : ['-']).map((gap) => (
-                    <span key={gap} className='rounded-full border border-amber-300/25 px-2 py-0.5 text-xs text-amber-100'>
-                      {gap}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className='grid grid-cols-2 gap-2'>
-                <Button variant='outline' onClick={() => jumpToPlatformTab('logs')}>
-                  <Upload className='size-4' />
-                  上传日志
-                </Button>
-                <Button className={actionButtonClass} onClick={() => void rerunReachability()} disabled={scanning}>
-                  {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
-                  重新研判
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </aside>
+        <EvidenceCoverageWorkbench
+          rows={visibleMatrixRows}
+          totalRows={matrixRows.length}
+          expanded={matrixExpanded}
+          activeEvidence={activeEvidence}
+          onToggleExpanded={() => setMatrixExpanded((value) => !value)}
+        />
       </div>
     </div>
+  )
+}
+
+type ReachabilityWorkbenchStep = {
+  id: string
+  label: string
+  value: string | number
+  tone: 'hit' | 'risk' | 'gap'
+}
+
+function RiskScoreWorkbenchCard({
+  score,
+  entryHits,
+  codeHits,
+  gapCount,
+}: {
+  score: number
+  entryHits: number
+  codeHits: number
+  gapCount: number
+}) {
+  const reducedMotion = useReducedMotion()
+  const normalized = Math.max(0, Math.min(100, Math.round(score || 0)))
+  const radius = 42
+  const circumference = 2 * Math.PI * radius
+  const { value: displayScore, spring } = useAnimatedNumber(normalized, {
+    stiffness: 40,
+    damping: 15,
+    delayMs: 120,
+    durationMs: 1800,
+    respectReducedMotion: false,
+    resetKey: normalized,
+  })
+  const dashOffset = useTransform(spring, (latest) => circumference * (1 - Math.max(0, Math.min(100, latest)) / 100))
+
+  return (
+    <Card className='group overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25'>
+      <CardContent className='relative p-4'>
+        <div className='absolute -right-10 -top-12 size-32 rounded-full bg-red-500/10 blur-3xl' />
+        <div className='text-xs text-slate-400'>风险评分</div>
+        <div className='mt-3 flex items-center justify-center'>
+          <div className='relative size-36'>
+            <motion.div
+              className='absolute inset-3 rounded-full bg-red-500/15 blur-xl'
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-slate-800' strokeWidth='8' />
+              <motion.circle
+                cx='56'
+                cy='56'
+                r={radius}
+                className='fill-none stroke-red-400'
+                strokeWidth='8'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                style={{ strokeDashoffset: dashOffset }}
+              />
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className='text-4xl font-semibold leading-none text-red-100 tabular-nums'>{displayScore}</div>
+                <div className='mt-1 text-[11px] text-slate-500'>score</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className='mt-4 grid grid-cols-3 gap-2'>
+          {[
+            ['命中入口', entryHits, 'text-cyan-200'],
+            ['引用证据', codeHits, 'text-cyan-200'],
+            ['证据缺口', gapCount, 'text-amber-200'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2 text-center'>
+              <div className='text-[10px] text-slate-500'>{label}</div>
+              <div className={cn('mt-1 text-lg font-semibold tabular-nums', color)}>{value}</div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ReachabilityFlowWorkbench({
+  steps,
+  activeEvidence,
+  onActiveEvidence,
+}: {
+  steps: ReachabilityWorkbenchStep[]
+  activeEvidence: string
+  onActiveEvidence: (id: string) => void
+}) {
+  const reducedMotion = useReducedMotion()
+
+  return (
+    <Card className='overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardHeader className='pb-2'>
+        <CardTitle className='text-base text-slate-100'>可达路径图</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className='relative flex min-h-40 items-center justify-between gap-2 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-3 py-5'>
+          <div className='absolute left-9 right-9 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
+          <motion.div
+            className='absolute left-9 top-1/2 h-px w-24 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent'
+            animate={reducedMotion ? undefined : { x: ['0%', '420%'] }}
+            transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }}
+          />
+          {steps.map((step) => (
+            <button
+              key={step.id}
+              type='button'
+              title={`${step.label}: ${step.value}`}
+              onClick={() => onActiveEvidence(step.id)}
+              className={cn(
+                'group relative z-10 flex min-w-0 flex-1 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,transform] hover:-translate-y-0.5',
+                activeEvidence === step.id
+                  ? 'border-cyan-300/45 bg-cyan-400/10'
+                  : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
+              )}
+            >
+              <span className={cn('grid size-9 place-items-center rounded-full border text-xs font-semibold tabular-nums', reachabilityNodeTone(step.tone))}>
+                {typeof step.value === 'number' ? step.value : step.value.slice(0, 2)}
+              </span>
+              <span className='text-center text-xs font-medium leading-4 text-slate-200'>{step.label}</span>
+            </button>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DependencyDetailWorkbench({
+  dependency,
+  state,
+  risk,
+  sources,
+  evidence,
+  gapLabels,
+  vulnerabilityIds,
+}: {
+  dependency?: SecurityDependency
+  state: 'reachable' | 'pending'
+  risk: number
+  sources: string[]
+  evidence: { code: number; entry: number; execution: number; runtime: number }
+  gapLabels: string[]
+  vulnerabilityIds: string[]
+}) {
+  return (
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='text-base text-slate-100'>
+          {dependency ? `${dependency.name}@${dependency.version || '-'}` : '依赖详情'}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='flex flex-wrap gap-2'>
+          <ReachabilityStatePill state={state} />
+          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
+            风险 {risk}
+          </span>
+        </div>
+        <div className='grid gap-2 text-sm'>
+          <DetailRow label='来源' value={sources.join(' / ') || '-'} />
+          <DetailRow label='代码引用' value={evidence.code} />
+          <DetailRow label='入口命中' value={evidence.entry} />
+          <DetailRow label='执行证据' value={evidence.execution + evidence.runtime} />
+        </div>
+        {vulnerabilityIds.length ? (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' size='sm' className='w-full justify-between'>
+                风险编号
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
+              {vulnerabilityIds.slice(0, 6).map((id) => (
+                <span key={id} className='rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
+                  {id}
+                </span>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+        <div className='rounded-md border border-amber-300/20 bg-amber-400/10 p-3'>
+          <div className='text-xs text-amber-100/80'>缺失项</div>
+          <div className='mt-2 flex flex-wrap gap-1.5'>
+            {(gapLabels.length ? gapLabels : ['-']).map((gap) => (
+              <span key={gap} className='rounded-full border border-amber-300/25 px-2 py-0.5 text-xs text-amber-100'>
+                {gap}
+              </span>
+            ))}
+          </div>
+        </div>
+        {gapLabels.includes('运行日志') ? (
+          <Button variant='outline' className='w-full' onClick={() => jumpToPlatformTab('logs')}>
+            <Upload className='size-4' />
+            上传日志
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function EvidenceCoverageWorkbench({
+  rows,
+  totalRows,
+  expanded,
+  activeEvidence,
+  onToggleExpanded,
+}: {
+  rows: ReachabilityMatrixRow[]
+  totalRows: number
+  expanded: boolean
+  activeEvidence: string
+  onToggleExpanded: () => void
+}) {
+  const columns = [
+    ['dependency', '依赖'],
+    ['code', '代码'],
+    ['entry', '入口'],
+    ['execution', '执行'],
+    ['external', '外部'],
+    ['graph', '关联'],
+  ]
+
+  return (
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+      <CardHeader className='pb-3'>
+        <div className='flex items-center justify-between gap-3'>
+          <CardTitle className='text-base text-slate-100'>证据覆盖</CardTitle>
+          {totalRows > 5 ? (
+            <Button variant='ghost' size='sm' onClick={onToggleExpanded}>
+              {expanded ? '收起' : '展开全部'}
+            </Button>
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='grid grid-cols-6 gap-2'>
+          {columns.map(([id, label]) => (
+            <div key={id} className={cn('rounded-md border px-2 py-2 text-center text-xs transition-colors', activeEvidence === id ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-slate-400/15 bg-slate-900/50 text-slate-400')}>
+              {label}
+            </div>
+          ))}
+        </div>
+        <div className='space-y-2'>
+          {rows.map((row) => (
+            <div key={row.id} className='rounded-md border border-slate-400/10 bg-slate-900/35 p-3'>
+              <div className='mb-2 truncate text-xs font-medium text-slate-300'>{row.signal}</div>
+              <div className='grid grid-cols-6 gap-2'>
+                {row.cells.map((cell, index) => (
+                  <span
+                    key={`${row.id}-${index}`}
+                    title={cell.detail || cell.label}
+                    className={cn('mx-auto size-2.5 rounded-full ring-4', coverageDotClass(cell.status), activeEvidence === columns[index]?.[0] && 'scale-125')}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -3406,24 +3561,17 @@ function ReachabilityStatePill({ state }: { state: 'reachable' | 'pending' }) {
   )
 }
 
-function MatrixPill({ cell }: { cell: ReachabilityMatrixCell }) {
-  const classes = {
-    hit: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200',
-    risk: 'border-red-400/35 bg-red-500/10 text-red-200',
-    gap: 'border-amber-400/30 bg-amber-500/10 text-amber-200',
-    na: 'border-slate-400/15 bg-slate-900/60 text-slate-500',
-  }[cell.status]
-  return (
-    <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium', classes)}>
-      {cell.label}
-    </span>
-  )
+function reachabilityNodeTone(tone: 'hit' | 'risk' | 'gap') {
+  if (tone === 'risk') return 'border-red-300/35 bg-red-500/10 text-red-100 shadow-[0_0_18px_rgba(248,113,113,0.14)]'
+  if (tone === 'gap') return 'border-amber-300/35 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.12)]'
+  return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.12)]'
 }
 
-function reachabilityStepTone(tone: 'hit' | 'risk' | 'gap') {
-  if (tone === 'risk') return 'border-red-400/35 bg-red-500/10 text-red-200'
-  if (tone === 'gap') return 'border-amber-400/35 bg-amber-500/10 text-amber-200'
-  return 'border-cyan-400/35 bg-cyan-500/10 text-cyan-200'
+function coverageDotClass(status: ReachabilityMatrixCell['status']) {
+  if (status === 'hit') return 'bg-emerald-300 ring-emerald-400/10'
+  if (status === 'risk') return 'bg-red-300 ring-red-400/10'
+  if (status === 'gap') return 'bg-amber-300 ring-amber-400/10'
+  return 'bg-slate-600 ring-slate-500/10'
 }
 
 function dependencyReachabilityState(dependency: SecurityDependency): 'reachable' | 'pending' {
@@ -3451,16 +3599,6 @@ function dependencyEvidenceCounts(dependency: SecurityDependency, codeFindings: 
     execution: Number(Boolean(reachability?.called)) + (reachability?.call_evidence?.length ?? 0),
     runtime: Number(Boolean(reachability?.runtime_trace)) + (reachability?.runtime_evidence?.length ?? 0),
   }
-}
-
-function dependencyEvidenceLabels(dependency: SecurityDependency) {
-  const labels = new Set<string>()
-  const reachability = dependency.reachability
-  if (reachability?.imported || reachability?.called || (reachability?.code_evidence?.length ?? 0) > 0) labels.add('代码引用')
-  if (reachability?.attack_surface || (reachability?.attack_surface_evidence?.length ?? 0) > 0) labels.add('入口命中')
-  if ((dependency.vulnerabilities?.length ?? 0) > 0 || (dependency.signals?.length ?? 0) > 0) labels.add('锁文件')
-  if (!labels.size) labels.add(dependency.dependency_type === 'transitive' ? '传递依赖' : '直接依赖')
-  return Array.from(labels).slice(0, 3)
 }
 
 function dependencySources(dependency: SecurityDependency) {
