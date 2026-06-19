@@ -6003,10 +6003,8 @@ function PipelinePanel({
   const [severityFilter, setSeverityFilter] = useState('all')
   const [workflowFilter, setWorkflowFilter] = useState('all')
   const findings = audit?.findings ?? []
-  const scanners = audit?.scanners ?? []
   const workflows = audit?.workflows ?? []
-  const runsFromAudit = useMemo(() => normalizeCicdScanRuns(audit?.summary.trend ?? audit?.state?.trend ?? []), [audit])
-  const effectiveScanRuns = scanRuns.length ? scanRuns : runsFromAudit
+  const effectiveScanRuns = scanRuns
   const corePipeline = useMemo(() => buildCoreCicdPipeline(pipeline), [pipeline])
   const conclusion = buildCicdConclusion(audit, corePipeline, findings)
   const graphNodes = useMemo(() => buildCicdGraphNodes(audit, corePipeline, findings), [audit, corePipeline, findings])
@@ -6019,10 +6017,12 @@ function PipelinePanel({
     if (workflowFilter !== 'all' && finding.workflow !== workflowFilter) return false
     return true
   })
+  const hasFilteredContext = activeNodeId !== 'all' || activeClusterId !== 'all' || severityFilter !== 'all' || workflowFilter !== 'all'
   const selectedFinding =
     filteredFindings.find((finding) => finding.fingerprint === selectedFindingId) ??
     filteredFindings[0] ??
-    findings[0]
+    (hasFilteredContext ? undefined : findings[0])
+  const selectedNodeLabel = activeNodeId === 'all' ? '全部风险' : cicdGraphNodeLabel(activeNodeId)
 
   useEffect(() => {
     let cancelled = false
@@ -6031,18 +6031,22 @@ function PipelinePanel({
         if (!cancelled) setScanRuns(normalizeCicdScanRuns(payload.scanRuns))
       })
       .catch(() => {
-        if (!cancelled) setScanRuns(runsFromAudit)
+        if (!cancelled) setScanRuns([])
       })
     return () => {
       cancelled = true
     }
-  }, [audit?.scan_id, runsFromAudit])
+  }, [audit?.scan_id])
 
   useEffect(() => {
-    if (selectedFinding && !filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
-      setSelectedFindingId(selectedFinding.fingerprint)
+    if (!filteredFindings.length) {
+      if (selectedFindingId) setSelectedFindingId('')
+      return
     }
-  }, [filteredFindings, selectedFinding, selectedFindingId])
+    if (!filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
+      setSelectedFindingId(filteredFindings[0].fingerprint)
+    }
+  }, [filteredFindings, selectedFindingId])
 
   useEffect(() => {
     setActiveNodeId('all')
@@ -6056,24 +6060,22 @@ function PipelinePanel({
     setActiveNodeId(nodeId)
     setActiveClusterId('all')
     const nextFinding = findings.find((finding) => cicdFindingNodeIds(finding).includes(nodeId))
-    if (nextFinding) setSelectedFindingId(nextFinding.fingerprint)
+    setSelectedFindingId(nextFinding?.fingerprint ?? '')
   }
 
   function selectCluster(clusterId: string) {
     if (clusterId === activeClusterId) {
-      resetCicdView()
+      setActiveClusterId('all')
       return
     }
     setActiveClusterId(clusterId)
     const cluster = riskClusters.find((item) => item.id === clusterId)
-    setActiveNodeId('all')
-    if (cluster?.findings[0]) setSelectedFindingId(cluster.findings[0].fingerprint)
+    const nextFinding = cluster?.findings.find((finding) => activeNodeId === 'all' || cicdFindingNodeIds(finding).includes(activeNodeId))
+    setSelectedFindingId(nextFinding?.fingerprint ?? '')
   }
 
   function selectFinding(finding: CicdFinding) {
     setSelectedFindingId(finding.fingerprint)
-    setActiveClusterId(cicdRiskType(finding).id)
-    setActiveNodeId(cicdFindingNodeIds(finding).find((nodeId) => nodeId !== 'workflow') ?? 'workflow')
   }
 
   function resetCicdView() {
@@ -6088,8 +6090,8 @@ function PipelinePanel({
     try {
       const nextAudit = await runCICDAuditScan({ workspaceId, importId, targetPath: importId ? undefined : audit?.target_path })
       onScanned(nextAudit)
-      const runs = normalizeCicdScanRuns(nextAudit.summary.trend ?? nextAudit.state?.trend ?? [])
-      if (runs.length) setScanRuns(runs)
+      const history = await loadCICDScanRuns()
+      setScanRuns(normalizeCicdScanRuns(history.scanRuns))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'CI/CD 扫描失败')
     } finally {
@@ -6217,17 +6219,6 @@ function PipelinePanel({
                     {workflow}
                   </DropdownMenuLabel>
                 ))}
-                {scanners.length ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>扫描器</DropdownMenuLabel>
-                    {scanners.map((scanner) => (
-                      <DropdownMenuLabel key={scanner.name} className='text-[11px] font-normal text-muted-foreground'>
-                        {scanner.name} · {scanner.state || (scanner.available ? '可用' : '不可用')}
-                      </DropdownMenuLabel>
-                    ))}
-                  </>
-                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -6253,7 +6244,7 @@ function PipelinePanel({
         />
       </div>
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,0.42fr)_minmax(0,0.58fr)]'>
+      <div className='space-y-4'>
         <CicdRiskClusterPanel
           clusters={riskClusters}
           activeClusterId={activeClusterId}
@@ -6263,7 +6254,12 @@ function PipelinePanel({
         <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
           <CardHeader className='pb-3'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
-              <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
+              <div className='flex flex-wrap items-center gap-2'>
+                <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', activeNodeId === 'all' ? 'border-slate-400/15 bg-slate-900/60 text-slate-300' : cicdNodeTone(selectedNode?.status ?? 'empty'))}>
+                  {activeNodeId === 'all' ? '全部风险' : `当前节点：${selectedNodeLabel}`}
+                </span>
+              </div>
               <div className='flex flex-wrap items-center gap-2'>
                 <Select value={severityFilter} onValueChange={setSeverityFilter}>
                   <SelectTrigger size='sm' className='w-[120px] rounded-md border-slate-400/15 bg-slate-900/60'>
@@ -6298,6 +6294,7 @@ function PipelinePanel({
             <CicdFindingList
               findings={filteredFindings}
               selectedFinding={selectedFinding}
+              contextNodeLabel={activeNodeId === 'all' ? undefined : selectedNodeLabel}
               disabled={mutating}
               onSelect={selectFinding}
               onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
@@ -6560,8 +6557,9 @@ function CicdNodeDetailCard({
   finding?: CicdFinding
   audit?: CICDAuditResult | null
 }) {
-  const showLogUpload = node?.id === 'logs' || (node?.status === 'gap' && node?.id === 'runner')
-  const showArtifactUpload = node?.id === 'artifact' || node?.id === 'provenance'
+  const findingNodeIds = finding ? cicdFindingNodeIds(finding) : []
+  const showLogUpload = node?.id === 'logs' || findingNodeIds.includes('logs') || (node?.status === 'gap' && node?.id === 'runner')
+  const showArtifactUpload = node?.id === 'artifact' || node?.id === 'provenance' || findingNodeIds.includes('artifact') || findingNodeIds.includes('provenance')
   return (
     <motion.div
       key={`${node?.id ?? 'node'}-${finding?.fingerprint ?? 'finding'}`}
@@ -6645,7 +6643,7 @@ function CicdRiskClusterPanel({
           <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
         </div>
       </CardHeader>
-      <CardContent className='grid gap-3 sm:grid-cols-2'>
+      <CardContent className='flex flex-wrap gap-3 pt-0'>
         {clusters.length ? clusters.map((cluster) => {
           const selected = cluster.id === activeClusterId
           const max = Math.max(1, cluster.findings.length)
@@ -6657,7 +6655,7 @@ function CicdRiskClusterPanel({
               whileHover={{ y: -2 }}
               onClick={() => onSelectCluster(cluster.id)}
               className={cn(
-                'rounded-md border p-3 text-left transition-[border-color,background-color,box-shadow]',
+                'min-h-[124px] min-w-[280px] flex-1 rounded-md border p-3 text-left transition-[border-color,background-color,box-shadow]',
                 selected ? 'border-orange-300/40 bg-orange-400/10 shadow-[0_0_22px_rgba(251,146,60,0.12)]' : 'border-slate-400/10 bg-slate-900/45 hover:border-slate-300/30'
               )}
             >
@@ -6683,7 +6681,7 @@ function CicdRiskClusterPanel({
             </motion.button>
           )
         }) : (
-          <div className='col-span-full rounded-md border border-slate-400/10 bg-slate-900/35 p-4 text-sm text-slate-500'>未发现风险聚类</div>
+          <div className='w-full rounded-md border border-slate-400/10 bg-slate-900/35 p-4 text-sm text-slate-500'>未发现风险聚类</div>
         )}
       </CardContent>
     </Card>
@@ -6693,12 +6691,14 @@ function CicdRiskClusterPanel({
 function CicdFindingList({
   findings,
   selectedFinding,
+  contextNodeLabel,
   disabled,
   onSelect,
   onIgnore,
 }: {
   findings: CicdFinding[]
   selectedFinding?: CicdFinding
+  contextNodeLabel?: string
   disabled: boolean
   onSelect: (finding: CicdFinding) => void
   onIgnore: (finding: CicdFinding) => void
@@ -6737,8 +6737,13 @@ function CicdFindingList({
                   <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
                 </div>
                 <div className='mt-3 flex items-center justify-between gap-3 text-xs text-slate-400'>
-                  <span className='font-mono'>{finding.workflow}:{finding.line}</span>
-                  <Button variant='ghost' size='sm' disabled={disabled} onClick={() => onIgnore(finding)}>
+                  <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                    <span className='rounded-full border border-slate-400/10 bg-slate-950/55 px-2 py-1 font-semibold text-slate-300'>节点：{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
+                    <span className='truncate font-mono' title={`${finding.workflow}:${finding.line}`}>{compactWorkflowPath(finding.workflow)}:{finding.line}</span>
+                    {finding.job_id ? <span className='truncate font-medium text-slate-300' title={finding.job_id}>Job：{finding.job_id}</span> : null}
+                    {finding.step_name ? <span className='truncate font-medium text-slate-300' title={finding.step_name}>Step：{finding.step_name}</span> : null}
+                  </div>
+                  <Button variant='ghost' size='sm' disabled={disabled} onClick={(event) => { event.stopPropagation(); onIgnore(finding) }}>
                     <EyeOff className='size-4' />
                     忽略
                   </Button>
@@ -6790,17 +6795,23 @@ function buildCicdGraphNodes(
 }
 
 function cicdFindingNodeIds(finding: CicdFinding) {
-  const text = `${finding.rule_id} ${finding.title} ${finding.reason} ${finding.evidence} ${finding.workflow} ${finding.job_id} ${finding.step_name}`.toLowerCase()
-  const ids = new Set<string>(['workflow'])
+  const text = `${finding.rule_id} ${finding.reason} ${finding.evidence} ${finding.workflow} ${finding.job_id} ${finding.job_name} ${finding.step_name}`.toLowerCase()
+  const ids = new Set<string>()
+  if (finding.workflow) ids.add('workflow')
   if (finding.job_id || finding.job_name) ids.add('job')
   if (finding.step_name || (finding.step_index !== null && finding.step_index !== undefined)) ids.add('step')
-  if (/action|unpinned|mutable|checkout|setup-|upload-artifact|docker:/.test(text)) ids.add('action')
+  if (/uses:\s*[^\s]+\/|action|unpinned|mutable|checkout|setup-|upload-artifact|docker:/.test(text)) ids.add('action')
   if (/runner|self-hosted/.test(text)) ids.add('runner')
   if (/artifact|provenance|attestation|digest|slsa/.test(text)) ids.add('artifact')
   if (/provenance|attestation|slsa/.test(text)) ids.add('provenance')
   if (/log|runtime|evidence/.test(text)) ids.add('logs')
   if (/pull_request|trigger|schedule|workflow_dispatch|push/.test(text)) ids.add('trigger')
-  return Array.from(ids)
+  return ids.size ? Array.from(ids) : ['workflow']
+}
+
+function cicdPrimaryNodeLabel(finding: CicdFinding) {
+  const ids = cicdFindingNodeIds(finding)
+  return cicdGraphNodeLabel(ids.find((id) => !['workflow', 'job', 'step'].includes(id)) ?? ids[ids.length - 1] ?? 'workflow')
 }
 
 function cicdNodeStatus(
@@ -6870,18 +6881,24 @@ function cicdClusterNodeIds(clusterId: string) {
 }
 
 function normalizeCicdScanRuns(runs: CICDScanRun[] | undefined): CICDScanRun[] {
-  return (runs ?? []).filter(Boolean).map((run) => ({
-    ...run,
-    id: run.id || run.scan_id,
-    createdAt: run.createdAt || run.generated_at,
-    totalRisks: run.totalRisks ?? run.total ?? 0,
-    criticalCount: run.criticalCount ?? run.critical ?? 0,
-    highCount: run.highCount ?? run.high ?? 0,
-    mediumCount: run.mediumCount ?? run.medium ?? 0,
-    lowCount: run.lowCount ?? run.low ?? 0,
-    fixedCount: run.fixedCount ?? run.fixed ?? 0,
-    newCount: run.newCount ?? run.new ?? 0,
-  }))
+  return (runs ?? []).flatMap((run) => {
+    const id = run.id || run.scan_id
+    const createdAt = run.createdAt || run.generated_at
+    const totalRisks = run.totalRisks ?? run.total
+    if (!id || !createdAt || typeof totalRisks !== 'number' || !Number.isFinite(totalRisks)) return []
+    return [{
+      ...run,
+      id,
+      createdAt,
+      totalRisks,
+      criticalCount: run.criticalCount ?? run.critical ?? 0,
+      highCount: run.highCount ?? run.high ?? 0,
+      mediumCount: run.mediumCount ?? run.medium ?? 0,
+      lowCount: run.lowCount ?? run.low ?? 0,
+      fixedCount: run.fixedCount ?? run.fixed ?? 0,
+      newCount: run.newCount ?? run.new ?? 0,
+    }]
+  }).sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
 }
 
 function scanRunTotal(run: CICDScanRun) {
