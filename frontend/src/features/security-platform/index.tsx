@@ -3075,7 +3075,6 @@ function SupplyReachabilityPanel({
   const [filter, setFilter] = useState<'all' | 'reachable' | 'pending' | 'critical'>('all')
   const [selectedDependencyId, setSelectedDependencyId] = useState('')
   const [activeEvidence, setActiveEvidence] = useState('dependency')
-  const [matrixExpanded, setMatrixExpanded] = useState(false)
   const [scanning, setScanning] = useState(false)
   useEffect(() => {
     if (!reachabilityItems.length) return
@@ -3093,7 +3092,7 @@ function SupplyReachabilityPanel({
     if (filter === 'critical') return item.severity === 'critical'
     return true
   })
-  const visibleItems = filteredItems.slice(0, 6)
+  const visibleItems = filteredItems.slice(0, 8)
   const pathSteps = [
     { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
     { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
@@ -3102,7 +3101,6 @@ function SupplyReachabilityPanel({
     { id: 'graph', label: '攻击链关联', value: selectedItem?.evidence.attackChainLinks ?? 0, tone: (selectedItem?.evidence.attackChainLinks ?? 0) > 0 ? 'hit' as const : 'gap' as const },
   ]
   const matrixRows = buildUnifiedEvidenceRows(reachabilityItems)
-  const visibleMatrixRows = matrixExpanded ? matrixRows : matrixRows.slice(0, 5)
   const gapLabels = selectedItem?.missing ?? []
 
   async function rerunReachability() {
@@ -3170,12 +3168,14 @@ function SupplyReachabilityPanel({
         />
       </section>
 
-      <div className='grid gap-4 xl:grid-cols-[0.72fr_1.08fr_0.7fr]'>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
         <RiskScoreWorkbenchCard
           score={selectedItem?.riskScore ?? 0}
           severity={selectedItem?.severity ?? 'low'}
           entryHits={selectedItem?.evidence.entryHits ?? 0}
           codeHits={selectedItem?.evidence.codeRefs ?? 0}
+          runtimeHits={selectedItem?.evidence.runtimeEvidence ?? 0}
+          graphHits={selectedItem?.evidence.attackChainLinks ?? 0}
           gapCount={gapLabels.length || reachability.gapCount}
           selectedKey={selectedItem?.id ?? 'empty'}
         />
@@ -3184,102 +3184,92 @@ function SupplyReachabilityPanel({
           activeEvidence={activeEvidence}
           onActiveEvidence={setActiveEvidence}
           selectedItem={selectedItem}
+          rows={matrixRows}
+          selectedId={selectedItem?.id ?? ''}
+          onSelectDependency={setSelectedDependencyId}
         />
         <DependencyDetailWorkbench
           item={selectedItem}
         />
       </div>
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_390px]'>
-        <div className='space-y-4'>
-          <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
-            <CardHeader className='pb-3'>
-              <div className='flex flex-wrap items-center justify-between gap-3'>
-                <CardTitle className='text-base text-slate-100'>高风险依赖</CardTitle>
-                <div className='flex flex-wrap gap-1.5'>
-                  {[
-                    ['all', '全部'],
-                    ['reachable', '已可达'],
-                    ['pending', '待研判'],
-                    ['critical', '严重'],
-                  ].map(([value, label]) => (
-                    <button
-                      key={value}
-                      type='button'
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-xs transition-colors',
-                        filter === value
-                          ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
-                          : 'border-slate-400/15 bg-slate-900/50 text-slate-400 hover:border-slate-300/30 hover:text-slate-200'
-                      )}
-                      onClick={() => setFilter(value as typeof filter)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+      <div className='space-y-4'>
+        <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+          <CardHeader className='pb-3'>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <CardTitle className='text-base text-slate-100'>高风险依赖</CardTitle>
+              <div className='flex flex-wrap gap-1.5'>
+                {[
+                  ['all', '全部'],
+                  ['reachable', '已可达'],
+                  ['pending', '待研判'],
+                  ['critical', '严重'],
+                ].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type='button'
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-xs transition-colors',
+                      filter === value
+                        ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
+                        : 'border-slate-400/15 bg-slate-900/50 text-slate-400 hover:border-slate-300/30 hover:text-slate-200'
+                    )}
+                    onClick={() => setFilter(value as typeof filter)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            </CardHeader>
-            <CardContent>
-              <div className='overflow-x-auto rounded-md border border-slate-400/10'>
-                <Table>
-                  <TableHeader>
-                    <TableRow className='border-slate-400/10 hover:bg-transparent'>
-                      <TableHead>依赖名</TableHead>
-                      <TableHead>当前版本</TableHead>
-                      <TableHead>请求版本</TableHead>
-                      <TableHead>来源</TableHead>
-                      <TableHead>可达性</TableHead>
-                      <TableHead>风险</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleItems.length ? visibleItems.map((item) => {
-                      const selected = item.id === selectedItem?.id
-                      return (
-                        <TableRow
-                          key={item.id}
-                          className={cn('cursor-pointer border-slate-400/10 transition-colors hover:bg-slate-900/60', selected && 'bg-cyan-400/10')}
-                          onClick={() => setSelectedDependencyId(item.id)}
-                        >
-                          <TableCell className='font-medium text-slate-100'>{item.name}</TableCell>
-                          <TableCell className='text-slate-300'>{item.currentVersion || '-'}</TableCell>
-                          <TableCell className='text-slate-400'>{item.requestedVersion || '-'}</TableCell>
-                          <TableCell className='max-w-[180px] truncate text-slate-400' title={item.sourceFiles.join(' / ')}>
-                            {item.sourceFiles[0] || '-'}
-                          </TableCell>
-                          <TableCell>
-                            <ReachabilityStatePill state={item.status} />
-                          </TableCell>
-                          <TableCell>
-                            <SeverityPill severity={item.severity} />
-                          </TableCell>
-                        </TableRow>
-                      )
-                    }) : (
-                      <TableRow>
-                        <TableCell colSpan={6} className='h-24 text-center text-sm text-slate-500'>
-                          无匹配依赖
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className='overflow-x-auto rounded-md border border-slate-400/10'>
+              <Table>
+                <TableHeader>
+                  <TableRow className='border-slate-400/10 hover:bg-transparent'>
+                    <TableHead>依赖名</TableHead>
+                    <TableHead>当前版本</TableHead>
+                    <TableHead>请求版本</TableHead>
+                    <TableHead>来源</TableHead>
+                    <TableHead>可达性</TableHead>
+                    <TableHead>风险</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleItems.length ? visibleItems.map((item) => {
+                    const selected = item.id === selectedItem?.id
+                    return (
+                      <TableRow
+                        key={item.id}
+                        className={cn('cursor-pointer border-slate-400/10 transition-colors hover:bg-slate-900/60', selected && 'bg-cyan-400/10')}
+                        onClick={() => setSelectedDependencyId(item.id)}
+                      >
+                        <TableCell className='font-medium text-slate-100'>{item.name}</TableCell>
+                        <TableCell className='text-slate-300'>{item.currentVersion || '-'}</TableCell>
+                        <TableCell className='text-slate-400'>{item.requestedVersion || '-'}</TableCell>
+                        <TableCell className='max-w-[180px] truncate text-slate-400' title={item.sourceFiles.join(' / ')}>
+                          {item.sourceFiles[0] || '-'}
+                        </TableCell>
+                        <TableCell>
+                          <ReachabilityStatePill state={item.status} />
+                        </TableCell>
+                        <TableCell>
+                          <SeverityPill severity={item.severity} />
                         </TableCell>
                       </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-
-        </div>
-        <EvidenceCoverageWorkbench
-          rows={visibleMatrixRows}
-          totalRows={matrixRows.length}
-          expanded={matrixExpanded}
-          activeEvidence={activeEvidence}
-          selectedId={selectedItem?.id ?? ''}
-          onToggleExpanded={() => setMatrixExpanded((value) => !value)}
-          onActiveEvidence={setActiveEvidence}
-          onSelectDependency={setSelectedDependencyId}
-        />
+                    )
+                  }) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className='h-24 text-center text-sm text-slate-500'>
+                        无匹配依赖
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
@@ -3339,6 +3329,8 @@ function RiskScoreWorkbenchCard({
   severity,
   entryHits,
   codeHits,
+  runtimeHits,
+  graphHits,
   gapCount,
   selectedKey,
 }: {
@@ -3346,12 +3338,14 @@ function RiskScoreWorkbenchCard({
   severity: SecuritySeverity
   entryHits: number
   codeHits: number
+  runtimeHits: number
+  graphHits: number
   gapCount: number
   selectedKey: string
 }) {
   const reducedMotion = useReducedMotion()
   const normalized = Math.max(0, Math.min(100, Math.round(score || 0)))
-  const radius = 42
+  const radius = 44
   const circumference = 2 * Math.PI * radius
   const { value: displayScore, spring } = useAnimatedNumber(normalized, {
     stiffness: 40,
@@ -3363,14 +3357,24 @@ function RiskScoreWorkbenchCard({
   })
   const dashOffset = useTransform(spring, (latest) => circumference * (1 - Math.max(0, Math.min(100, latest)) / 100))
   const tone = riskGaugeTone(severity)
+  const evidenceBar = [
+    { label: '代码', value: codeHits },
+    { label: '入口', value: entryHits },
+    { label: '执行', value: runtimeHits },
+    { label: '关联', value: graphHits },
+  ]
+  const evidenceTotal = Math.max(1, evidenceBar.reduce((sum, item) => sum + item.value, 0))
 
   return (
-    <Card className='group overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25'>
-      <CardContent className='relative p-4'>
+    <Card className='group h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25'>
+      <CardContent className='relative flex h-full flex-col p-4'>
         <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
-        <div className='text-xs text-slate-400'>风险评分</div>
-        <div className='mt-3 flex items-center justify-center'>
-          <div className='relative size-36'>
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-xs font-medium text-slate-300'>风险评分</div>
+          <SeverityPill severity={severity} />
+        </div>
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
             <motion.div
               className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
               animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
@@ -3391,13 +3395,13 @@ function RiskScoreWorkbenchCard({
             </svg>
             <div className='absolute inset-0 grid place-items-center'>
               <div className='text-center'>
-                <div className={cn('text-4xl font-semibold leading-none tabular-nums', tone.text)}>{displayScore}</div>
+                <div className={cn('text-5xl font-semibold leading-none tabular-nums', tone.text)}>{displayScore}</div>
                 <div className='mt-1 text-[11px] text-slate-500'>score</div>
               </div>
             </div>
           </div>
         </div>
-        <div className='mt-4 grid grid-cols-3 gap-2'>
+        <div className='grid grid-cols-3 gap-2'>
           {[
             ['命中入口', entryHits, 'text-cyan-200'],
             ['引用证据', codeHits, 'text-cyan-200'],
@@ -3409,6 +3413,25 @@ function RiskScoreWorkbenchCard({
             </div>
           ))}
         </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-slate-900/45 p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {evidenceBar.map((item, index) => (
+              <span
+                key={item.label}
+                className={cn(
+                  'transition-all duration-300',
+                  item.value > 0 ? (index === 2 ? 'bg-amber-300/70' : 'bg-cyan-300/70') : 'bg-slate-700/70'
+                )}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / evidenceTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500'>
+            {evidenceBar.map((item) => (
+              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
+            ))}
+          </div>
+        </div>
       </CardContent>
     </Card>
   )
@@ -3419,35 +3442,41 @@ function ReachabilityFlowWorkbench({
   activeEvidence,
   onActiveEvidence,
   selectedItem,
+  rows,
+  selectedId,
+  onSelectDependency,
 }: {
   steps: ReachabilityWorkbenchStep[]
   activeEvidence: string
   onActiveEvidence: (id: string) => void
   selectedItem?: ReachabilityAnalysisItem
+  rows: ReachabilityMatrixRow[]
+  selectedId: string
+  onSelectDependency: (id: string) => void
 }) {
   const reducedMotion = useReducedMotion()
   const activeIndex = Math.max(0, steps.findIndex((step) => step.id === activeEvidence))
   const activeStep = steps[activeIndex] ?? steps[0]
 
   return (
-    <Card className='overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-2'>
         <div className='flex items-center justify-between gap-3'>
           <CardTitle className='text-base text-slate-100'>可达路径图</CardTitle>
           <span className='text-xs text-slate-500'>{selectedItem?.name || '-'}</span>
         </div>
       </CardHeader>
-      <CardContent>
-        <div className='relative flex min-h-40 items-center justify-between gap-2 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-3 py-5'>
-          <div className='absolute left-9 right-9 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
+      <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
+        <div className='relative flex flex-1 items-center justify-between gap-3 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-4 py-6'>
+          <div className='absolute left-10 right-10 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
           <div
-            className='absolute left-9 top-1/2 h-px -translate-y-1/2 bg-cyan-300/45 transition-all duration-300'
-            style={{ width: `calc((100% - 4.5rem) * ${Math.max(0, activeIndex) / Math.max(1, steps.length - 1)})` }}
+            className='absolute left-10 top-1/2 h-px -translate-y-1/2 bg-cyan-300/50 transition-all duration-300'
+            style={{ width: `calc((100% - 5rem) * ${Math.max(0, activeIndex) / Math.max(1, steps.length - 1)})` }}
           />
           <motion.div
-            className='absolute left-9 top-1/2 h-px w-24 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent'
-            animate={reducedMotion ? undefined : { x: ['0%', '420%'] }}
-            transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }}
+            className='absolute left-10 top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/75 to-transparent'
+            animate={reducedMotion ? undefined : { x: ['0%', '520%'] }}
+            transition={{ duration: 3.6, repeat: Infinity, ease: 'linear' }}
           />
           {steps.map((step, index) => (
             <motion.button
@@ -3459,13 +3488,13 @@ function ReachabilityFlowWorkbench({
               title={`${step.label}: ${step.value}`}
               onClick={() => onActiveEvidence(step.id)}
               className={cn(
-                'group relative z-10 flex min-w-0 flex-1 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,transform] hover:-translate-y-0.5',
+                'group relative z-10 flex min-w-0 flex-1 flex-col items-center gap-2.5 rounded-md border px-2 py-4 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5',
                 activeEvidence === step.id
-                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_0_22px_rgba(34,211,238,0.14)]'
+                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_0_26px_rgba(34,211,238,0.16)]'
                   : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
               )}
             >
-              <span className={cn('grid size-9 place-items-center rounded-full border text-xs font-semibold tabular-nums', reachabilityNodeTone(step.tone))}>
+              <span className={cn('grid size-11 place-items-center rounded-full border text-sm font-semibold tabular-nums', reachabilityNodeTone(step.tone))}>
                 {typeof step.value === 'number' ? step.value : step.value.slice(0, 2)}
               </span>
               <span className='text-center text-xs font-medium leading-4 text-slate-200'>{step.label}</span>
@@ -3478,7 +3507,7 @@ function ReachabilityFlowWorkbench({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.22 }}
-            className='mt-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'
+            className='rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'
           >
             <div className='flex items-center justify-between gap-3'>
               <div className='text-xs font-medium text-slate-300'>{activeStep.label}</div>
@@ -3488,6 +3517,14 @@ function ReachabilityFlowWorkbench({
             </div>
           </motion.div>
         ) : null}
+        <PathEvidenceCoverage
+          rows={rows}
+          activeEvidence={activeEvidence}
+          selectedId={selectedId}
+          onActiveEvidence={onActiveEvidence}
+          onSelectDependency={onSelectDependency}
+          activeLabel={activeStep?.label ?? '证据'}
+        />
       </CardContent>
     </Card>
   )
@@ -3500,6 +3537,7 @@ function DependencyDetailWorkbench({
 }) {
   return (
     <motion.div
+      className='h-full'
       key={item?.id ?? 'empty-detail'}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
@@ -3581,24 +3619,20 @@ function DependencyDetailWorkbench({
   )
 }
 
-function EvidenceCoverageWorkbench({
+function PathEvidenceCoverage({
   rows,
-  totalRows,
-  expanded,
   activeEvidence,
   selectedId,
-  onToggleExpanded,
   onActiveEvidence,
   onSelectDependency,
+  activeLabel,
 }: {
   rows: ReachabilityMatrixRow[]
-  totalRows: number
-  expanded: boolean
   activeEvidence: string
   selectedId: string
-  onToggleExpanded: () => void
   onActiveEvidence: (id: string) => void
   onSelectDependency: (id: string) => void
+  activeLabel: string
 }) {
   const columns = [
     ['dependency', '依赖'],
@@ -3608,58 +3642,77 @@ function EvidenceCoverageWorkbench({
     ['external', '外部'],
     ['graph', '关联'],
   ]
+  const visibleRows = rows.slice(0, 5)
+  const activeColumnIndex = Math.max(0, columns.findIndex(([id]) => id === activeEvidence))
 
   return (
-    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
-      <CardHeader className='pb-3'>
-        <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='text-base text-slate-100'>证据覆盖</CardTitle>
-          {totalRows > 5 ? (
-            <Button variant='ghost' size='sm' onClick={onToggleExpanded}>
-              {expanded ? '收起' : '展开全部'}
-            </Button>
-          ) : null}
-        </div>
-      </CardHeader>
-      <CardContent className='space-y-3'>
-        <div className='grid grid-cols-6 gap-2'>
+    <motion.div
+      key={`coverage-${selectedId}-${activeEvidence}`}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className='rounded-md border border-slate-400/10 bg-slate-950/45 p-3'
+    >
+      <div className='mb-3 flex items-center justify-between gap-3'>
+        <div className='text-xs font-medium text-slate-300'>{activeLabel}</div>
+        <div className='grid grid-cols-6 gap-1.5'>
           {columns.map(([id, label]) => (
             <button
               key={id}
               type='button'
               onClick={() => onActiveEvidence(id)}
-              className={cn('rounded-md border px-2 py-2 text-center text-xs transition-colors', activeEvidence === id ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-slate-400/15 bg-slate-900/50 text-slate-400 hover:border-slate-300/30')}
+              className={cn(
+                'rounded-full border px-2 py-0.5 text-[11px] transition-[border-color,background-color,color,transform] hover:-translate-y-0.5',
+                activeEvidence === id
+                  ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
+                  : 'border-slate-400/15 bg-slate-900/50 text-slate-500 hover:border-slate-300/25 hover:text-slate-300'
+              )}
             >
               {label}
             </button>
           ))}
         </div>
-        <div className='space-y-2'>
-          {rows.map((row) => (
-            <button
-              key={row.id}
-              type='button'
-              onClick={() => onSelectDependency(row.id)}
-              className={cn(
-                'w-full rounded-md border border-slate-400/10 bg-slate-900/35 p-3 text-left transition-colors hover:border-slate-300/25 hover:bg-slate-900/55',
-                row.id === selectedId && 'border-cyan-300/35 bg-cyan-400/10'
-              )}
-            >
-              <div className='mb-2 truncate text-xs font-medium text-slate-300'>{row.signal}</div>
-              <div className='grid grid-cols-6 gap-2'>
-                {row.cells.map((cell, index) => (
+      </div>
+      <div className='space-y-1.5'>
+        {visibleRows.map((row) => (
+          <button
+            key={row.id}
+            type='button'
+            onClick={() => onSelectDependency(row.id)}
+            className={cn(
+              'grid w-full grid-cols-[minmax(0,1fr)_160px] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/35 px-2.5 py-2 text-left transition-[border-color,background-color] hover:border-slate-300/25 hover:bg-slate-900/55',
+              row.id === selectedId && 'border-cyan-300/35 bg-cyan-400/10'
+            )}
+          >
+            <div className='truncate text-xs font-medium text-slate-300' title={row.signal}>
+              {row.signal}
+            </div>
+            <div className='grid grid-cols-6 gap-2'>
+              {row.cells.map((cell, index) => (
+                <span
+                  key={`${row.id}-${index}`}
+                  className='grid place-items-center'
+                >
                   <span
-                    key={`${row.id}-${index}`}
                     title={cell.detail || cell.label}
-                    className={cn('mx-auto size-2.5 rounded-full ring-4', coverageDotClass(cell.status), activeEvidence === columns[index]?.[0] && 'scale-125')}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onActiveEvidence(columns[index]?.[0] ?? 'dependency')
+                      onSelectDependency(row.id)
+                    }}
+                    className={cn(
+                      'size-2.5 rounded-full ring-4 transition-[box-shadow,transform]',
+                      coverageDotClass(cell.status),
+                      activeColumnIndex === index && 'scale-125 shadow-[0_0_14px_rgba(34,211,238,0.24)]'
+                    )}
                   />
-                ))}
-              </div>
-            </button>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
+                </span>
+              ))}
+            </div>
+          </button>
+        ))}
+      </div>
+    </motion.div>
   )
 }
 
