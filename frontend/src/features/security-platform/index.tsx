@@ -302,6 +302,28 @@ type ReachabilityViewModel = {
   hasDependencyAudit: boolean
   hasCodeAudit: boolean
 }
+type ReachabilityAnalysisItem = {
+  id: string
+  dependency: SecurityDependency
+  name: string
+  currentVersion: string
+  requestedVersion: string
+  packageManager: string
+  sourceFiles: string[]
+  severity: SecuritySeverity
+  riskScore: number
+  status: 'reachable' | 'pending'
+  evidence: {
+    codeRefs: number
+    entryHits: number
+    runtimeEvidence: number
+    externalAlerts: number
+    attackChainLinks: number
+  }
+  missing: string[]
+  advisories: string[]
+  rawEvidence: string[]
+}
 type EvidenceRecommendationPriority = '高' | '中' | '低'
 type EvidenceRecommendation = {
   id: string
@@ -3046,43 +3068,42 @@ function SupplyReachabilityPanel({
     [workspace.dependencies]
   )
   const reachability = buildReachabilityViewModel(workspace)
+  const reachabilityItems = useMemo(
+    () => buildReachabilityItems(dependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
+    [dependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
+  )
   const [filter, setFilter] = useState<'all' | 'reachable' | 'pending' | 'critical'>('all')
-  const [selectedKey, setSelectedKey] = useState('')
+  const [selectedDependencyId, setSelectedDependencyId] = useState('')
   const [activeEvidence, setActiveEvidence] = useState('dependency')
   const [matrixExpanded, setMatrixExpanded] = useState(false)
   const [scanning, setScanning] = useState(false)
-  const selectedDependency =
-    dependencies.find((dependency) => dependencyKey(dependency) === selectedKey) ??
-    dependencies.find((dependency) => dependency.name === reachability.targetDependency?.name) ??
-    dependencies[0]
-  const selectedEvidence = selectedDependency ? dependencyEvidenceCounts(selectedDependency, workspace.code_audit?.findings ?? []) : {
-    code: 0,
-    entry: 0,
-    execution: 0,
-    runtime: 0,
-  }
-  const selectedRisk = selectedDependency?.risk ?? reachability.targetRisk ?? workspace.summary.risk_score ?? 0
-  const selectedState = selectedDependency ? dependencyReachabilityState(selectedDependency) : 'pending'
-  const filteredDependencies = dependencies.filter((dependency) => {
-    const state = dependencyReachabilityState(dependency)
-    if (filter === 'reachable') return state === 'reachable'
-    if (filter === 'pending') return state === 'pending'
-    if (filter === 'critical') return dependencySeverity(dependency.risk) === 'critical'
+  useEffect(() => {
+    if (!reachabilityItems.length) return
+    if (!selectedDependencyId || !reachabilityItems.some((item) => item.id === selectedDependencyId)) {
+      setSelectedDependencyId(reachabilityItems[0].id)
+    }
+  }, [reachabilityItems, selectedDependencyId])
+  const selectedItem =
+    reachabilityItems.find((item) => item.id === selectedDependencyId) ??
+    reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
+    reachabilityItems[0]
+  const filteredItems = reachabilityItems.filter((item) => {
+    if (filter === 'reachable') return item.status === 'reachable'
+    if (filter === 'pending') return item.status === 'pending'
+    if (filter === 'critical') return item.severity === 'critical'
     return true
   })
-  const visibleDependencies = filteredDependencies.slice(0, 6)
+  const visibleItems = filteredItems.slice(0, 6)
   const pathSteps = [
-    { id: 'dependency', label: '可疑依赖', value: selectedDependency?.name || '-', tone: 'risk' as const },
-    { id: 'code', label: '代码引用', value: selectedEvidence.code, tone: selectedEvidence.code > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'entry', label: '入口命中', value: selectedEvidence.entry, tone: selectedEvidence.entry > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'execution', label: '执行证据', value: selectedEvidence.execution + selectedEvidence.runtime, tone: selectedEvidence.execution + selectedEvidence.runtime > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'graph', label: '攻击链关联', value: reachability.graphHits, tone: reachability.graphHits > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
+    { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'entry', label: '入口命中', value: selectedItem?.evidence.entryHits ?? 0, tone: (selectedItem?.evidence.entryHits ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'execution', label: '执行证据', value: selectedItem?.evidence.runtimeEvidence ?? 0, tone: (selectedItem?.evidence.runtimeEvidence ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'graph', label: '攻击链关联', value: selectedItem?.evidence.attackChainLinks ?? 0, tone: (selectedItem?.evidence.attackChainLinks ?? 0) > 0 ? 'hit' as const : 'gap' as const },
   ]
-  const matrixRows = buildUnifiedEvidenceRows(dependencies, workspace.code_audit?.findings ?? [], reachability)
+  const matrixRows = buildUnifiedEvidenceRows(reachabilityItems)
   const visibleMatrixRows = matrixExpanded ? matrixRows : matrixRows.slice(0, 5)
-  const selectedSources = selectedDependency ? dependencySources(selectedDependency) : []
-  const vulnerabilityIds = selectedDependency?.vulnerabilities?.map((item) => item.id).filter(Boolean) ?? []
-  const gapLabels = reachability.runtimeHits === 0 ? ['运行日志'] : []
+  const gapLabels = selectedItem?.missing ?? []
 
   async function rerunReachability() {
     setScanning(true)
@@ -3112,13 +3133,19 @@ function SupplyReachabilityPanel({
       <section className='rounded-md border border-slate-400/15 bg-slate-950/70 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div className='min-w-0'>
-            <h2 className='text-xl font-semibold tracking-normal text-slate-100'>供应链可达性研判</h2>
-            <div className='mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-400'>
-              <span>{reachability.targetName || selectedDependency?.name || '-'}</span>
+            <div className='flex items-center gap-3'>
+              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+                <Route className='size-5' />
+              </span>
+              <h2 className='text-[28px] font-semibold leading-tight tracking-normal text-slate-100'>供应链可达性研判</h2>
+            </div>
+            <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
+            <div className='mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400'>
+              <span>{selectedItem ? `${selectedItem.name}@${selectedItem.currentVersion || '-'}` : '-'}</span>
               <span>·</span>
-              <span>{selectedDependency?.ecosystem || 'npm'}</span>
+              <span>{selectedItem?.packageManager || 'npm'}</span>
               <span>·</span>
-              <span>{selectedDependency?.source_file || 'package-lock.json'}</span>
+              <span>{selectedItem?.sourceFiles.join(' / ') || '-'}</span>
             </div>
           </div>
           <div className='flex flex-wrap gap-2'>
@@ -3136,28 +3163,30 @@ function SupplyReachabilityPanel({
             </Button>
           </div>
         </div>
+        <DependencySelectorRail
+          items={reachabilityItems}
+          selectedId={selectedItem?.id ?? ''}
+          onSelect={setSelectedDependencyId}
+        />
       </section>
 
       <div className='grid gap-4 xl:grid-cols-[0.72fr_1.08fr_0.7fr]'>
         <RiskScoreWorkbenchCard
-          score={selectedRisk}
-          entryHits={selectedEvidence.entry}
-          codeHits={selectedEvidence.code}
+          score={selectedItem?.riskScore ?? 0}
+          severity={selectedItem?.severity ?? 'low'}
+          entryHits={selectedItem?.evidence.entryHits ?? 0}
+          codeHits={selectedItem?.evidence.codeRefs ?? 0}
           gapCount={gapLabels.length || reachability.gapCount}
+          selectedKey={selectedItem?.id ?? 'empty'}
         />
         <ReachabilityFlowWorkbench
           steps={pathSteps}
           activeEvidence={activeEvidence}
           onActiveEvidence={setActiveEvidence}
+          selectedItem={selectedItem}
         />
         <DependencyDetailWorkbench
-          dependency={selectedDependency}
-          state={selectedState}
-          risk={selectedRisk}
-          sources={selectedSources}
-          evidence={selectedEvidence}
-          gapLabels={gapLabels}
-          vulnerabilityIds={vulnerabilityIds}
+          item={selectedItem}
         />
       </div>
 
@@ -3205,26 +3234,25 @@ function SupplyReachabilityPanel({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {visibleDependencies.length ? visibleDependencies.map((dependency) => {
-                      const selected = selectedDependency && dependencyKey(dependency) === dependencyKey(selectedDependency)
-                      const state = dependencyReachabilityState(dependency)
+                    {visibleItems.length ? visibleItems.map((item) => {
+                      const selected = item.id === selectedItem?.id
                       return (
                         <TableRow
-                          key={dependencyKey(dependency)}
-                          className={cn('cursor-pointer border-slate-400/10 hover:bg-slate-900/60', selected && 'bg-cyan-400/5')}
-                          onClick={() => setSelectedKey(dependencyKey(dependency))}
+                          key={item.id}
+                          className={cn('cursor-pointer border-slate-400/10 transition-colors hover:bg-slate-900/60', selected && 'bg-cyan-400/10')}
+                          onClick={() => setSelectedDependencyId(item.id)}
                         >
-                          <TableCell className='font-medium text-slate-100'>{dependency.name}</TableCell>
-                          <TableCell className='text-slate-300'>{dependency.version || '-'}</TableCell>
-                          <TableCell className='text-slate-400'>{dependency.requested_version || '-'}</TableCell>
-                          <TableCell className='max-w-[180px] truncate text-slate-400' title={dependency.source_file || dependency.manifest_type || dependency.purl || ''}>
-                            {dependency.source_file || dependency.manifest_type || '-'}
+                          <TableCell className='font-medium text-slate-100'>{item.name}</TableCell>
+                          <TableCell className='text-slate-300'>{item.currentVersion || '-'}</TableCell>
+                          <TableCell className='text-slate-400'>{item.requestedVersion || '-'}</TableCell>
+                          <TableCell className='max-w-[180px] truncate text-slate-400' title={item.sourceFiles.join(' / ')}>
+                            {item.sourceFiles[0] || '-'}
                           </TableCell>
                           <TableCell>
-                            <ReachabilityStatePill state={state} />
+                            <ReachabilityStatePill state={item.status} />
                           </TableCell>
                           <TableCell>
-                            <SeverityPill severity={dependencySeverity(dependency.risk)} />
+                            <SeverityPill severity={item.severity} />
                           </TableCell>
                         </TableRow>
                       )
@@ -3247,7 +3275,10 @@ function SupplyReachabilityPanel({
           totalRows={matrixRows.length}
           expanded={matrixExpanded}
           activeEvidence={activeEvidence}
+          selectedId={selectedItem?.id ?? ''}
           onToggleExpanded={() => setMatrixExpanded((value) => !value)}
+          onActiveEvidence={setActiveEvidence}
+          onSelectDependency={setSelectedDependencyId}
         />
       </div>
     </div>
@@ -3261,16 +3292,62 @@ type ReachabilityWorkbenchStep = {
   tone: 'hit' | 'risk' | 'gap'
 }
 
+function DependencySelectorRail({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: ReachabilityAnalysisItem[]
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
+  if (!items.length) return null
+
+  return (
+    <div className='mt-4 overflow-x-auto pb-1 [scrollbar-width:thin]'>
+      <div className='flex min-w-max gap-2'>
+        {items.slice(0, 10).map((item) => {
+          const selected = item.id === selectedId
+          return (
+            <button
+              key={item.id}
+              type='button'
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                'relative min-w-44 rounded-md border px-3 py-2 text-left transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5',
+                selected
+                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_10px_26px_rgba(8,145,178,0.12)]'
+                  : 'border-slate-400/15 bg-slate-900/55 hover:border-slate-300/30'
+              )}
+            >
+              {selected ? <motion.span layoutId='dependency-rail-active' className='absolute inset-x-3 bottom-0 h-px bg-cyan-300/70' /> : null}
+              <div className='truncate text-sm font-semibold text-slate-100'>{item.name}@{item.currentVersion || '-'}</div>
+              <div className='mt-2 flex items-center gap-1.5'>
+                <SeverityPill severity={item.severity} />
+                <ReachabilityStatePill state={item.status} />
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function RiskScoreWorkbenchCard({
   score,
+  severity,
   entryHits,
   codeHits,
   gapCount,
+  selectedKey,
 }: {
   score: number
+  severity: SecuritySeverity
   entryHits: number
   codeHits: number
   gapCount: number
+  selectedKey: string
 }) {
   const reducedMotion = useReducedMotion()
   const normalized = Math.max(0, Math.min(100, Math.round(score || 0)))
@@ -3282,19 +3359,20 @@ function RiskScoreWorkbenchCard({
     delayMs: 120,
     durationMs: 1800,
     respectReducedMotion: false,
-    resetKey: normalized,
+    resetKey: selectedKey,
   })
   const dashOffset = useTransform(spring, (latest) => circumference * (1 - Math.max(0, Math.min(100, latest)) / 100))
+  const tone = riskGaugeTone(severity)
 
   return (
     <Card className='group overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25'>
       <CardContent className='relative p-4'>
-        <div className='absolute -right-10 -top-12 size-32 rounded-full bg-red-500/10 blur-3xl' />
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
         <div className='text-xs text-slate-400'>风险评分</div>
         <div className='mt-3 flex items-center justify-center'>
           <div className='relative size-36'>
             <motion.div
-              className='absolute inset-3 rounded-full bg-red-500/15 blur-xl'
+              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
               animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
               transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
             />
@@ -3304,7 +3382,7 @@ function RiskScoreWorkbenchCard({
                 cx='56'
                 cy='56'
                 r={radius}
-                className='fill-none stroke-red-400'
+                className={cn('fill-none', tone.stroke)}
                 strokeWidth='8'
                 strokeLinecap='round'
                 strokeDasharray={circumference}
@@ -3313,7 +3391,7 @@ function RiskScoreWorkbenchCard({
             </svg>
             <div className='absolute inset-0 grid place-items-center'>
               <div className='text-center'>
-                <div className='text-4xl font-semibold leading-none text-red-100 tabular-nums'>{displayScore}</div>
+                <div className={cn('text-4xl font-semibold leading-none tabular-nums', tone.text)}>{displayScore}</div>
                 <div className='mt-1 text-[11px] text-slate-500'>score</div>
               </div>
             </div>
@@ -3340,36 +3418,50 @@ function ReachabilityFlowWorkbench({
   steps,
   activeEvidence,
   onActiveEvidence,
+  selectedItem,
 }: {
   steps: ReachabilityWorkbenchStep[]
   activeEvidence: string
   onActiveEvidence: (id: string) => void
+  selectedItem?: ReachabilityAnalysisItem
 }) {
   const reducedMotion = useReducedMotion()
+  const activeIndex = Math.max(0, steps.findIndex((step) => step.id === activeEvidence))
+  const activeStep = steps[activeIndex] ?? steps[0]
 
   return (
     <Card className='overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-2'>
-        <CardTitle className='text-base text-slate-100'>可达路径图</CardTitle>
+        <div className='flex items-center justify-between gap-3'>
+          <CardTitle className='text-base text-slate-100'>可达路径图</CardTitle>
+          <span className='text-xs text-slate-500'>{selectedItem?.name || '-'}</span>
+        </div>
       </CardHeader>
       <CardContent>
         <div className='relative flex min-h-40 items-center justify-between gap-2 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-3 py-5'>
           <div className='absolute left-9 right-9 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
+          <div
+            className='absolute left-9 top-1/2 h-px -translate-y-1/2 bg-cyan-300/45 transition-all duration-300'
+            style={{ width: `calc((100% - 4.5rem) * ${Math.max(0, activeIndex) / Math.max(1, steps.length - 1)})` }}
+          />
           <motion.div
             className='absolute left-9 top-1/2 h-px w-24 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/80 to-transparent'
             animate={reducedMotion ? undefined : { x: ['0%', '420%'] }}
             transition={{ duration: 3.2, repeat: Infinity, ease: 'linear' }}
           />
-          {steps.map((step) => (
-            <button
+          {steps.map((step, index) => (
+            <motion.button
               key={step.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, delay: index * 0.04 }}
               type='button'
               title={`${step.label}: ${step.value}`}
               onClick={() => onActiveEvidence(step.id)}
               className={cn(
                 'group relative z-10 flex min-w-0 flex-1 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,transform] hover:-translate-y-0.5',
                 activeEvidence === step.id
-                  ? 'border-cyan-300/45 bg-cyan-400/10'
+                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_0_22px_rgba(34,211,238,0.14)]'
                   : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
               )}
             >
@@ -3377,52 +3469,63 @@ function ReachabilityFlowWorkbench({
                 {typeof step.value === 'number' ? step.value : step.value.slice(0, 2)}
               </span>
               <span className='text-center text-xs font-medium leading-4 text-slate-200'>{step.label}</span>
-            </button>
+            </motion.button>
           ))}
         </div>
+        {activeStep ? (
+          <motion.div
+            key={`${selectedItem?.id}-${activeStep.id}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22 }}
+            className='mt-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'
+          >
+            <div className='flex items-center justify-between gap-3'>
+              <div className='text-xs font-medium text-slate-300'>{activeStep.label}</div>
+              <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', reachabilityNodeTone(activeStep.tone))}>
+                {activeStep.value}
+              </span>
+            </div>
+          </motion.div>
+        ) : null}
       </CardContent>
     </Card>
   )
 }
 
 function DependencyDetailWorkbench({
-  dependency,
-  state,
-  risk,
-  sources,
-  evidence,
-  gapLabels,
-  vulnerabilityIds,
+  item,
 }: {
-  dependency?: SecurityDependency
-  state: 'reachable' | 'pending'
-  risk: number
-  sources: string[]
-  evidence: { code: number; entry: number; execution: number; runtime: number }
-  gapLabels: string[]
-  vulnerabilityIds: string[]
+  item?: ReachabilityAnalysisItem
 }) {
   return (
-    <Card className='rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+    <motion.div
+      key={item?.id ?? 'empty-detail'}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24 }}
+    >
+    <Card className='h-full rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-3'>
         <CardTitle className='text-base text-slate-100'>
-          {dependency ? `${dependency.name}@${dependency.version || '-'}` : '依赖详情'}
+          {item ? `${item.name}@${item.currentVersion || '-'}` : '依赖详情'}
         </CardTitle>
       </CardHeader>
       <CardContent className='space-y-3'>
         <div className='flex flex-wrap gap-2'>
-          <ReachabilityStatePill state={state} />
+          <ReachabilityStatePill state={item?.status ?? 'pending'} />
           <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
-            风险 {risk}
+            风险 {item?.riskScore ?? 0}
           </span>
         </div>
         <div className='grid gap-2 text-sm'>
-          <DetailRow label='来源' value={sources.join(' / ') || '-'} />
-          <DetailRow label='代码引用' value={evidence.code} />
-          <DetailRow label='入口命中' value={evidence.entry} />
-          <DetailRow label='执行证据' value={evidence.execution + evidence.runtime} />
+          <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
+          <DetailRow label='来源' value={item?.sourceFiles.join(' / ') || '-'} />
+          <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} />
+          <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} />
+          <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} />
         </div>
-        {vulnerabilityIds.length ? (
+        {(item?.advisories.length ?? 0) > 0 ? (
           <Collapsible>
             <CollapsibleTrigger asChild>
               <Button variant='outline' size='sm' className='w-full justify-between'>
@@ -3431,7 +3534,7 @@ function DependencyDetailWorkbench({
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
-              {vulnerabilityIds.slice(0, 6).map((id) => (
+              {item?.advisories.slice(0, 6).map((id) => (
                 <span key={id} className='rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
                   {id}
                 </span>
@@ -3439,17 +3542,34 @@ function DependencyDetailWorkbench({
             </CollapsibleContent>
           </Collapsible>
         ) : null}
+        {(item?.rawEvidence.length ?? 0) > 0 ? (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' size='sm' className='w-full justify-between'>
+                原始证据
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-2 space-y-1.5'>
+              {item?.rawEvidence.slice(0, 4).map((evidence) => (
+                <div key={evidence} className='truncate rounded-md border border-slate-400/10 bg-slate-900/60 px-2 py-1.5 text-xs text-slate-400' title={evidence}>
+                  {evidence}
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
         <div className='rounded-md border border-amber-300/20 bg-amber-400/10 p-3'>
           <div className='text-xs text-amber-100/80'>缺失项</div>
           <div className='mt-2 flex flex-wrap gap-1.5'>
-            {(gapLabels.length ? gapLabels : ['-']).map((gap) => (
+            {(item?.missing.length ? item.missing : ['-']).map((gap) => (
               <span key={gap} className='rounded-full border border-amber-300/25 px-2 py-0.5 text-xs text-amber-100'>
                 {gap}
               </span>
             ))}
           </div>
         </div>
-        {gapLabels.includes('运行日志') ? (
+        {item?.missing.includes('运行日志') ? (
           <Button variant='outline' className='w-full' onClick={() => jumpToPlatformTab('logs')}>
             <Upload className='size-4' />
             上传日志
@@ -3457,6 +3577,7 @@ function DependencyDetailWorkbench({
         ) : null}
       </CardContent>
     </Card>
+    </motion.div>
   )
 }
 
@@ -3465,13 +3586,19 @@ function EvidenceCoverageWorkbench({
   totalRows,
   expanded,
   activeEvidence,
+  selectedId,
   onToggleExpanded,
+  onActiveEvidence,
+  onSelectDependency,
 }: {
   rows: ReachabilityMatrixRow[]
   totalRows: number
   expanded: boolean
   activeEvidence: string
+  selectedId: string
   onToggleExpanded: () => void
+  onActiveEvidence: (id: string) => void
+  onSelectDependency: (id: string) => void
 }) {
   const columns = [
     ['dependency', '依赖'],
@@ -3497,14 +3624,27 @@ function EvidenceCoverageWorkbench({
       <CardContent className='space-y-3'>
         <div className='grid grid-cols-6 gap-2'>
           {columns.map(([id, label]) => (
-            <div key={id} className={cn('rounded-md border px-2 py-2 text-center text-xs transition-colors', activeEvidence === id ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-slate-400/15 bg-slate-900/50 text-slate-400')}>
+            <button
+              key={id}
+              type='button'
+              onClick={() => onActiveEvidence(id)}
+              className={cn('rounded-md border px-2 py-2 text-center text-xs transition-colors', activeEvidence === id ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-slate-400/15 bg-slate-900/50 text-slate-400 hover:border-slate-300/30')}
+            >
               {label}
-            </div>
+            </button>
           ))}
         </div>
         <div className='space-y-2'>
           {rows.map((row) => (
-            <div key={row.id} className='rounded-md border border-slate-400/10 bg-slate-900/35 p-3'>
+            <button
+              key={row.id}
+              type='button'
+              onClick={() => onSelectDependency(row.id)}
+              className={cn(
+                'w-full rounded-md border border-slate-400/10 bg-slate-900/35 p-3 text-left transition-colors hover:border-slate-300/25 hover:bg-slate-900/55',
+                row.id === selectedId && 'border-cyan-300/35 bg-cyan-400/10'
+              )}
+            >
               <div className='mb-2 truncate text-xs font-medium text-slate-300'>{row.signal}</div>
               <div className='grid grid-cols-6 gap-2'>
                 {row.cells.map((cell, index) => (
@@ -3515,7 +3655,7 @@ function EvidenceCoverageWorkbench({
                   />
                 ))}
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </CardContent>
@@ -3574,6 +3714,39 @@ function coverageDotClass(status: ReachabilityMatrixCell['status']) {
   return 'bg-slate-600 ring-slate-500/10'
 }
 
+function riskGaugeTone(severity: SecuritySeverity) {
+  if (severity === 'critical') {
+    return {
+      glow: 'bg-red-500/10',
+      pulse: 'bg-red-500/15',
+      stroke: 'stroke-red-400',
+      text: 'text-red-100',
+    }
+  }
+  if (severity === 'high') {
+    return {
+      glow: 'bg-orange-500/10',
+      pulse: 'bg-orange-500/15',
+      stroke: 'stroke-orange-400',
+      text: 'text-orange-100',
+    }
+  }
+  if (severity === 'medium') {
+    return {
+      glow: 'bg-amber-500/10',
+      pulse: 'bg-amber-500/15',
+      stroke: 'stroke-amber-400',
+      text: 'text-amber-100',
+    }
+  }
+  return {
+    glow: 'bg-emerald-500/10',
+    pulse: 'bg-emerald-500/15',
+    stroke: 'stroke-emerald-400',
+    text: 'text-emerald-100',
+  }
+}
+
 function dependencyReachabilityState(dependency: SecurityDependency): 'reachable' | 'pending' {
   const reachability = dependency.reachability
   const codeEvidence =
@@ -3608,36 +3781,89 @@ function dependencySources(dependency: SecurityDependency) {
   ].filter(Boolean) as string[]))
 }
 
-function buildUnifiedEvidenceRows(
+function buildReachabilityItems(
   dependencies: SecurityDependency[],
   codeFindings: CodeAuditFinding[],
-  model: ReachabilityViewModel
-): ReachabilityMatrixRow[] {
-  const rows = dependencies.slice(0, 12).map((dependency) => {
+  model: ReachabilityViewModel,
+  externalEvidenceCount: number
+): ReachabilityAnalysisItem[] {
+  const graphHits = model.graphHits
+  return dependencies.map((dependency) => {
     const counts = dependencyEvidenceCounts(dependency, codeFindings)
-    const reachable = dependencyReachabilityState(dependency) === 'reachable'
+    const status = dependencyReachabilityState(dependency)
+    const missing = [
+      counts.code <= 0 ? '代码引用' : '',
+      counts.entry <= 0 ? '入口证据' : '',
+      counts.execution + counts.runtime <= 0 ? '运行日志' : '',
+    ].filter(Boolean)
+    const rawEvidence = [
+      ...(dependency.reachability?.code_evidence ?? []),
+      ...(dependency.reachability?.call_evidence ?? []),
+      ...(dependency.reachability?.attack_surface_evidence ?? []),
+      ...(dependency.reachability?.runtime_evidence ?? []),
+      ...codeFindings
+        .filter((finding) => {
+          const text = `${finding.title} ${finding.risk_file} ${finding.evidence} ${finding.category}`.toLowerCase()
+          return dependencySearchTokens(dependency).some((token) => text.includes(token))
+        })
+        .map((finding) => `${finding.risk_file}:${finding.line} ${finding.category}`),
+    ].filter(Boolean).map(formatReachabilityEvidence)
+
     return {
       id: dependencyKey(dependency),
-      signal: dependency.name,
+      dependency,
+      name: dependency.name,
+      currentVersion: dependency.version || '',
+      requestedVersion: dependency.requested_version || '',
+      packageManager: dependency.ecosystem || 'npm',
+      sourceFiles: dependencySources(dependency),
+      severity: dependencySeverity(dependency.risk),
+      riskScore: dependency.risk ?? 0,
+      status,
+      evidence: {
+        codeRefs: counts.code,
+        entryHits: counts.entry,
+        runtimeEvidence: counts.execution + counts.runtime,
+        externalAlerts: externalEvidenceCount,
+        attackChainLinks: status === 'reachable' ? graphHits : 0,
+      },
+      missing,
+      advisories: dependency.vulnerabilities?.map((item) => item.id).filter(Boolean) ?? [],
+      rawEvidence,
+    }
+  })
+}
+
+function formatReachabilityEvidence(evidence: unknown): string {
+  if (typeof evidence === 'string') return evidence
+  if (evidence && typeof evidence === 'object') {
+    const record = evidence as Record<string, unknown>
+    const file = [record.file, record.path, record.source, record.event].find((value) => typeof value === 'string')
+    const line = typeof record.line === 'number' || typeof record.line === 'string' ? `:${record.line}` : ''
+    const text = [record.symbol, record.function, record.evidence, record.detail, record.message]
+      .find((value) => typeof value === 'string')
+    return [file ? `${file}${line}` : '', text].filter(Boolean).join(' ')
+  }
+  return String(evidence)
+}
+
+function buildUnifiedEvidenceRows(items: ReachabilityAnalysisItem[]): ReachabilityMatrixRow[] {
+  const rows = items.slice(0, 12).map((item) => {
+    return {
+      id: item.id,
+      signal: item.name,
       cells: [
-        matrixCell(true, '命中', '-', dependency.source_file || dependency.manifest_type || ''),
-        matrixCell(counts.code > 0, String(counts.code || 0), '-', '代码引用'),
-        matrixCell(counts.entry > 0, String(counts.entry || 0), '-', '入口路径'),
-        matrixCell(counts.execution + counts.runtime > 0, String(counts.execution + counts.runtime || 0), '-', '执行证据'),
-        { label: '-', status: 'na' as const, detail: '外部证据' },
-        matrixCell(reachable && model.graphHits > 0, model.graphHits > 0 ? String(model.graphHits) : '-', '-', '攻击链关联'),
+        matrixCell(true, '命中', '-', item.sourceFiles.join(' / ')),
+        matrixCell(item.evidence.codeRefs > 0, String(item.evidence.codeRefs || 0), '-', '代码引用'),
+        matrixCell(item.evidence.entryHits > 0, String(item.evidence.entryHits || 0), '-', '入口路径'),
+        matrixCell(item.evidence.runtimeEvidence > 0, String(item.evidence.runtimeEvidence || 0), '-', '执行证据'),
+        item.evidence.externalAlerts > 0 ? matrixCell(true, String(item.evidence.externalAlerts), '-', '外部告警') : { label: '-', status: 'na' as const, detail: '外部证据' },
+        matrixCell(item.evidence.attackChainLinks > 0, item.evidence.attackChainLinks > 0 ? String(item.evidence.attackChainLinks) : '-', '-', '攻击链关联'),
       ],
     }
   })
   if (rows.length) return rows
-  return model.matrixRows.slice(0, 5).map((row) => ({
-    ...row,
-    cells: row.cells.map((cell) => ({
-      ...cell,
-      label: cell.label === '待补充' ? '-' : cell.label === '可选' ? '-' : cell.label,
-      status: cell.label === '可选' ? 'na' : cell.status,
-    })),
-  }))
+  return []
 }
 
 export function CodeAuditPanel({
