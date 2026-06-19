@@ -196,6 +196,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -5999,6 +6001,7 @@ function PipelinePanel({
   const [activeClusterId, setActiveClusterId] = useState('all')
   const [selectedFindingId, setSelectedFindingId] = useState('')
   const [severityFilter, setSeverityFilter] = useState('all')
+  const [workflowFilter, setWorkflowFilter] = useState('all')
   const findings = audit?.findings ?? []
   const scanners = audit?.scanners ?? []
   const workflows = audit?.workflows ?? []
@@ -6013,6 +6016,7 @@ function PipelinePanel({
     if (activeNodeId !== 'all' && !cicdFindingNodeIds(finding).includes(activeNodeId)) return false
     if (activeClusterId !== 'all' && cicdRiskType(finding).id !== activeClusterId) return false
     if (severityFilter !== 'all' && finding.severity !== severityFilter) return false
+    if (workflowFilter !== 'all' && finding.workflow !== workflowFilter) return false
     return true
   })
   const selectedFinding =
@@ -6040,6 +6044,14 @@ function PipelinePanel({
     }
   }, [filteredFindings, selectedFinding, selectedFindingId])
 
+  useEffect(() => {
+    setActiveNodeId('all')
+    setActiveClusterId('all')
+    setSeverityFilter('all')
+    setWorkflowFilter('all')
+    setSelectedFindingId(findings[0]?.fingerprint ?? '')
+  }, [audit?.scan_id])
+
   function selectNode(nodeId: string) {
     setActiveNodeId(nodeId)
     setActiveClusterId('all')
@@ -6048,21 +6060,27 @@ function PipelinePanel({
   }
 
   function selectCluster(clusterId: string) {
+    if (clusterId === activeClusterId) {
+      resetCicdView()
+      return
+    }
     setActiveClusterId(clusterId)
-    setActiveNodeId('all')
     const cluster = riskClusters.find((item) => item.id === clusterId)
+    setActiveNodeId('all')
     if (cluster?.findings[0]) setSelectedFindingId(cluster.findings[0].fingerprint)
   }
 
   function selectFinding(finding: CicdFinding) {
     setSelectedFindingId(finding.fingerprint)
-    setActiveNodeId(cicdFindingNodeIds(finding)[0] ?? 'workflow')
+    setActiveClusterId(cicdRiskType(finding).id)
+    setActiveNodeId(cicdFindingNodeIds(finding).find((nodeId) => nodeId !== 'workflow') ?? 'workflow')
   }
 
   function resetCicdView() {
     setActiveNodeId('all')
     setActiveClusterId('all')
     setSeverityFilter('all')
+    setWorkflowFilter('all')
   }
 
   async function startCICDScan() {
@@ -6179,7 +6197,7 @@ function PipelinePanel({
                   <ChevronDown className='size-4' />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align='end' className='w-40'>
+              <DropdownMenuContent align='end' className='w-56'>
                 <DropdownMenuItem disabled={!audit || mutating} onClick={() => void establishBaseline()}>
                   <ShieldCheck className='size-4' />
                   建立基线
@@ -6192,6 +6210,24 @@ function PipelinePanel({
                   <IconGithub className='size-4' />
                   Code Scanning
                 </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>Workflow</DropdownMenuLabel>
+                {workflows.slice(0, 3).map((workflow) => (
+                  <DropdownMenuLabel key={workflow} className='truncate font-mono text-[11px] font-normal text-muted-foreground' title={workflow}>
+                    {workflow}
+                  </DropdownMenuLabel>
+                ))}
+                {scanners.length ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>扫描器</DropdownMenuLabel>
+                    {scanners.map((scanner) => (
+                      <DropdownMenuLabel key={scanner.name} className='text-[11px] font-normal text-muted-foreground'>
+                        {scanner.name} · {scanner.state || (scanner.available ? '可用' : '不可用')}
+                      </DropdownMenuLabel>
+                    ))}
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -6206,6 +6242,7 @@ function PipelinePanel({
         <CicdPipelineGraph
           nodes={graphNodes}
           activeNodeId={activeNodeId}
+          activeClusterId={activeClusterId}
           selectedFinding={selectedFinding}
           onSelectNode={selectNode}
         />
@@ -6240,7 +6277,18 @@ function PipelinePanel({
                     <SelectItem value='low'>低危</SelectItem>
                   </SelectContent>
                 </Select>
-                {(activeNodeId !== 'all' || activeClusterId !== 'all' || severityFilter !== 'all') ? (
+                <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
+                  <SelectTrigger size='sm' className='w-[140px] rounded-md border-slate-400/15 bg-slate-900/60'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>全部 Workflow</SelectItem>
+                    {workflows.map((workflow) => (
+                      <SelectItem key={workflow} value={workflow}>{compactWorkflowPath(workflow)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {(activeNodeId !== 'all' || activeClusterId !== 'all' || severityFilter !== 'all' || workflowFilter !== 'all') ? (
                   <Button variant='ghost' size='sm' onClick={resetCicdView}>全部</Button>
                 ) : null}
               </div>
@@ -6258,33 +6306,6 @@ function PipelinePanel({
         </Card>
       </div>
 
-      <Collapsible>
-        <CollapsibleTrigger asChild>
-          <Button variant='outline' size='sm'>
-            高级信息
-            <ChevronDown className='size-4' />
-          </Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className='mt-3 rounded-md border border-slate-400/15 bg-slate-950/55 p-4'>
-          <div className='grid gap-4 md:grid-cols-2'>
-            <div className='space-y-2'>
-              <div className='text-sm font-medium text-slate-200'>Workflow 文件</div>
-              <div className='flex flex-wrap gap-2'>
-                {workflows.map((workflow) => (
-                  <Badge key={workflow} variant='outline' className='rounded-md font-mono'>
-                    {workflow}
-                  </Badge>
-                ))}
-                {!workflows.length ? <span className='text-sm text-slate-500'>-</span> : null}
-              </div>
-            </div>
-            <div className='space-y-2'>
-              <div className='text-sm font-medium text-slate-200'>扫描引擎</div>
-              <ScannerStatusList scanners={scanners} />
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
     </div>
   )
 }
@@ -6434,17 +6455,24 @@ function CicdRiskOverviewCard({
 function CicdPipelineGraph({
   nodes,
   activeNodeId,
+  activeClusterId,
   selectedFinding,
   onSelectNode,
 }: {
   nodes: CicdGraphNode[]
   activeNodeId: string
+  activeClusterId: string
   selectedFinding?: CicdFinding
   onSelectNode: (id: string) => void
 }) {
   const reducedMotion = useReducedMotion()
   const highlighted = selectedFinding ? new Set(cicdFindingNodeIds(selectedFinding)) : new Set<string>()
+  const clusterNodes = new Set(cicdClusterNodeIds(activeClusterId))
   const activeIndex = Math.max(0, nodes.findIndex((node) => node.id === activeNodeId))
+  const activeNode = nodes.find((node) => node.id === activeNodeId) ?? nodes[0]
+  const nodeWorkflows = new Set(activeNode?.findings.map((finding) => finding.workflow) ?? [])
+  const nodeJobs = new Set(activeNode?.findings.map((finding) => finding.job_id || finding.job_name).filter(Boolean) ?? [])
+  const actions = activeNode?.findings.map((finding) => finding.step_name || finding.job_name || compactWorkflowPath(finding.workflow)).filter(Boolean).slice(0, 3) ?? []
 
   return (
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
@@ -6455,51 +6483,71 @@ function CicdPipelineGraph({
         </div>
       </CardHeader>
       <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
-        <div className='relative flex flex-1 items-center justify-between gap-2 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-4 py-7'>
-          <div className='absolute left-10 right-10 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
-          <div
-            className='absolute left-10 top-1/2 h-px -translate-y-1/2 bg-orange-300/45 transition-all duration-300'
-            style={{ width: activeNodeId === 'all' ? 'calc(100% - 5rem)' : `calc((100% - 5rem) * ${activeIndex / Math.max(1, nodes.length - 1)})` }}
-          />
-          <motion.div
-            className='absolute left-10 top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent'
-            animate={reducedMotion ? undefined : { x: ['0%', '560%'] }}
-            transition={{ duration: 3.8, repeat: Infinity, ease: 'linear' }}
-          />
-          {nodes.map((node, index) => {
-            const Icon = node.icon
-            const active = activeNodeId === node.id || highlighted.has(node.id)
-            return (
-              <UiTooltip key={node.id}>
-                <UiTooltipTrigger asChild>
-                  <motion.button
-                    type='button'
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.24, delay: index * 0.035 }}
-                    onClick={() => onSelectNode(node.id)}
-                    className={cn(
-                      'relative z-10 flex min-w-[74px] flex-1 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5',
-                      active ? 'border-orange-300/45 bg-orange-400/10 shadow-[0_0_26px_rgba(251,146,60,0.14)]' : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
-                    )}
-                  >
-                    <span className={cn('grid size-11 place-items-center rounded-full border', cicdNodeTone(node.status), node.riskCount > 0 && 'motion-safe:animate-pulse')}>
-                      <Icon className='size-5' />
-                    </span>
-                    <span className='text-center text-[11px] font-medium leading-4 text-slate-200'>{node.label}</span>
-                    <span className='rounded-full border border-slate-400/15 px-2 py-0.5 text-[10px] text-slate-400'>{node.riskCount}</span>
-                  </motion.button>
-                </UiTooltipTrigger>
-                <UiTooltipContent>
-                  <div className='space-y-1 text-xs'>
-                    <div>{node.label} · {node.riskCount}</div>
-                    <div>{node.meta.workflow || node.meta.job || node.meta.step || '-'}</div>
-                  </div>
-                </UiTooltipContent>
-              </UiTooltip>
-            )
-          })}
+        <div className='overflow-x-auto pb-1 [scrollbar-color:rgba(148,163,184,0.22)_transparent] [scrollbar-width:thin]'>
+          <div className='relative flex min-h-48 min-w-[860px] items-center gap-3 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-5 py-7'>
+            <div className='absolute left-12 right-12 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
+            <div
+              className='absolute left-12 top-1/2 h-px -translate-y-1/2 bg-orange-300/45 transition-all duration-300'
+              style={{ width: activeNodeId === 'all' ? 'calc(100% - 6rem)' : `calc((100% - 6rem) * ${activeIndex / Math.max(1, nodes.length - 1)})` }}
+            />
+            <motion.div
+              className='absolute left-12 top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent'
+              animate={reducedMotion ? undefined : { x: ['0%', '630%'] }}
+              transition={{ duration: 3.8, repeat: Infinity, ease: 'linear' }}
+            />
+            {nodes.map((node, index) => {
+              const Icon = node.icon
+              const active = activeNodeId === node.id || highlighted.has(node.id) || clusterNodes.has(node.id)
+              return (
+                <UiTooltip key={node.id}>
+                  <UiTooltipTrigger asChild>
+                    <motion.button
+                      type='button'
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.24, delay: index * 0.035 }}
+                      onClick={() => onSelectNode(node.id)}
+                      className={cn(
+                        'relative z-10 flex w-[92px] shrink-0 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5',
+                        active ? 'border-orange-300/45 bg-orange-400/10 shadow-[0_0_26px_rgba(251,146,60,0.14)]' : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
+                      )}
+                    >
+                      <span className={cn('grid size-11 place-items-center rounded-full border', cicdNodeTone(node.status), node.riskCount > 0 && 'motion-safe:animate-pulse')}>
+                        <Icon className='size-5' />
+                      </span>
+                      <span className='min-h-8 text-center text-xs font-medium leading-4 text-slate-200'>{node.label}</span>
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px]', cicdNodeTone(node.status))}>{node.riskCount}</span>
+                    </motion.button>
+                  </UiTooltipTrigger>
+                  <UiTooltipContent>
+                    <div className='space-y-1 text-xs'>
+                      <div>{node.label} · {node.riskCount} 风险</div>
+                      <div>{node.meta.workflow || node.meta.job || node.meta.step || '-'}</div>
+                    </div>
+                  </UiTooltipContent>
+                </UiTooltip>
+              )
+            })}
+          </div>
         </div>
+        <motion.div
+          key={`${activeNodeId}-${activeClusterId}`}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18 }}
+          className='rounded-md border border-slate-400/10 bg-slate-950/45 px-3 py-2'
+        >
+          <div className='flex flex-wrap items-center justify-between gap-2'>
+            <div className='text-xs font-medium text-slate-200'>当前节点：{activeNode?.label || '全部节点'}</div>
+            <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', cicdNodeTone(activeNode?.status ?? 'empty'))}>
+              风险 {activeNode?.riskCount ?? nodes.reduce((sum, node) => sum + node.riskCount, 0)}
+            </span>
+          </div>
+          <div className='mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3'>
+            <span>影响 {nodeWorkflows.size || 0} workflows / {nodeJobs.size || 0} jobs</span>
+            <span className='truncate sm:col-span-2' title={actions.join(' / ')}>优先处理：{actions.join(' / ') || '-'}</span>
+          </div>
+        </motion.div>
         <div className='grid grid-cols-4 gap-2'>
           {nodes.filter((node) => node.riskCount > 0).slice(0, 4).map((node) => (
             <button
@@ -6527,6 +6575,8 @@ function CicdNodeDetailCard({
   finding?: CicdFinding
   audit?: CICDAuditResult | null
 }) {
+  const showLogUpload = node?.id === 'logs' || (node?.status === 'gap' && node?.id === 'runner')
+  const showArtifactUpload = node?.id === 'artifact' || node?.id === 'provenance'
   return (
     <motion.div
       key={`${node?.id ?? 'node'}-${finding?.fingerprint ?? 'finding'}`}
@@ -6556,19 +6606,25 @@ function CicdNodeDetailCard({
                 <div className='truncate text-sm font-medium text-slate-200'>{cicdFindingTitle(finding)}</div>
                 <SeverityPill severity={finding.severity} />
               </div>
-              <div className='mt-2 line-clamp-3 text-xs leading-5 text-slate-400'>{cicdRecommendationText(finding)}</div>
+              <div className='mt-2 line-clamp-2 text-xs leading-5 text-slate-400'>{finding.evidence || '-'}</div>
             </div>
           ) : null}
-          <div className='grid grid-cols-2 gap-2'>
-            <Button variant='outline' size='sm' onClick={() => jumpToPlatformTab('logs')}>
-              <Upload className='size-4' />
-              上传日志
-            </Button>
-            <Button variant='outline' size='sm' onClick={() => jumpToPlatformTab('artifact')}>
-              <Fingerprint className='size-4' />
-              上传产物
-            </Button>
-          </div>
+          {showLogUpload || showArtifactUpload ? (
+            <div className='grid grid-cols-2 gap-2'>
+              {showLogUpload ? (
+                <Button variant='outline' size='sm' onClick={() => jumpToPlatformTab('logs')}>
+                  <Upload className='size-4' />
+                  上传日志
+                </Button>
+              ) : null}
+              {showArtifactUpload ? (
+                <Button variant='outline' size='sm' onClick={() => jumpToPlatformTab('artifact')}>
+                  <Fingerprint className='size-4' />
+                  上传产物
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </motion.div>
@@ -6613,7 +6669,10 @@ function CicdRiskClusterPanel({
               <div className='flex items-start justify-between gap-3'>
                 <div className='min-w-0'>
                   <div className='truncate text-sm font-medium text-slate-100'>{cluster.title}</div>
-                  <div className='mt-1 text-xs text-slate-500'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</div>
+                  <div className='mt-2 flex flex-wrap items-center gap-1.5'>
+                    <SeverityPill severity={cluster.severity} />
+                    <span className='text-xs text-slate-500'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
+                  </div>
                 </div>
                 <span className='text-2xl font-semibold text-orange-100 tabular-nums'>{cluster.count}</span>
               </div>
@@ -6679,8 +6738,8 @@ function CicdFindingList({
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-3'>
                 <div className='grid gap-3 md:grid-cols-3'>
                   <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
-                  <CicdInfoBlock title='关键证据' text={truncateMiddle(finding.evidence || '-', 140)} mono />
-                  <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} />
+                  <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
+                  <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
                 </div>
                 <div className='mt-3 flex items-center justify-between gap-3 text-xs text-slate-500'>
                   <span>{finding.workflow}:{finding.line}</span>
@@ -6802,6 +6861,19 @@ function cicdRiskType(finding: CicdFinding) {
   return { id: 'workflow-risk', title: 'Workflow 配置风险' }
 }
 
+function cicdClusterNodeIds(clusterId: string) {
+  const mapping: Record<string, string[]> = {
+    'unpinned-action': ['workflow', 'step', 'action'],
+    'broad-permission': ['workflow', 'trigger', 'job'],
+    'artifact-provenance': ['artifact', 'provenance'],
+    'secret-exposure': ['workflow', 'job', 'step'],
+    'remote-script': ['step', 'runner'],
+    'runner-risk': ['runner', 'job'],
+    'workflow-risk': ['workflow', 'trigger'],
+  }
+  return mapping[clusterId] ?? []
+}
+
 function normalizeCicdScanRuns(runs: CICDScanRun[] | undefined): CICDScanRun[] {
   return (runs ?? []).filter(Boolean).map((run) => ({
     ...run,
@@ -6892,15 +6964,17 @@ function CicdInfoBlock({
   title,
   text,
   mono = false,
+  tone = 'default',
 }: {
   title: string
   text: string
   mono?: boolean
+  tone?: 'default' | 'action'
 }) {
   return (
-    <div className='min-w-0 overflow-hidden rounded-md border bg-background p-3'>
-      <div className='mb-1 text-xs font-medium text-muted-foreground'>{title}</div>
-      <div className={cn('line-clamp-3 break-words text-sm leading-6 [overflow-wrap:anywhere]', mono && 'font-mono text-xs')}>
+    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'border-orange-300/25 bg-orange-400/10' : 'border-slate-400/10 bg-slate-950/55')}>
+      <div className={cn('mb-1 text-xs font-medium', tone === 'action' ? 'text-orange-100' : 'text-slate-400')}>{title}</div>
+      <div className={cn('break-words text-sm leading-6 [overflow-wrap:anywhere]', mono && 'rounded bg-slate-950/70 px-2 py-1 font-mono text-xs text-cyan-100')}>
         {text}
       </div>
     </div>
