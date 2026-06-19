@@ -6090,8 +6090,9 @@ function PipelinePanel({
     try {
       const nextAudit = await runCICDAuditScan({ workspaceId, importId, targetPath: importId ? undefined : audit?.target_path })
       onScanned(nextAudit)
-      const history = await loadCICDScanRuns()
-      setScanRuns(normalizeCicdScanRuns(history.scanRuns))
+      loadCICDScanRuns()
+        .then((history) => setScanRuns(normalizeCicdScanRuns(history.scanRuns)))
+        .catch(() => setScanRuns([]))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'CI/CD 扫描失败')
     } finally {
