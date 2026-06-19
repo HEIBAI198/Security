@@ -6481,16 +6481,16 @@ function CicdPipelineGraph({
         </div>
       </CardHeader>
       <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
-        <div className='overflow-x-auto pb-1 [scrollbar-color:rgba(148,163,184,0.22)_transparent] [scrollbar-width:thin]'>
-          <div className='relative flex min-h-48 min-w-[860px] items-center gap-3 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-5 py-7'>
-            <div className='absolute left-12 right-12 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
+        <div className='snap-x snap-mandatory overflow-x-auto pb-2 [scrollbar-color:rgba(148,163,184,0.22)_transparent] [scrollbar-width:thin]'>
+          <div className='relative grid min-h-[190px] min-w-max grid-cols-[repeat(9,132px)] items-center gap-5 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-6 py-6'>
+            <div className='absolute left-[90px] right-[90px] top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
             <div
-              className='absolute left-12 top-1/2 h-px -translate-y-1/2 bg-orange-300/45 transition-all duration-300'
-              style={{ width: activeNodeId === 'all' ? 'calc(100% - 6rem)' : `calc((100% - 6rem) * ${activeIndex / Math.max(1, nodes.length - 1)})` }}
+              className='absolute left-[90px] top-1/2 h-px -translate-y-1/2 bg-orange-300/45 transition-all duration-300'
+              style={{ width: activeNodeId === 'all' ? 'calc(100% - 11.25rem)' : `calc((100% - 11.25rem) * ${activeIndex / Math.max(1, nodes.length - 1)})` }}
             />
             <motion.div
-              className='absolute left-12 top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent'
-              animate={reducedMotion ? undefined : { x: ['0%', '630%'] }}
+              className='absolute left-[90px] top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent'
+              animate={reducedMotion ? undefined : { x: ['0%', '980%'] }}
               transition={{ duration: 3.8, repeat: Infinity, ease: 'linear' }}
             />
             {nodes.map((node, index) => {
@@ -6506,15 +6506,15 @@ function CicdPipelineGraph({
                       transition={{ duration: 0.24, delay: index * 0.035 }}
                       onClick={() => onSelectNode(node.id)}
                       className={cn(
-                        'relative z-10 flex w-[92px] shrink-0 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70',
+                        'relative z-10 grid h-[138px] w-[132px] grid-rows-[44px_40px_24px] content-center justify-items-center gap-2 rounded-lg border px-2 py-2 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70 snap-start',
                         active ? 'border-orange-300/45 bg-orange-400/10 shadow-[0_0_26px_rgba(251,146,60,0.14)]' : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
                       )}
                     >
                       <span className={cn('grid size-11 place-items-center rounded-full border', cicdNodeTone(node.status), node.riskCount > 0 && 'motion-safe:animate-pulse')}>
                         <Icon className='size-5' />
                       </span>
-                      <span className='min-h-8 text-center text-sm font-bold leading-4 text-slate-100'>{node.label}</span>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', cicdNodeTone(node.status))}>{cicdNodeStatusLabel(node.status)} · {node.riskCount}</span>
+                      <span className='grid h-10 w-full place-items-center px-1 text-center text-[15px] font-bold leading-5 text-slate-100'>{cicdGraphNodeLabel(node.id)}</span>
+                      <span className={cn('inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-bold leading-none', cicdNodeTone(node.status))}>{cicdNodeStatusLabel(node.status)} · {node.riskCount}</span>
                     </motion.button>
                   </UiTooltipTrigger>
                   <UiTooltipContent>
@@ -6898,6 +6898,20 @@ function maxSeverity(a: SecuritySeverity, b: SecuritySeverity): SecuritySeverity
 
 function severityWeight(severity: SecuritySeverity) {
   return { low: 1, medium: 2, high: 3, critical: 4 }[severity] ?? 0
+}
+
+function cicdGraphNodeLabel(nodeId: string) {
+  return {
+    workflow: 'Workflow',
+    trigger: 'Trigger',
+    job: 'Job',
+    step: 'Step',
+    action: 'Action',
+    runner: 'Runner',
+    artifact: 'Artifact',
+    provenance: 'Provenance',
+    logs: 'Log',
+  }[nodeId] ?? nodeId
 }
 
 function cicdNodeTone(status: CicdGraphNode['status']) {
