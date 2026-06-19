@@ -37,6 +37,7 @@ import {
   Boxes,
   BrainCircuit,
   ChevronDown,
+  ChevronUp,
   CheckCircle2,
   ClipboardList,
   Code2,
@@ -5999,7 +6000,7 @@ function PipelinePanel({
   const [scanRuns, setScanRuns] = useState<CICDScanRun[]>([])
   const [activeNodeId, setActiveNodeId] = useState('all')
   const [activeClusterId, setActiveClusterId] = useState('all')
-  const [selectedFindingId, setSelectedFindingId] = useState('')
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState('all')
   const [workflowFilter, setWorkflowFilter] = useState('all')
   const findings = audit?.findings ?? []
@@ -6017,11 +6018,7 @@ function PipelinePanel({
     if (workflowFilter !== 'all' && finding.workflow !== workflowFilter) return false
     return true
   })
-  const hasFilteredContext = activeNodeId !== 'all' || activeClusterId !== 'all' || severityFilter !== 'all' || workflowFilter !== 'all'
-  const selectedFinding =
-    filteredFindings.find((finding) => finding.fingerprint === selectedFindingId) ??
-    filteredFindings[0] ??
-    (hasFilteredContext ? undefined : findings[0])
+  const selectedFinding = selectedFindingId ? filteredFindings.find((finding) => finding.fingerprint === selectedFindingId) : undefined
   const selectedNodeLabel = activeNodeId === 'all' ? '全部风险' : cicdGraphNodeLabel(activeNodeId)
 
   useEffect(() => {
@@ -6039,12 +6036,8 @@ function PipelinePanel({
   }, [audit?.scan_id])
 
   useEffect(() => {
-    if (!filteredFindings.length) {
-      if (selectedFindingId) setSelectedFindingId('')
-      return
-    }
-    if (!filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
-      setSelectedFindingId(filteredFindings[0].fingerprint)
+    if (selectedFindingId && !filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
+      setSelectedFindingId(filteredFindings[0]?.fingerprint ?? null)
     }
   }, [filteredFindings, selectedFindingId])
 
@@ -6053,14 +6046,14 @@ function PipelinePanel({
     setActiveClusterId('all')
     setSeverityFilter('all')
     setWorkflowFilter('all')
-    setSelectedFindingId(findings[0]?.fingerprint ?? '')
+    setSelectedFindingId(findings[0]?.fingerprint ?? null)
   }, [audit?.scan_id])
 
   function selectNode(nodeId: string) {
     setActiveNodeId(nodeId)
     setActiveClusterId('all')
     const nextFinding = findings.find((finding) => cicdFindingNodeIds(finding).includes(nodeId))
-    setSelectedFindingId(nextFinding?.fingerprint ?? '')
+    setSelectedFindingId(nextFinding?.fingerprint ?? null)
   }
 
   function selectCluster(clusterId: string) {
@@ -6071,11 +6064,11 @@ function PipelinePanel({
     setActiveClusterId(clusterId)
     const cluster = riskClusters.find((item) => item.id === clusterId)
     const nextFinding = cluster?.findings.find((finding) => activeNodeId === 'all' || cicdFindingNodeIds(finding).includes(activeNodeId))
-    setSelectedFindingId(nextFinding?.fingerprint ?? '')
+    setSelectedFindingId(nextFinding?.fingerprint ?? null)
   }
 
   function selectFinding(finding: CicdFinding) {
-    setSelectedFindingId(finding.fingerprint)
+    setSelectedFindingId((currentId) => currentId === finding.fingerprint ? null : finding.fingerprint)
   }
 
   function resetCicdView() {
@@ -6728,7 +6721,10 @@ function CicdFindingList({
               <span className='truncate font-medium text-slate-300' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
               <span className='truncate font-medium text-slate-300' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
               <span className='truncate font-medium text-slate-300' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
-              <span className='font-medium text-slate-400'>未修复</span>
+              <span className='flex items-center justify-between gap-1 font-medium text-slate-400'>
+                未修复
+                {selected ? <ChevronUp className='size-4 text-slate-500' /> : <ChevronDown className='size-4 text-slate-500' />}
+              </span>
             </button>
             {selected ? (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-3'>
