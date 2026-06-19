@@ -49,6 +49,7 @@ from ..cicd_audit import (
     refresh_audit_result as refresh_cicd_audit_result,
     remove_ignored_finding as remove_cicd_ignored_finding,
     run_cicd_audit,
+    cicd_scan_runs,
     serialize_cicd_audit,
 )
 from ..artifact_trust import (
@@ -2836,6 +2837,12 @@ async def multimodal_audit_report() -> dict[str, str]:
 @router.get("/cicd/state")
 async def cicd_audit_state() -> dict[str, Any]:
     return cicd_audit_state_payload(LAST_CICD_AUDIT.target if LAST_CICD_AUDIT is not None else None)
+
+
+@router.get("/cicd/scan-runs")
+@router.get("/cicd/scan-runs/")
+async def cicd_audit_scan_runs() -> dict[str, Any]:
+    return {"scanRuns": cicd_scan_runs(LAST_CICD_AUDIT.target if LAST_CICD_AUDIT is not None else None)}
 
 
 @router.post("/cicd/ignore")

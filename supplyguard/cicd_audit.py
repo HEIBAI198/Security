@@ -1919,16 +1919,27 @@ def record_audit_run(
     runs.append(
         {
             "scan_id": scan_id,
+            "id": scan_id,
             "generated_at": generated_at,
+            "createdAt": generated_at,
             "target_key": audit_target_key(target_info),
+            "projectId": str(target_info.get("importId") or target_info.get("projectName") or target_info.get("path") or "workspace"),
+            "module": "cicd",
             "projectName": target_info.get("projectName"),
             "total": len(findings),
+            "totalRisks": len(findings),
             "critical": counts["critical"],
+            "criticalCount": counts["critical"],
             "high": counts["high"],
+            "highCount": counts["high"],
             "medium": counts["medium"],
+            "mediumCount": counts["medium"],
             "low": counts["low"],
+            "lowCount": counts["low"],
             "new": state_summary.get("new", 0),
+            "newCount": state_summary.get("new", 0),
             "fixed": state_summary.get("fixed", 0),
+            "fixedCount": state_summary.get("fixed", 0),
             "ignored": state_summary.get("ignored", 0),
             "tools": [scanner.name for scanner in scanners if scanner.available],
         }
@@ -1968,6 +1979,15 @@ def audit_trend(target_info: dict[str, Any], *, state: dict[str, Any] | None = N
     current_state = state or load_audit_state()
     target_key = audit_target_key(target_info)
     return [item for item in current_state.get("runs", []) if item.get("target_key") == target_key][-12:]
+
+
+def cicd_scan_runs(target_info: dict[str, Any] | None = None, *, limit: int = 20) -> list[dict[str, Any]]:
+    state = load_audit_state()
+    runs = state.get("runs", [])
+    if target_info is not None:
+        target_key = audit_target_key(target_info)
+        runs = [item for item in runs if item.get("target_key") == target_key]
+    return runs[-limit:]
 
 
 def add_ignored_finding(

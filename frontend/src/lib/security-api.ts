@@ -382,6 +382,29 @@ export type CICDAuditResult = {
   warnings: string[]
 }
 
+export type CICDScanRun = {
+  id?: string
+  scan_id?: string
+  projectId?: string
+  module?: 'cicd' | string
+  createdAt?: string
+  generated_at?: string
+  totalRisks?: number
+  total?: number
+  criticalCount?: number
+  critical?: number
+  highCount?: number
+  high?: number
+  mediumCount?: number
+  medium?: number
+  lowCount?: number
+  low?: number
+  fixedCount?: number
+  fixed?: number
+  newCount?: number
+  new?: number
+}
+
 export type ArtifactTrustCheckStatus = 'pass' | 'fail' | 'warn' | 'missing' | 'skipped' | string
 
 export type ArtifactTrustCheck = {
@@ -1428,6 +1451,10 @@ export async function runCICDAuditScan(options: CICDAuditScanOptions = {}) {
 
 export async function loadCICDAuditSarif() {
   return api<Record<string, unknown>>('/api/security/cicd/sarif')
+}
+
+export async function loadCICDScanRuns() {
+  return api<{ scanRuns: CICDScanRun[] }>('/api/security/cicd/scan-runs')
 }
 
 export async function runArtifactTrustScan(options: ArtifactTrustScanOptions = {}) {
