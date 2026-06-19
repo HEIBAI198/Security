@@ -6160,7 +6160,7 @@ function PipelinePanel({
               <span className='grid size-9 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
                 <GitBranch className='size-5' />
               </span>
-              <h2 className='text-[28px] font-semibold leading-tight tracking-normal text-slate-100'>CI/CD 构建链研判</h2>
+              <h2 className='text-[30px] font-extrabold leading-tight tracking-normal text-slate-50'>CI/CD 构建链研判</h2>
             </div>
             <div className='mt-2 h-px w-64 bg-gradient-to-r from-orange-300/50 via-cyan-300/20 to-transparent' />
             <div className='mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400'>
@@ -6263,7 +6263,7 @@ function PipelinePanel({
         <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
           <CardHeader className='pb-3'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
-              <CardTitle className='text-base text-slate-100'>风险明细</CardTitle>
+              <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
               <div className='flex flex-wrap items-center gap-2'>
                 <Select value={severityFilter} onValueChange={setSeverityFilter}>
                   <SelectTrigger size='sm' className='w-[120px] rounded-md border-slate-400/15 bg-slate-900/60'>
@@ -6348,15 +6348,13 @@ function CicdConclusionStrip({
   const primary = clusters[0]?.title ?? conclusion.keyRisks[0] ?? '未发现高优先级风险'
   const priorities = clusters.flatMap((cluster) => cluster.findings.slice(0, 2)).map((finding) => finding.step_name || finding.job_name || compactWorkflowPath(finding.workflow))
   return (
-    <div className='mt-4 grid gap-2 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2 text-xs md:grid-cols-4'>
+    <div className='mt-4 grid gap-2 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2.5 md:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(220px,1.35fr)]'>
       <div className='flex items-center gap-2'>
-        <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2 py-0.5 text-orange-100'>构建链可复现性风险</span>
+        <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2.5 py-1 text-xs font-semibold text-orange-100'>构建链可复现性风险</span>
       </div>
-      <div className='text-slate-400'><span className='text-slate-200'>主要风险：</span>{primary}</div>
-      <div className='text-slate-400'><span className='text-slate-200'>影响范围：</span>{audit.summary.workflow_count} workflows / {audit.summary.total_steps} steps</div>
-      <div className='truncate text-slate-400' title={priorities.join(' / ')}>
-        <span className='text-slate-200'>优先处理：</span>{priorities.slice(0, 3).join(' / ') || '-'}
-      </div>
+      <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>主要风险</div><div className='truncate text-sm font-bold text-slate-100' title={primary}>{primary}</div></div>
+      <div><div className='text-[11px] font-medium text-slate-500'>影响范围</div><div className='text-sm font-semibold text-slate-200'>{audit.summary.workflow_count} workflows / {audit.summary.total_steps} steps</div></div>
+      <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>优先处理</div><div className='truncate text-sm font-semibold text-orange-100' title={priorities.join(' / ')}>{priorities.slice(0, 3).join(' / ') || '-'}</div></div>
     </div>
   )
 }
@@ -6392,7 +6390,7 @@ function CicdRiskOverviewCard({
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardContent className='flex h-full flex-col p-4'>
         <div className='flex items-center justify-between gap-3'>
-          <div className='text-xs font-medium text-slate-300'>风险总览</div>
+          <div className='flex items-center gap-2 text-xl font-bold text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险总览</div>
           <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>
             {severityLabel(audit?.summary.risk_level ?? 'low')}
           </span>
@@ -6400,12 +6398,12 @@ function CicdRiskOverviewCard({
         <div className='flex flex-1 flex-col justify-center'>
           <div className='flex items-end justify-between gap-4'>
             <div>
-              <div className='text-6xl font-semibold leading-none text-orange-100 tabular-nums'>{displayTotal}</div>
-              <div className='mt-2 text-xs text-slate-500'>风险总数</div>
+              <div className='text-6xl font-extrabold leading-none text-orange-100 tabular-nums'>{displayTotal}</div>
+              <div className='mt-2 text-sm font-semibold text-slate-300'>风险总数</div>
             </div>
-            <div className='grid gap-2 text-right text-xs'>
-              <span className='text-slate-400'>新增 <b className='text-orange-100'>{audit?.summary.new ?? total}</b></span>
-              <span className='text-slate-400'>已修复 <b className='text-emerald-100'>{audit?.summary.fixed ?? 0}</b></span>
+            <div className='grid gap-2 text-right text-sm'>
+              <span className='text-slate-400'>新增 <b className='text-orange-100 tabular-nums'>{audit?.summary.new ?? total}</b></span>
+              <span className='text-slate-400'>已修复 <b className='text-emerald-100 tabular-nums'>{audit?.summary.fixed ?? 0}</b></span>
             </div>
           </div>
           <div className='mt-5 h-2 overflow-hidden rounded-full bg-slate-800'>
@@ -6423,9 +6421,9 @@ function CicdRiskOverviewCard({
               ['中危', audit?.summary.medium ?? 0, 'text-amber-100'],
               ['低危', audit?.summary.low ?? 0, 'text-cyan-100'],
             ].map(([label, value, color]) => (
-              <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2 text-center'>
-                <div className='text-[10px] text-slate-500'>{label}</div>
-                <div className={cn('mt-1 text-lg font-semibold tabular-nums', color)}>{value}</div>
+                <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2.5 text-center'>
+                <div className='text-xs font-medium text-slate-400'>{label}</div>
+                <div className={cn('mt-1 text-2xl font-bold tabular-nums', color)}>{value}</div>
               </div>
             ))}
           </div>
@@ -6478,8 +6476,8 @@ function CicdPipelineGraph({
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-2'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='text-base text-slate-100'>构建链路图</CardTitle>
-          <button type='button' onClick={() => onSelectNode('all')} className='text-xs text-slate-500 transition-colors hover:text-slate-200'>全部</button>
+          <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><GitBranch className='size-5 text-cyan-200' />构建链路图</CardTitle>
+          <button type='button' onClick={() => onSelectNode('all')} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
         </div>
       </CardHeader>
       <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
@@ -6508,15 +6506,15 @@ function CicdPipelineGraph({
                       transition={{ duration: 0.24, delay: index * 0.035 }}
                       onClick={() => onSelectNode(node.id)}
                       className={cn(
-                        'relative z-10 flex w-[92px] shrink-0 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5',
+                        'relative z-10 flex w-[92px] shrink-0 flex-col items-center gap-2 rounded-md border px-2 py-3 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70',
                         active ? 'border-orange-300/45 bg-orange-400/10 shadow-[0_0_26px_rgba(251,146,60,0.14)]' : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
                       )}
                     >
                       <span className={cn('grid size-11 place-items-center rounded-full border', cicdNodeTone(node.status), node.riskCount > 0 && 'motion-safe:animate-pulse')}>
                         <Icon className='size-5' />
                       </span>
-                      <span className='min-h-8 text-center text-xs font-medium leading-4 text-slate-200'>{node.label}</span>
-                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px]', cicdNodeTone(node.status))}>{node.riskCount}</span>
+                      <span className='min-h-8 text-center text-sm font-bold leading-4 text-slate-100'>{node.label}</span>
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', cicdNodeTone(node.status))}>{cicdNodeStatusLabel(node.status)} · {node.riskCount}</span>
                     </motion.button>
                   </UiTooltipTrigger>
                   <UiTooltipContent>
@@ -6538,29 +6536,16 @@ function CicdPipelineGraph({
           className='rounded-md border border-slate-400/10 bg-slate-950/45 px-3 py-2'
         >
           <div className='flex flex-wrap items-center justify-between gap-2'>
-            <div className='text-xs font-medium text-slate-200'>当前节点：{activeNode?.label || '全部节点'}</div>
+            <div><div className='text-[11px] font-medium text-slate-500'>当前节点</div><div className='text-base font-bold text-slate-100'>{activeNode?.label || '全部节点'}</div></div>
             <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', cicdNodeTone(activeNode?.status ?? 'empty'))}>
               风险 {activeNode?.riskCount ?? nodes.reduce((sum, node) => sum + node.riskCount, 0)}
             </span>
           </div>
-          <div className='mt-2 grid gap-2 text-[11px] text-slate-500 sm:grid-cols-3'>
-            <span>影响 {nodeWorkflows.size || 0} workflows / {nodeJobs.size || 0} jobs</span>
-            <span className='truncate sm:col-span-2' title={actions.join(' / ')}>优先处理：{actions.join(' / ') || '-'}</span>
+          <div className='mt-2 flex flex-wrap items-center gap-2 text-xs'>
+            <span className='rounded-full border border-slate-400/10 bg-slate-900/65 px-2 py-1 font-medium text-slate-300'>影响 {nodeWorkflows.size || 0} workflows / {nodeJobs.size || 0} jobs</span>
+            {actions.slice(0, 2).map((action) => <span key={action} className='max-w-[180px] truncate rounded-full border border-orange-300/20 bg-orange-400/5 px-2 py-1 font-medium text-orange-100' title={action}>{action}</span>)}
           </div>
         </motion.div>
-        <div className='grid grid-cols-4 gap-2'>
-          {nodes.filter((node) => node.riskCount > 0).slice(0, 4).map((node) => (
-            <button
-              key={node.id}
-              type='button'
-              onClick={() => onSelectNode(node.id)}
-              className={cn('rounded-md border px-2 py-2 text-left text-xs transition-colors hover:border-slate-300/30', activeNodeId === node.id ? 'border-orange-300/40 bg-orange-400/10 text-orange-100' : 'border-slate-400/10 bg-slate-900/45 text-slate-400')}
-            >
-              <div className='truncate'>{node.label}</div>
-              <div className='mt-1 text-sm font-semibold tabular-nums'>{node.riskCount}</div>
-            </button>
-          ))}
-        </div>
       </CardContent>
     </Card>
   )
@@ -6587,26 +6572,27 @@ function CicdNodeDetailCard({
     >
       <Card className='h-full min-h-[390px] rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
         <CardHeader className='pb-3'>
-          <CardTitle className='text-base text-slate-100'>{node?.label ?? '节点详情'}</CardTitle>
+          <div className='text-xs font-medium text-slate-500'>当前研判节点</div>
+          <CardTitle className='mt-1 text-xl font-bold text-slate-100'>{node?.label ?? '节点详情'}</CardTitle>
         </CardHeader>
         <CardContent className='space-y-3'>
           <div className='flex flex-wrap gap-2'>
             <span className={cn('rounded-full border px-2 py-0.5 text-xs', cicdNodeTone(node?.status ?? 'empty'))}>{cicdNodeStatusLabel(node?.status ?? 'empty')}</span>
             <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>风险 {node?.riskCount ?? 0}</span>
           </div>
-          <div className='grid gap-2 text-sm'>
-            <DetailRow label='Workflow' value={finding?.workflow || node?.meta.workflow || audit?.workflows?.[0] || '-'} />
-            <DetailRow label='Job' value={finding?.job_id || node?.meta.job || '-'} />
-            <DetailRow label='Step' value={finding?.step_name || node?.meta.step || '-'} />
-            <DetailRow label='位置' value={finding ? `${compactWorkflowPath(finding.workflow)}:${finding.line}` : '-'} />
+          <div className='grid gap-2'>
+            <CicdDetailRow label='Workflow' value={finding?.workflow || node?.meta.workflow || audit?.workflows?.[0] || '-'} />
+            <CicdDetailRow label='Job' value={finding?.job_id || node?.meta.job || '-'} />
+            <CicdDetailRow label='Step' value={finding?.step_name || node?.meta.step || '-'} />
+            <CicdDetailRow label='位置' value={finding ? `${compactWorkflowPath(finding.workflow)}:${finding.line}` : '-'} />
           </div>
           {finding ? (
             <div className='rounded-md border border-slate-400/10 bg-slate-900/45 p-3'>
               <div className='flex items-center justify-between gap-2'>
-                <div className='truncate text-sm font-medium text-slate-200'>{cicdFindingTitle(finding)}</div>
+                <div className='truncate text-base font-bold text-slate-100'>{cicdFindingTitle(finding)}</div>
                 <SeverityPill severity={finding.severity} />
               </div>
-              <div className='mt-2 line-clamp-2 text-xs leading-5 text-slate-400'>{finding.evidence || '-'}</div>
+              <div className='mt-3 truncate rounded border border-cyan-300/15 bg-slate-950/75 px-2.5 py-2 font-mono text-[13px] text-cyan-100' title={finding.evidence || '-'}>{finding.evidence || '-'}</div>
             </div>
           ) : null}
           {showLogUpload || showArtifactUpload ? (
@@ -6631,6 +6617,15 @@ function CicdNodeDetailCard({
   )
 }
 
+function CicdDetailRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className='grid grid-cols-[68px_minmax(0,1fr)] items-center gap-2 rounded-md border border-slate-400/10 bg-slate-900/35 px-2.5 py-2'>
+      <span className='text-xs font-medium text-slate-500'>{label}</span>
+      <span className='truncate text-sm font-semibold text-slate-200' title={typeof value === 'string' ? value : undefined}>{value}</span>
+    </div>
+  )
+}
+
 function CicdRiskClusterPanel({
   clusters,
   activeClusterId,
@@ -6646,8 +6641,8 @@ function CicdRiskClusterPanel({
     <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
       <CardHeader className='pb-3'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='text-base text-slate-100'>风险聚类</CardTitle>
-          <button type='button' onClick={onReset} className='text-xs text-slate-500 transition-colors hover:text-slate-200'>全部</button>
+          <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
+          <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
         </div>
       </CardHeader>
       <CardContent className='grid gap-3 sm:grid-cols-2'>
@@ -6668,13 +6663,13 @@ function CicdRiskClusterPanel({
             >
               <div className='flex items-start justify-between gap-3'>
                 <div className='min-w-0'>
-                  <div className='truncate text-sm font-medium text-slate-100'>{cluster.title}</div>
+                  <div className='truncate text-[17px] font-bold leading-5 text-slate-100'>{cluster.title}</div>
                   <div className='mt-2 flex flex-wrap items-center gap-1.5'>
                     <SeverityPill severity={cluster.severity} />
-                    <span className='text-xs text-slate-500'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
+                    <span className='text-xs font-medium text-slate-400'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
                   </div>
                 </div>
-                <span className='text-2xl font-semibold text-orange-100 tabular-nums'>{cluster.count}</span>
+                <span className='text-3xl font-extrabold leading-none text-orange-100 tabular-nums'>{cluster.count}</span>
               </div>
               <div className='mt-3 flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
                 {severityCounts.map((count, index) => (
@@ -6728,11 +6723,11 @@ function CicdFindingList({
               className='grid w-full grid-cols-[72px_minmax(160px,1fr)_130px_110px_120px_80px] items-center gap-3 px-3 py-2.5 text-left text-xs'
             >
               <SeverityPill severity={finding.severity} />
-              <span className='truncate font-medium text-slate-100' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
-              <span className='truncate text-slate-400' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
-              <span className='truncate text-slate-400' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
-              <span className='truncate text-slate-400' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
-              <span className='text-slate-500'>未修复</span>
+              <span className='truncate text-sm font-bold text-slate-100' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
+              <span className='truncate font-medium text-slate-300' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
+              <span className='truncate font-medium text-slate-300' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
+              <span className='truncate font-medium text-slate-300' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
+              <span className='font-medium text-slate-400'>未修复</span>
             </button>
             {selected ? (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-3'>
@@ -6741,8 +6736,8 @@ function CicdFindingList({
                   <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
                   <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
                 </div>
-                <div className='mt-3 flex items-center justify-between gap-3 text-xs text-slate-500'>
-                  <span>{finding.workflow}:{finding.line}</span>
+                <div className='mt-3 flex items-center justify-between gap-3 text-xs text-slate-400'>
+                  <span className='font-mono'>{finding.workflow}:{finding.line}</span>
                   <Button variant='ghost' size='sm' disabled={disabled} onClick={() => onIgnore(finding)}>
                     <EyeOff className='size-4' />
                     忽略
@@ -6972,9 +6967,12 @@ function CicdInfoBlock({
   tone?: 'default' | 'action'
 }) {
   return (
-    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'border-orange-300/25 bg-orange-400/10' : 'border-slate-400/10 bg-slate-950/55')}>
-      <div className={cn('mb-1 text-xs font-medium', tone === 'action' ? 'text-orange-100' : 'text-slate-400')}>{title}</div>
-      <div className={cn('break-words text-sm leading-6 [overflow-wrap:anywhere]', mono && 'rounded bg-slate-950/70 px-2 py-1 font-mono text-xs text-cyan-100')}>
+    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'border-orange-300/30 bg-orange-400/10' : 'border-slate-400/10 bg-slate-950/55')}>
+      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', tone === 'action' ? 'text-orange-100' : 'text-slate-200')}>
+        {tone === 'action' ? <ShieldCheck className='size-4' /> : null}
+        {title}
+      </div>
+      <div className={cn('break-words text-sm leading-6 [overflow-wrap:anywhere]', mono && 'rounded border border-cyan-300/15 bg-slate-950/85 px-2.5 py-2 font-mono text-[13px] leading-5 text-cyan-100', tone === 'action' && 'font-semibold text-orange-50')}>
         {text}
       </div>
     </div>
