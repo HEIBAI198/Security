@@ -8245,37 +8245,25 @@ function LogsPanel({
                   <TableHead>异常时间</TableHead>
                   <TableHead>日志来源</TableHead>
                   <TableHead>风险事件</TableHead>
-                  <TableHead>风险类型</TableHead>
                   <TableHead>置信度</TableHead>
-                  <TableHead>证据片段</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredLogs.map((log) => (
                   <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`} onClick={() => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)} className={cn('cursor-pointer transition-colors hover:bg-slate-900/55', activeLog === log && 'bg-cyan-400/10')}>
-                    <TableCell className='whitespace-nowrap font-mono text-xs'>{log.time}</TableCell>
+                    <TableCell className='w-[170px] whitespace-nowrap font-mono text-xs text-slate-300'>{log.time}</TableCell>
                     <TableCell>
                       <Badge variant='outline' className='rounded-md'>
                         {log.source}
                       </Badge>
                     </TableCell>
-                    <TableCell className='max-w-[280px] text-sm leading-6'>{log.event}</TableCell>
-                    <TableCell>
-                      <Badge variant='outline' className={cn('rounded-md', severityClasses[runtimeSeverity(log)])}>
-                        {log.signal}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
-                    <TableCell className='max-w-[220px]'>
-                      <code className='code-evidence block truncate px-2 py-1 text-xs' title={log.evidence || '-'}>
-                        {log.evidence || '-'}
-                      </code>
-                    </TableCell>
+                    <TableCell className='max-w-0'><div className='truncate text-base font-semibold text-slate-100' title={log.event}>{log.event}</div><div className='mt-1'><Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(log)])}>{log.signal}</Badge></div></TableCell>
+                    <TableCell className='w-[90px] text-right text-lg font-bold text-slate-100'>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
                   </TableRow>
                 ))}
                 {!filteredLogs.length ? (
                   <TableRow>
-                    <TableCell colSpan={6} className='h-24 text-center text-sm text-muted-foreground'>
+                    <TableCell colSpan={4} className='h-24 text-center text-sm text-muted-foreground'>
                       暂无符合条件的运行期风险事件
                     </TableCell>
                   </TableRow>
