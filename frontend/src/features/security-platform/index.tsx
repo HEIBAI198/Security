@@ -3098,13 +3098,42 @@ function SupplyReachabilityPanel({
     reachabilityItems.find((item) => item.id === selectedDependencyId) ??
     reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
     reachabilityItems[0]
+  const allRows = reachabilityItems
   const reachabilityOptions = reachabilityStatusOrder
   const severityOptions = severityOrder
-  const filteredItems = reachabilityItems.filter((item) =>
-    (reachabilityFilter === 'all' || normalizeReachabilityStatus(item.status) === reachabilityFilter) &&
-    (severityFilter === 'all' || normalizeSeverity(item.severity) === severityFilter)
+  const filteredRows = useMemo(
+    () =>
+      allRows.filter((item) => {
+        const itemReachability = normalizeReachabilityStatus(item.status)
+        const itemSeverity = normalizeSeverity(item.severity)
+        const matchesReachability = reachabilityFilter === 'all' || itemReachability === reachabilityFilter
+        const matchesSeverity = severityFilter === 'all' || itemSeverity === severityFilter
+
+        return matchesReachability && matchesSeverity
+      }),
+    [allRows, reachabilityFilter, severityFilter]
   )
-  const visibleItems = filteredItems.slice(0, 8)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+
+    const countBy = <T,>(rows: ReachabilityAnalysisItem[], keyFor: (row: ReachabilityAnalysisItem) => T) =>
+      rows.reduce<Record<string, number>>((counts, row) => {
+        const key = String(keyFor(row))
+        counts[key] = (counts[key] ?? 0) + 1
+        return counts
+      }, {})
+
+    console.debug('[ReachabilityFilter]', {
+      reachabilityFilter,
+      severityFilter,
+      allRowsCount: allRows.length,
+      filteredRowsCount: filteredRows.length,
+      allStatuses: countBy(allRows, (row) => normalizeReachabilityStatus(row.status)),
+      filteredStatuses: countBy(filteredRows, (row) => normalizeReachabilityStatus(row.status)),
+      allSeverities: countBy(allRows, (row) => normalizeSeverity(row.severity)),
+      filteredSeverities: countBy(filteredRows, (row) => normalizeSeverity(row.severity)),
+    })
+  }, [allRows, filteredRows, reachabilityFilter, severityFilter])
   const pathSteps = [
     { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
     { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
@@ -3252,7 +3281,7 @@ function SupplyReachabilityPanel({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visibleItems.length ? visibleItems.map((item) => {
+                  {filteredRows.length ? filteredRows.map((item) => {
                     const selected = item.id === selectedItem?.id
                     return (
                       <TableRow
