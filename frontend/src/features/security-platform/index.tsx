@@ -96,7 +96,6 @@ import {
   loadLatestSecurityAgentJob,
   loadSecurityAgentJob,
   loadCICDAuditSarif,
-  loadCICDScanRuns,
   loadDependencyAuditSbom,
   loadDependencyAuditVex,
   loadArtifactTrustReport,
@@ -133,7 +132,6 @@ import {
   type CodeAuditScanner,
   type CodeAuditState,
   type CICDAuditResult,
-  type CICDScanRun,
   type DependencyAuditResult,
   type GitHubCodeScanningUploadResult,
   type LogAuditResult,
@@ -3100,17 +3098,11 @@ function SupplyReachabilityPanel({
     reachabilityItems.find((item) => item.id === selectedDependencyId) ??
     reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
     reachabilityItems[0]
-  const reachabilityOptions = useMemo(
-    () => reachabilityStatusOrder.filter((status) => reachabilityItems.some((item) => item.status === status)),
-    [reachabilityItems]
-  )
-  const severityOptions = useMemo(
-    () => severityOrder.filter((severity) => reachabilityItems.some((item) => item.severity === severity)),
-    [reachabilityItems]
-  )
+  const reachabilityOptions = reachabilityStatusOrder
+  const severityOptions = severityOrder
   const filteredItems = reachabilityItems.filter((item) =>
-    (reachabilityFilter === 'all' || item.status === reachabilityFilter) &&
-    (severityFilter === 'all' || item.severity === severityFilter)
+    (reachabilityFilter === 'all' || normalizeReachabilityStatus(item.status) === reachabilityFilter) &&
+    (severityFilter === 'all' || normalizeSeverity(item.severity) === severityFilter)
   )
   const visibleItems = filteredItems.slice(0, 8)
   const pathSteps = [
@@ -3766,6 +3758,23 @@ function SeverityPill({ severity }: { severity: SecuritySeverity }) {
 const reachabilityStatusOrder: ReachabilityStatus[] = ['reachable', 'triageable', 'pending', 'unreachable', 'unknown']
 const severityOrder: SecuritySeverity[] = ['critical', 'high', 'medium', 'low']
 
+function normalizeReachabilityStatus(raw: unknown): ReachabilityStatus {
+  const value = String(raw ?? '').trim().toLowerCase()
+  if (['reachable', 'confirmed', '已可达'].includes(value)) return 'reachable'
+  if (['triageable', '可研判'].includes(value)) return 'triageable'
+  if (['pending', '待研判'].includes(value)) return 'pending'
+  if (['unreachable', '不可达'].includes(value)) return 'unreachable'
+  return 'unknown'
+}
+
+function normalizeSeverity(raw: unknown): SecuritySeverity {
+  const value = String(raw ?? '').trim().toLowerCase()
+  if (['critical', 'serious', '严重'].includes(value)) return 'critical'
+  if (['high', '高危'].includes(value)) return 'high'
+  if (['medium', '中危'].includes(value)) return 'medium'
+  return 'low'
+}
+
 function reachabilityStatusLabel(state: ReachabilityStatus) {
   if (state === 'reachable') return '已可达'
   if (state === 'triageable') return '可研判'
@@ -3838,17 +3847,11 @@ function riskGaugeTone(severity: SecuritySeverity) {
 
 function dependencyReachabilityState(dependency: SecurityDependency): ReachabilityStatus {
   const reachability = dependency.reachability
-  const rawStatus = String(
+  const rawStatus =
     (reachability as Record<string, unknown> | undefined)?.status ??
     (reachability as Record<string, unknown> | undefined)?.reachabilityStatus ??
-    (reachability as Record<string, unknown> | undefined)?.triageStatus ??
-    ''
-  ).toLowerCase()
-  if (['reachable', 'confirmed', '已可达'].includes(rawStatus)) return 'reachable'
-  if (['triageable', '可研判'].includes(rawStatus)) return 'triageable'
-  if (['pending', '待研判'].includes(rawStatus)) return 'pending'
-  if (['unreachable', '不可达'].includes(rawStatus)) return 'unreachable'
-  if (['unknown', '未知'].includes(rawStatus)) return 'unknown'
+    (reachability as Record<string, unknown> | undefined)?.triageStatus
+  if (rawStatus) return normalizeReachabilityStatus(rawStatus)
   const codeEvidence =
     Boolean(reachability?.imported) ||
     Boolean(reachability?.called) ||
@@ -6034,7 +6037,6 @@ function PipelinePanel({
 }) {
   const [scanning, setScanning] = useState(false)
   const [mutating, setMutating] = useState(false)
-  const [scanRuns, setScanRuns] = useState<CICDScanRun[]>([])
   const [activeNodeId, setActiveNodeId] = useState('all')
   const [activeClusterId, setActiveClusterId] = useState('all')
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
@@ -6042,7 +6044,6 @@ function PipelinePanel({
   const [workflowFilter, setWorkflowFilter] = useState('all')
   const findings = audit?.findings ?? []
   const workflows = audit?.workflows ?? []
-  const effectiveScanRuns = scanRuns
   const corePipeline = useMemo(() => buildCoreCicdPipeline(pipeline), [pipeline])
   const conclusion = buildCicdConclusion(audit, corePipeline, findings)
   const graphNodes = useMemo(() => buildCicdGraphNodes(audit, corePipeline, findings), [audit, corePipeline, findings])
@@ -6057,20 +6058,6 @@ function PipelinePanel({
   })
   const selectedFinding = selectedFindingId ? filteredFindings.find((finding) => finding.fingerprint === selectedFindingId) : undefined
   const selectedNodeLabel = activeNodeId === 'all' ? '全部风险' : cicdGraphNodeLabel(activeNodeId)
-
-  useEffect(() => {
-    let cancelled = false
-    loadCICDScanRuns()
-      .then((payload) => {
-        if (!cancelled) setScanRuns(normalizeCicdScanRuns(payload.scanRuns))
-      })
-      .catch(() => {
-        if (!cancelled) setScanRuns([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [audit?.scan_id])
 
   useEffect(() => {
     if (selectedFindingId && !filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
@@ -6120,9 +6107,6 @@ function PipelinePanel({
     try {
       const nextAudit = await runCICDAuditScan({ workspaceId, importId, targetPath: importId ? undefined : audit?.target_path })
       onScanned(nextAudit)
-      loadCICDScanRuns()
-        .then((history) => setScanRuns(normalizeCicdScanRuns(history.scanRuns)))
-        .catch(() => setScanRuns([]))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'CI/CD 扫描失败')
     } finally {
@@ -6257,7 +6241,7 @@ function PipelinePanel({
       </section>
 
       <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
-        <CicdRiskOverviewCard audit={audit} scanRuns={effectiveScanRuns} selectedKey={audit?.scan_id ?? 'empty-cicd'} />
+        <CicdRiskOverviewCard audit={audit} selectedKey={audit?.scan_id ?? 'empty-cicd'} />
         <CicdPipelineGraph
           nodes={graphNodes}
           activeNodeId={activeNodeId}
@@ -6386,11 +6370,9 @@ function CicdConclusionStrip({
 
 function CicdRiskOverviewCard({
   audit,
-  scanRuns,
   selectedKey,
 }: {
   audit?: CICDAuditResult | null
-  scanRuns: CICDScanRun[]
   selectedKey: string
 }) {
   const total = audit?.summary.finding_count ?? 0
@@ -6407,10 +6389,6 @@ function CicdRiskOverviewCard({
     { label: '低危', value: audit?.summary.low ?? 0, color: 'bg-cyan-300' },
   ]
   const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
-  const latestRun = scanRuns[scanRuns.length - 1]
-  const previousRun = scanRuns[scanRuns.length - 2]
-  const delta = latestRun && previousRun ? scanRunTotal(latestRun) - scanRunTotal(previousRun) : 0
-
   return (
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardContent className='flex h-full flex-col p-4'>
@@ -6453,23 +6431,6 @@ function CicdRiskOverviewCard({
             ))}
           </div>
         </div>
-        {scanRuns.length >= 2 ? (
-          <div className='rounded-md border border-slate-400/10 bg-slate-900/45 p-2'>
-            <div className='mb-2 flex items-center justify-between text-[11px] text-slate-500'>
-              <span>风险趋势</span>
-              <span className={cn('tabular-nums', delta > 0 ? 'text-orange-200' : delta < 0 ? 'text-emerald-200' : 'text-slate-400')}>
-                {delta > 0 ? '+' : ''}{delta}
-              </span>
-            </div>
-            <div className='h-16'>
-              <ResponsiveContainer width='100%' height='100%'>
-                <AreaChart data={scanRuns}>
-                  <Area type='monotone' dataKey={scanRunChartTotal} stroke='#fb923c' fill='#fb923c' fillOpacity={0.14} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   )
@@ -6909,35 +6870,6 @@ function cicdClusterNodeIds(clusterId: string) {
     'workflow-risk': ['workflow', 'trigger'],
   }
   return mapping[clusterId] ?? []
-}
-
-function normalizeCicdScanRuns(runs: CICDScanRun[] | undefined): CICDScanRun[] {
-  return (runs ?? []).flatMap((run) => {
-    const id = run.id || run.scan_id
-    const createdAt = run.createdAt || run.generated_at
-    const totalRisks = run.totalRisks ?? run.total
-    if (!id || !createdAt || typeof totalRisks !== 'number' || !Number.isFinite(totalRisks)) return []
-    return [{
-      ...run,
-      id,
-      createdAt,
-      totalRisks,
-      criticalCount: run.criticalCount ?? run.critical ?? 0,
-      highCount: run.highCount ?? run.high ?? 0,
-      mediumCount: run.mediumCount ?? run.medium ?? 0,
-      lowCount: run.lowCount ?? run.low ?? 0,
-      fixedCount: run.fixedCount ?? run.fixed ?? 0,
-      newCount: run.newCount ?? run.new ?? 0,
-    }]
-  }).sort((a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime())
-}
-
-function scanRunTotal(run: CICDScanRun) {
-  return run.totalRisks ?? run.total ?? 0
-}
-
-function scanRunChartTotal(run: CICDScanRun) {
-  return scanRunTotal(run)
 }
 
 function maxSeverity(a: SecuritySeverity, b: SecuritySeverity): SecuritySeverity {
