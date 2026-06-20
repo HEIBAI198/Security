@@ -8203,22 +8203,12 @@ function LogsPanel({
               <AuditMetric label='实时评分' value={realtime?.summary.risk_score ?? 0} tone='red' />
             </div>
 
-            {audit ? (
-              <div className='grid gap-3 md:grid-cols-4'>
-                <AuditMetric label='日志文件' value={audit.summary.file_count} tone='cyan' />
-                <AuditMetric label='解析事件' value={audit.summary.parsed_events} tone='slate' />
-                <AuditMetric label='风险事件' value={audit.summary.finding_count} tone='orange' />
-                <AuditMetric label='风险评分' value={audit.summary.risk_score} tone='red' />
-              </div>
-            ) : (
-              <Alert className='rounded-md'>
-                <FileSearch className='size-4' />
-                <AlertTitle>实时接入已就绪</AlertTitle>
-                <AlertDescription>
-                  可上传日志做离线扫描，也可通过 Vector/HTTP 持续 POST JSON 日志到 /api/security/logs/ingest。
-                </AlertDescription>
-              </Alert>
-            )}
+            {audit ? <div className='grid gap-3 md:grid-cols-4'>
+              <AuditMetric label='日志文件' value={audit.summary.file_count} tone='cyan' />
+              <AuditMetric label='解析事件' value={audit.summary.parsed_events} tone='slate' />
+              <AuditMetric label='风险事件' value={audit.summary.finding_count} tone='orange' />
+              <AuditMetric label='风险评分' value={audit.summary.risk_score} tone='red' />
+            </div> : null}
 
             {realtime?.state.baseline ? (
               <Badge variant='outline' className='w-fit rounded-md'>
