@@ -7952,7 +7952,6 @@ function LogsPanel({
   const [realtimeBusy, setRealtimeBusy] = useState(false)
   const [activeLogEventId, setActiveLogEventId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
-  const [activeEvidenceNode, setActiveEvidenceNode] = useState('event')
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
@@ -7994,9 +7993,15 @@ function LogsPanel({
       }))
     : logs
 
-  const filteredLogs = displayedLogs.filter((log) =>
-    (severityFilter === 'all' || log.severity === severityFilter)
-  )
+  const runtimeSeverity = (log: (typeof displayedLogs)[number]): SecuritySeverity => {
+    const raw = String(log.severity ?? '').toLowerCase()
+    if (raw === 'critical' || raw === 'high' || raw === '严重' || raw === '高危') return 'high'
+    if (raw === 'medium' || raw === '中危') return 'medium'
+    if (raw === 'low' || raw === '低危') return 'low'
+    const confidence = (log.confidence ?? 0) * (log.confidence && log.confidence <= 1 ? 100 : 1)
+    return confidence >= 90 ? 'high' : confidence >= 70 ? 'medium' : 'low'
+  }
+  const filteredLogs = displayedLogs.filter((log) => severityFilter === 'all' || runtimeSeverity(log) === severityFilter)
   const activeLog = filteredLogs.find((log) => (log.id ?? `${log.time}-${log.event}`) === activeLogEventId) ?? filteredLogs[0]
   useEffect(() => {
     void refreshRealtimeLogs(false)
@@ -8128,6 +8133,8 @@ function LogsPanel({
     }
   }
 
+  void ignoreFinding
+
   return (
     <div className={cn(moduleSplitGridClass, 'xl:grid-cols-[minmax(0,1fr)_420px]')}>
       <div className={moduleMainColumnClass}>
@@ -8234,8 +8241,6 @@ function LogsPanel({
           </CardContent>
         </Card>
 
-        <Card className={moduleCardClass}><CardHeader><CardTitle className='text-section-title !text-[20px]'><Route className='size-5 text-cyan-300' />运行期证据链</CardTitle></CardHeader><CardContent><div className='flex min-w-max items-center gap-2 overflow-x-auto pb-2'>{[['source','日志来源'],['rule','规则命中'],['event','异常事件'],['attack','攻击链节点'],['action','处置建议']].map(([id,label], index) => <div key={id} className='flex items-center gap-2'>{index ? <span className={cn('h-px w-8 bg-slate-600', activeEvidenceNode === id && 'bg-cyan-300')} /> : null}<button type='button' onClick={() => { setActiveEvidenceNode(id); if (filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`) }} className={cn('w-28 rounded-md border p-3 text-center transition hover:-translate-y-0.5', activeEvidenceNode === id ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/15 bg-slate-900/55')}><div className='text-sm font-bold text-slate-100'>{label}</div><div className='mt-2 text-xs text-slate-300'>{id === 'event' ? activeLog?.event || '待识别' : id === 'rule' ? activeLog?.signal || '待命中' : id === 'source' ? activeLog?.source || '待接入' : id === 'attack' ? '外联通信' : '核查来源'}</div></button></div>)}</div></CardContent></Card>
-
         <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-center justify-between gap-3'><CardTitle className='flex items-center gap-2 text-section-title !text-[20px]'>
@@ -8252,9 +8257,7 @@ function LogsPanel({
                   <TableHead>风险事件</TableHead>
                   <TableHead>风险类型</TableHead>
                   <TableHead>置信度</TableHead>
-                  <TableHead>次数</TableHead>
                   <TableHead>证据片段</TableHead>
-                  <TableHead>操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -8268,38 +8271,22 @@ function LogsPanel({
                     </TableCell>
                     <TableCell className='max-w-[280px] text-sm leading-6'>{log.event}</TableCell>
                     <TableCell>
-                      <Badge variant='outline' className={cn('rounded-md', severityClasses[log.severity])}>
+                      <Badge variant='outline' className={cn('rounded-md', severityClasses[runtimeSeverity(log)])}>
                         {log.signal}
                       </Badge>
                     </TableCell>
                     <TableCell>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
-                    <TableCell>{log.occurrences ?? '-'}</TableCell>
-                    <TableCell className='max-w-[360px]'>
-                      <code className='block truncate rounded bg-muted px-2 py-1 text-xs' title={log.evidence || '-'}>
+                    <TableCell className='max-w-[220px]'>
+                      <code className='code-evidence block truncate px-2 py-1 text-xs' title={log.evidence || '-'}>
                         {log.evidence || '-'}
                       </code>
-                    </TableCell>
-                    <TableCell>
-                      {log.realtime ? (
-                        <Button
-                          size='sm'
-                          variant='ghost'
-                          onClick={() => void ignoreFinding(log)}
-                          disabled={realtimeBusy}
-                        >
-                          <EyeOff />
-                          误报
-                        </Button>
-                      ) : (
-                        '-'
-                      )}
                     </TableCell>
                   </TableRow>
                 ))}
                 {!filteredLogs.length ? (
                   <TableRow>
-                    <TableCell colSpan={8} className='h-24 text-center text-sm text-muted-foreground'>
-                      暂未发现运行期风险；可以发送实时样例或上传包含风险信号的日志验证。
+                    <TableCell colSpan={6} className='h-24 text-center text-sm text-muted-foreground'>
+                      暂无符合条件的运行期风险事件
                     </TableCell>
                   </TableRow>
                 ) : null}
