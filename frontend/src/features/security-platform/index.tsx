@@ -2337,8 +2337,8 @@ function ScanProgressPanel({
     >
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <div>
-          <div className='text-sm font-semibold'>扫描进度</div>
-          <div className='text-xs text-muted-foreground'>
+          <div className='text-section-title'>扫描进度</div>
+          <div className='mt-1 text-page-meta'>
             {running ? '各模块正在按顺序扫描当前导入项目' : completed ? '扫描流程已结束' : '等待开始扫描'}
           </div>
         </div>
@@ -2373,7 +2373,7 @@ function ScanProgressPanel({
                 <ScanStatusBadge status={step.status} />
               </div>
               {showMessage ? (
-                <div className='mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground'>
+                <div className='mt-2 line-clamp-2 text-subtle'>
                   {step.message}
                 </div>
               ) : null}
@@ -2490,14 +2490,14 @@ export function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
 
         <Card className='rounded-md'>
           <CardHeader className='pb-3'>
-            <CardTitle className='flex items-center gap-2 text-base'>
+          <CardTitle className='flex items-center gap-2 text-section-title'>
               <Siren className='size-4 text-red-600' />
               溯源结论与处置优先级
             </CardTitle>
           </CardHeader>
           <CardContent className='space-y-4'>
             <RiskDial score={workspace.summary.risk_score} level={workspace.summary.risk_level} />
-            <p className='text-sm leading-6 text-muted-foreground'>
+            <p className='text-body'>
               {assistant.answer}
             </p>
             <div className='space-y-2'>
@@ -3017,7 +3017,7 @@ function FindingsPanel({ findings }: { findings: SecurityFinding[] }) {
   return (
     <Card className='rounded-md'>
       <CardHeader>
-        <CardTitle className='flex items-center gap-2 text-base'>
+        <CardTitle className='flex items-center gap-2 text-section-title'>
           <ShieldAlert className='size-4 text-red-600' />
           优先处置风险
         </CardTitle>
@@ -4493,15 +4493,15 @@ function ReachabilityEvidenceMatrix({ model }: { model: ReachabilityViewModel })
   return (
     <Card className='rounded-md'>
       <CardHeader>
-        <CardTitle className='flex items-center gap-2 text-base'>
-          <Fingerprint className='size-4 text-cyan-600' />
+        <CardTitle className='flex items-center gap-2 text-section-title'>
+          <Fingerprint className='size-5 text-cyan-600' />
           证据覆盖矩阵
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className='overflow-x-auto rounded-md border'>
           <div className='min-w-[860px]'>
-            <div className='grid border-b bg-muted/35 text-xs font-medium text-muted-foreground' style={{ gridTemplateColumns: `220px repeat(${columns.length}, minmax(96px, 1fr))` }}>
+            <div className='grid border-b bg-muted/35 text-label' style={{ gridTemplateColumns: `220px repeat(${columns.length}, minmax(96px, 1fr))` }}>
               <div className='p-3'>风险信号</div>
               {columns.map((column) => <div key={column} className='border-l p-3 text-center'>{column}</div>)}
             </div>
@@ -6244,7 +6244,7 @@ function PipelinePanel({
           <CardHeader className='pb-3'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
               <div className='flex flex-wrap items-center gap-2'>
-                <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
+                <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
                 <span className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', activeNodeId === 'all' ? 'border-slate-400/15 bg-slate-900/60 text-slate-300' : cicdNodeTone(selectedNode?.status ?? 'empty'))}>
                   {activeNodeId === 'all' ? '全部风险' : `当前节点：${selectedNodeLabel}`}
                 </span>
@@ -6376,7 +6376,7 @@ function CicdRiskOverviewCard({
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardContent className='flex h-full flex-col p-4'>
         <div className='flex items-center justify-between gap-3'>
-          <div className='flex items-center gap-2 text-xl font-bold text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险总览</div>
+          <div className='flex items-center gap-2 text-section-title text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险总览</div>
           <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>
             {severityLabel(audit?.summary.risk_level ?? 'low')}
           </span>
@@ -6462,7 +6462,7 @@ function CicdPipelineGraph({
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-2'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><GitBranch className='size-5 text-cyan-200' />构建链路图</CardTitle>
+          <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><GitBranch className='size-5 text-cyan-200' />构建链路图</CardTitle>
           <button type='button' onClick={() => onSelectNode('all')} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
         </div>
       </CardHeader>
@@ -6628,7 +6628,7 @@ function CicdRiskClusterPanel({
     <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
       <CardHeader className='pb-3'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-xl font-bold text-slate-100'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
+          <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
           <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
         </div>
       </CardHeader>
@@ -12885,7 +12885,7 @@ function EvidenceItem({ value }: { value: string }) {
         </Badge>
         <CheckCircle2 className='size-4 text-emerald-600' />
       </div>
-      <code className='block break-words font-mono text-xs leading-5 text-muted-foreground'>
+      <code className='code-evidence' title={detail}>
         {detail}
       </code>
     </div>
