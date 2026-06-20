@@ -53,6 +53,9 @@ class NegativeBuilderTests(unittest.TestCase):
             ]
             self.assertEqual(summary["written"], 2)
             self.assertEqual({row["package"] for row in rows}, {"safe-lib", "my-pkg"})
+            row_by_package = {row["package"]: row for row in rows}
+            self.assertIn("npm", row_by_package["safe-lib"]["text"])
+            self.assertIn("safe-lib", row_by_package["safe-lib"]["text"])
             self.assertTrue(all(row["label"] == 0 for row in rows))
 
     def test_respects_ecosystem_limits_and_positive_id_fallbacks(self):

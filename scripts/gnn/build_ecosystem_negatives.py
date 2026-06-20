@@ -55,8 +55,8 @@ def _keyword_text(value: Any) -> list[str]:
     return []
 
 
-def _sample_text(package: str, record: dict[str, Any]) -> str:
-    parts = [package]
+def _sample_text(ecosystem: str, package: str, record: dict[str, Any]) -> str:
+    parts = [ecosystem, package]
     description = record.get("description")
     if description is not None and str(description).strip():
         parts.append(str(description).strip())
@@ -83,7 +83,7 @@ def _negative_record(
         "label": 0,
         "source": "ecosystem_metadata_negative",
         "evidence_sources": ["ecosystem_metadata"],
-        "text": _sample_text(package, record),
+        "text": _sample_text(ecosystem, package, record),
     }
     for field in OPTIONAL_FIELDS:
         if field in record and _has_value(record[field]):
