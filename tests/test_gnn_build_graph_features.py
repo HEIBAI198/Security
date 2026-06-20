@@ -138,6 +138,106 @@ class GraphFeatureBuilderTests(unittest.TestCase):
             self.assertTrue((output / "dataset_card.json").exists())
             splits = json.loads((output / "splits.json").read_text(encoding="utf-8"))
             self.assertEqual(set(splits), {"train", "val", "test"})
+            dataset_card = json.loads(
+                (output / "dataset_card.json").read_text(encoding="utf-8")
+            )
+            expected_split_counts = {
+                split_name: len(node_ids) for split_name, node_ids in splits.items()
+            }
+            self.assertEqual(dataset_card["positive_records"], 1)
+            self.assertEqual(dataset_card["negative_records"], 2)
+            self.assertEqual(dataset_card["node_count"], 3)
+            self.assertEqual(dataset_card["edge_count"], summary["edge_count"])
+            self.assertEqual(
+                dataset_card["negative_sources"],
+                [str(weak_negative), str(ecosystem_negative)],
+            )
+            self.assertEqual(dataset_card["split_counts"], expected_split_counts)
+            self.assertEqual(
+                dataset_card["created_by"],
+                "scripts/gnn/build_graph_features.py",
+            )
+
+    def test_missing_positive_path_raises_file_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with self.assertRaises(FileNotFoundError):
+                build_graph_features(root / "missing-positive.jsonl", None, root / "features")
+
+    def test_missing_negative_path_raises_file_not_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            positive = root / "positive.jsonl"
+            positive.write_text("", encoding="utf-8")
+
+            with self.assertRaises(FileNotFoundError):
+                build_graph_features(positive, root / "missing-negative.jsonl", root / "features")
+
+    def test_overlapping_negative_records_merge_risk_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            weak_negative = root / "weak.jsonl"
+            hard_negative = root / "hard.jsonl"
+            output = root / "features"
+            weak_negative.write_text(
+                json.dumps(
+                    {
+                        "ecosystem": "npm",
+                        "package": "safe",
+                        "text": "safe package",
+                        "label": 0,
+                        "evidence_sources": ["local"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            hard_negative.write_text(
+                json.dumps(
+                    {
+                        "ecosystem": "npm",
+                        "package": "safe",
+                        "text": "token download",
+                        "label": 0,
+                        "evidence_sources": ["hard_negative"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = build_graph_features(None, [weak_negative, hard_negative], output)
+
+            nodes = [
+                json.loads(line)
+                for line in (output / "train_nodes.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            edges = [
+                json.loads(line)
+                for line in (output / "train_edges.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+
+            self.assertEqual(summary["negative_records"], 2)
+            self.assertEqual(summary["package_nodes"], 1)
+            safe_nodes = [node for node in nodes if node["id"] == "pkg:npm:safe"]
+            self.assertEqual(len(safe_nodes), 1)
+            self.assertGreater(safe_nodes[0]["features"]["risk_keyword_count"], 0)
+            self.assertEqual(safe_nodes[0]["features"]["evidence_source_count"], 2)
+
+            edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in edges}
+            self.assertIn(
+                ("pkg:npm:safe", "signal:token", "has_risk_signal"),
+                edge_keys,
+            )
+            self.assertIn(
+                ("pkg:npm:safe", "signal:download", "has_risk_signal"),
+                edge_keys,
+            )
 
 
 if __name__ == "__main__":

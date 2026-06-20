@@ -45,7 +45,7 @@ def _read_jsonl(path: str | Path | None) -> list[dict[str, Any]]:
         return []
     jsonl_path = Path(path)
     if not jsonl_path.exists():
-        return []
+        raise FileNotFoundError(jsonl_path)
     records: list[dict[str, Any]] = []
     for line in jsonl_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -77,6 +77,56 @@ def _package_id(ecosystem: str, package: str) -> str:
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _stable_unique(values: Iterable[Any]) -> list[Any]:
+    unique_values: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        try:
+            key = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            key = str(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_values.append(value)
+    return unique_values
+
+
+def _unique_field_values(
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+    field_name: str,
+) -> list[Any]:
+    return _stable_unique(
+        [
+            *_as_list(existing.get(field_name)),
+            *_as_list(incoming.get(field_name)),
+        ]
+    )
+
+
+def _text_snippets(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    return [snippet.strip() for snippet in text.splitlines() if snippet.strip()]
+
+
+def _combined_text(existing: dict[str, Any], incoming: dict[str, Any]) -> str:
+    return "\n".join(
+        _stable_unique(
+            [
+                *_text_snippets(existing.get("text")),
+                *_text_snippets(incoming.get("text")),
+            ]
+        )
+    )
+
+
+def _is_missing_value(value: Any) -> bool:
+    return value is None or value == "" or value == () or value == []
 
 
 def _risk_signals(text: str) -> list[str]:
@@ -185,9 +235,38 @@ def _merge_records(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         key = (ecosystem, package)
         if not ecosystem or not package:
             continue
-        if key not in merged or int(record.get("label") or 0) == 1:
+        if key not in merged:
             merged[key] = record
+        else:
+            merged[key] = _merge_duplicate_record(merged[key], record)
     return [merged[key] for key in sorted(merged)]
+
+
+def _merge_duplicate_record(
+    existing: dict[str, Any],
+    incoming: dict[str, Any],
+) -> dict[str, Any]:
+    existing_is_positive = int(existing.get("label") or 0) == 1
+    incoming_is_positive = int(incoming.get("label") or 0) == 1
+    preferred = incoming if incoming_is_positive and not existing_is_positive else existing
+    secondary = existing if preferred is incoming else incoming
+    merged = dict(preferred)
+
+    for field_name, value in secondary.items():
+        if field_name not in merged or _is_missing_value(merged[field_name]):
+            merged[field_name] = value
+
+    merged["label"] = 1 if existing_is_positive or incoming_is_positive else 0
+    for field_name in ("evidence_sources", "versions", "affected_versions", "aliases"):
+        values = _unique_field_values(existing, incoming, field_name)
+        if values:
+            merged[field_name] = values
+
+    text = _combined_text(existing, incoming)
+    if text:
+        merged["text"] = text
+
+    return merged
 
 
 def build_graph_features(
