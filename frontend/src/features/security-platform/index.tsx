@@ -7950,6 +7950,9 @@ function LogsPanel({
   const [realtime, setRealtime] = useState<RealtimeLogPayload | null>(null)
   const [trend, setTrend] = useState<RealtimeLogTrendPoint[]>([])
   const [realtimeBusy, setRealtimeBusy] = useState(false)
+  const [activeLogEventId, setActiveLogEventId] = useState<string | null>(null)
+  const [signalFilter, setSignalFilter] = useState('all')
+  const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
@@ -7991,9 +7994,17 @@ function LogsPanel({
       }))
     : logs
 
+  const filteredLogs = displayedLogs.filter((log) =>
+    (signalFilter === 'all' || log.signal === signalFilter) &&
+    (severityFilter === 'all' || log.severity === severityFilter)
+  )
+  const activeLog = filteredLogs.find((log) => (log.id ?? `${log.time}-${log.event}`) === activeLogEventId) ?? filteredLogs[0]
   useEffect(() => {
     void refreshRealtimeLogs(false)
   }, [])
+  useEffect(() => {
+    if (!activeLogEventId && filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`)
+  }, [activeLogEventId, filteredLogs])
 
   async function refreshRealtimeLogs(showToast = true) {
     setRealtimeBusy(true)
@@ -8171,6 +8182,11 @@ function LogsPanel({
             </div>
           </CardHeader>
           <CardContent className='space-y-4'>
+            <div className='grid gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,50fr)_minmax(220px,20fr)]'>
+              <div className='rounded-md border border-red-400/25 bg-red-950/20 p-5'><div className='text-section-title !text-[20px]'>运行期风险结论</div><div className='mt-4 text-metric text-red-200'>{realtime?.summary.risk_score ?? audit?.summary.risk_score ?? 0}</div><div className='mt-3 text-body'>发现敏感路径访问与异常外联 IP，可作为攻击链运行期印证证据。</div><div className='mt-4 flex flex-wrap gap-2'><span className='meta-chip-dark'>GET /admin/export</span><span className='meta-chip-dark'>异常外联 IP</span></div></div>
+              <div className='rounded-md border border-slate-400/15 bg-slate-950/65 p-4'><div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>异常趋势与风险峰值</span><span className='meta-chip-dark'>16:44 峰值</span></div><div className='mt-3 h-[220px]'><ResponsiveContainer width='100%' height='100%'><AreaChart data={trend ?? []}><CartesianGrid strokeDasharray='3 3' vertical={false} /><XAxis dataKey='bucket' tickFormatter={(value) => String(value).slice(11, 16)} /><YAxis width={28} /><Tooltip labelFormatter={(value) => String(value).replace('T', ' ').slice(0, 16)} /><Area type='monotone' dataKey='events' name='事件' stroke='#22d3ee' fill='#22d3ee' fillOpacity={0.1} /><Area type='monotone' dataKey='findings' name='风险' stroke='#fb7185' fill='#fb7185' fillOpacity={0.2} /></AreaChart></ResponsiveContainer></div></div>
+              <div className='rounded-md border border-slate-400/15 bg-slate-900/50 p-5'><div className='text-section-title !text-[20px]'>实时管道</div>{['实时接入','本地缓冲','规则引擎','风险趋势'].map(item => <div key={item} className='mt-3 flex items-center justify-between text-body'><span>{item}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>)}</div>
+            </div>
             <div className='grid gap-3 md:grid-cols-4'>
               <AuditMetric label='实时事件' value={realtime?.summary.event_count ?? 0} tone='cyan' />
               <AuditMetric label='实时风险' value={realtime?.summary.finding_count ?? 0} tone='orange' />
@@ -8218,10 +8234,10 @@ function LogsPanel({
 
         <Card className={moduleCardClass}>
           <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
+            <div className='flex flex-wrap items-center justify-between gap-3'><CardTitle className='flex items-center gap-2 text-section-title !text-[20px]'>
               <ShieldAlert className='size-4 text-red-600' />
               运行期风险事件
-            </CardTitle>
+            </CardTitle><div className='flex flex-wrap gap-1.5'>{['all', ...Array.from(new Set(displayedLogs.map((log) => log.signal)))].slice(0, 5).map((value) => <button key={value} type='button' onClick={() => setSignalFilter(value)} className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', signalFilter === value ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-slate-400/15 text-slate-300')}>{value === 'all' ? '全部' : value}</button>)}<Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}><SelectTrigger size='sm' className='h-7 w-[100px]'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='all'>全部等级</SelectItem><SelectItem value='high'>高危</SelectItem><SelectItem value='medium'>中危</SelectItem><SelectItem value='low'>低危</SelectItem></SelectContent></Select></div></div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -8238,8 +8254,8 @@ function LogsPanel({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {displayedLogs.map((log) => (
-                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`}>
+                {filteredLogs.map((log) => (
+                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`} onClick={() => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)} className={cn('cursor-pointer transition-colors hover:bg-slate-900/55', activeLog === log && 'bg-cyan-400/10')}>
                     <TableCell className='whitespace-nowrap font-mono text-xs'>{log.time}</TableCell>
                     <TableCell>
                       <Badge variant='outline' className='rounded-md'>
@@ -8276,7 +8292,7 @@ function LogsPanel({
                     </TableCell>
                   </TableRow>
                 ))}
-                {!displayedLogs.length ? (
+                {!filteredLogs.length ? (
                   <TableRow>
                     <TableCell colSpan={8} className='h-24 text-center text-sm text-muted-foreground'>
                       暂未发现运行期风险；可以发送实时样例或上传包含风险信号的日志验证。
@@ -8290,6 +8306,7 @@ function LogsPanel({
       </div>
 
       <div className={moduleSidebarColumnClass}>
+        <Card className={moduleCardClass}><CardHeader><CardTitle className='text-section-title !text-[20px]'>当前事件详情</CardTitle></CardHeader><CardContent className='space-y-3'>{activeLog ? <><div className='text-risk-title'>{activeLog.event}</div><div className='flex gap-2'><Badge variant='outline' className={cn('rounded-full', severityClasses[activeLog.severity])}>{activeLog.signal}</Badge><span className='meta-chip-dark'>{Math.round((activeLog.confidence ?? 0) * 100)}%</span></div><div className='grid gap-2'>{[['日志来源', activeLog.source], ['异常时间', activeLog.time], ['攻击链节点', activeLog.signal]].map(([label, value]) => <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] gap-3 rounded-md border border-slate-400/10 px-3 py-2'><span className='text-label'>{label}</span><span className='truncate text-right text-value' title={value}>{value}</span></div>)}</div><div className='code-evidence truncate' title={activeLog.evidence}>{activeLog.evidence || '未提供证据片段'}</div><div className='action-advice p-4'><div className='font-bold'>建议处理</div><div className='mt-1 line-clamp-2 leading-6'>核查访问来源，隔离异常外联，并关联攻击链节点复核。</div></div></> : <div className='text-body'>当前筛选下无风险事件。</div>}</CardContent></Card>
         <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
