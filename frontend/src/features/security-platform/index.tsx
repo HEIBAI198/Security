@@ -3606,19 +3606,19 @@ function DependencyDetailWorkbench({
 }) {
   return (
     <motion.div
-      className='h-full'
+      className='h-full min-w-0'
       key={item?.id ?? 'empty-detail'}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.24 }}
     >
-    <Card className='h-full rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+    <Card className='h-full min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-3'>
-        <CardTitle className='text-base text-slate-100'>
+        <CardTitle className='min-w-0 truncate text-base text-slate-100'>
           {item ? `${item.name}@${item.currentVersion || '-'}` : '依赖详情'}
         </CardTitle>
       </CardHeader>
-      <CardContent className='space-y-3'>
+      <CardContent className='min-w-0 space-y-3 overflow-hidden'>
         <div className='flex flex-wrap gap-2'>
           <ReachabilityStatePill state={item?.status ?? 'pending'} />
           <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
@@ -3627,7 +3627,7 @@ function DependencyDetailWorkbench({
         </div>
         <div className='grid gap-2 text-sm'>
           <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
-          <DetailRow label='来源' value={item?.sourceFiles.join(' / ') || '-'} />
+          <DetailRow label='来源' value={<DependencySourceValue sources={item?.sourceFiles ?? []} />} />
           <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} />
           <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} />
           <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} />
@@ -3642,7 +3642,7 @@ function DependencyDetailWorkbench({
             </CollapsibleTrigger>
             <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
               {item?.advisories.slice(0, 6).map((id) => (
-                <span key={id} className='rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
+                <span key={id} title={id} className='max-w-full truncate rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
                   {id}
                 </span>
               ))}
@@ -3657,9 +3657,9 @@ function DependencyDetailWorkbench({
                 <ChevronDown className='size-4' />
               </Button>
             </CollapsibleTrigger>
-            <CollapsibleContent className='mt-2 space-y-1.5'>
+            <CollapsibleContent className='mt-2 min-w-0 space-y-1.5 overflow-hidden'>
               {item?.rawEvidence.slice(0, 4).map((evidence) => (
-                <div key={evidence} className='truncate rounded-md border border-slate-400/10 bg-slate-900/60 px-2 py-1.5 text-xs text-slate-400' title={evidence}>
+                <div key={evidence} className='code-evidence block min-w-0 truncate px-2 py-1.5' title={evidence}>
                   {evidence}
                 </div>
               ))}
@@ -3786,12 +3786,41 @@ function PathEvidenceCoverage({
 }
 
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  const isTextValue = typeof value === 'string' || typeof value === 'number'
   return (
-    <div className='flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-slate-900/50 px-3 py-2'>
-      <span className='text-slate-500'>{label}</span>
-      <span className='text-right font-medium text-slate-200'>{value}</span>
+    <div className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/50 px-3 py-2'>
+      <span className='whitespace-nowrap text-label text-slate-400'>{label}</span>
+      <div className='min-w-0 overflow-hidden text-right font-medium text-slate-200' title={isTextValue ? String(value) : undefined}>
+        {isTextValue ? <span className='block truncate'>{value}</span> : value}
+      </div>
     </div>
   )
+}
+
+function DependencySourceValue({ sources }: { sources: string[] }) {
+  if (!sources.length) return <span>-</span>
+
+  const fullValue = sources.join(' / ')
+  const visibleSources = sources.slice(0, 2).map(compactDependencySource)
+  const displayValue = `${visibleSources.join(' · ')}${sources.length > 2 ? ` +${sources.length - 2}` : ''}`
+
+  return <PathValue value={fullValue} display={displayValue} />
+}
+
+function PathValue({ value, display = truncateMiddle(value, 48) }: { value: string; display?: string }) {
+  return (
+    <span className='code-evidence max-w-full min-w-0 px-2 py-1 text-right' title={value}>
+      <span className='truncate'>{display}</span>
+    </span>
+  )
+}
+
+function compactDependencySource(source: string) {
+  const [location, ...kindParts] = source.split(';')
+  const sourceSegments = location.trim().split(' / ').filter(Boolean)
+  const path = sourceSegments[sourceSegments.length - 1] ?? location.trim()
+  const kind = kindParts.join(';').trim()
+  return [compactWorkflowPath(path), kind].filter(Boolean).join(' · ')
 }
 
 function SeverityPill({ severity }: { severity: SecuritySeverity }) {
