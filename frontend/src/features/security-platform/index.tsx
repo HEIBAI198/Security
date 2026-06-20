@@ -7091,7 +7091,7 @@ function truncateMiddle(value: string, max = 40) {
   return `${value.slice(0, head)}...${value.slice(-tail)}`
 }
 
-function ArtifactTrustPanel({
+function LegacyArtifactTrustPanel({
   result,
   workspaceId,
   onScanned,
@@ -7427,6 +7427,103 @@ function ArtifactTrustPanel({
     </div>
   )
 }
+
+void LegacyArtifactTrustPanel
+
+function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
+  result?: ArtifactTrustResult | null
+  workspaceId?: string
+  onScanned: (result: ArtifactTrustResult) => void | Promise<void>
+}) {
+  const [artifactFile, setArtifactFile] = useState<File | null>(null)
+  const [attestationFile, setAttestationFile] = useState<File | null>(null)
+  const [expectedRepo, setExpectedRepo] = useState('')
+  const [expectedCommit, setExpectedCommit] = useState('')
+  const [allowedWorkflows, setAllowedWorkflows] = useState('')
+  const [allowedBuilders, setAllowedBuilders] = useState('')
+  const [requireSignature, setRequireSignature] = useState(true)
+  const [allowSelfHostedRunner, setAllowSelfHostedRunner] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [selectedNode, setSelectedNode] = useState('gate')
+  const [selectedCheck, setSelectedCheck] = useState<string | null>(null)
+  const [configOpen, setConfigOpen] = useState(false)
+  const activeResult = result ?? (import.meta.env.DEV ? artifactTrustPreviewResult : undefined)
+  const isPreview = !result && Boolean(activeResult)
+  const score = activeResult ? artifactTrustScore(activeResult) : 0
+  const checks = activeResult?.checks ?? []
+  const failedChecks = checks.filter((check) => ['fail', 'missing', 'warn'].includes(check.status))
+  const passedChecks = checks.filter((check) => check.status === 'pass')
+  const selected = checks.find((check) => check.name === selectedCheck) ?? failedChecks[0]
+  const nodes = artifactTrustNodes(activeResult, score)
+
+  async function verifyGate() {
+    setScanning(true)
+    try {
+      const next = artifactFile && attestationFile
+        ? await uploadArtifactTrustScan({ workspaceId, artifact: artifactFile, attestation: attestationFile, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
+        : await runArtifactTrustScan({ workspaceId, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
+      await onScanned(next)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '产物可信验证失败')
+    } finally { setScanning(false) }
+  }
+
+  return <div className='min-w-0 space-y-4'>
+    <section className='flex flex-wrap items-start justify-between gap-4'>
+      <div className='min-w-0'>
+        <h1 className='text-page-title flex items-center gap-3'><Fingerprint className='size-7 text-cyan-300' />产物可信门禁</h1>
+        <div className='mt-3 flex flex-wrap gap-2'>
+          <span className='meta-chip-dark' title={activeResult?.artifact}>{artifactFile?.name ?? activeResult?.artifact ?? '待上传产物'}</span>
+          <span className='meta-chip-dark' title={activeResult?.digest}>{activeResult?.digest ? shortDigest(activeResult.digest) : 'Digest 待计算'}</span>
+          <span className='meta-chip-dark'>{activeResult?.provenance.workflow ? compactWorkflowPath(activeResult.provenance.workflow) : 'Workflow 未解析'}</span>
+          {isPreview ? <span className='meta-chip-dark'>预览数据</span> : null}
+        </div>
+      </div>
+      <div className='flex flex-wrap gap-2'>
+        <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}重新验证</Button>
+        <Button variant='outline' size='sm' onClick={() => setConfigOpen(true)}><Upload />上传证据</Button>
+        <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
+      </div>
+    </section>
+
+    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,45fr)_minmax(250px,25fr)]'>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col justify-between p-5'>
+        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>发布门禁</span><ArtifactGateBadge score={score} /></div>
+        <div className='flex flex-1 items-center justify-center'><ArtifactScoreRing score={score} /></div>
+        <div className='grid grid-cols-3 gap-2 text-center'><GateMetric label='检查项' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败/缺失' value={failedChecks.length} /></div>
+      </CardContent></Card>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='p-5'>
+        <div className='flex items-center justify-between'><h2 className='text-section-title !text-[20px]'><Route className='size-5 text-cyan-300' />可信验证链路</h2><span className='meta-chip-dark'>{activeResult?.artifact ?? '待上传'}</span></div>
+        <div className='mt-8 overflow-x-auto pb-3'><div className='flex min-w-max items-center gap-2 px-2'>{nodes.map((node, index) => <div key={node.id} className='flex items-center gap-2'>{index ? <span className={cn('h-px w-7 bg-slate-600', index <= nodes.findIndex((item) => item.id === selectedNode) && 'bg-cyan-300')} /> : null}<button type='button' onClick={() => setSelectedNode(node.id)} className={cn('w-28 rounded-md border p-3 text-center transition hover:-translate-y-0.5', selectedNode === node.id ? 'border-cyan-300/60 bg-cyan-400/10' : 'border-slate-400/15 bg-slate-900/60')}><node.icon className={cn('mx-auto size-5', node.className)} /><div className='mt-2 text-sm font-bold text-slate-100'>{node.label}</div><div className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</div></button></div>)}</div></div>
+        <div className='mt-5 rounded-md border border-slate-400/10 bg-slate-900/55 p-3'><span className='text-label'>当前节点</span><div className='mt-1 text-card-title'>{nodes.find((node) => node.id === selectedNode)?.label}</div></div>
+      </CardContent></Card>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='space-y-3 p-5'>
+        <h2 className='text-section-title !text-[20px]'>当前证据</h2>
+        <EvidenceField label='Artifact' value={artifactFile?.name ?? activeResult?.artifact} />
+        <EvidenceField label='Digest' value={activeResult?.digest} code />
+        <EvidenceField label='Repo' value={activeResult?.provenance.source_repo} />
+        <EvidenceField label='Commit' value={activeResult?.provenance.commit} code />
+        <EvidenceField label='Builder' value={activeResult?.provenance.builder_id} />
+        {selected ? <div className='action-advice mt-4'><div className='text-card-title'>{artifactCheckTitle(selected.name)}</div><div className='mt-2 code-evidence truncate' title={selected.evidence}>{selected.evidence || '未提供'}</div><div className='mt-3 font-semibold'>{artifactCheckExplanation(selected).action}</div></div> : null}
+      </CardContent></Card>
+    </div>
+
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardHeader><CardTitle className='text-section-title'><ShieldAlert className='size-5 text-amber-300' />失败与缺失项</CardTitle></CardHeader><CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>{failedChecks.length ? failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={selectedCheck === check.name} onSelect={() => setSelectedCheck(current => current === check.name ? null : check.name)} />) : <div className='text-body'>未发现阻断项</div>}</CardContent></Card>
+
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardContent className='p-0'><Collapsible><CollapsibleTrigger asChild><Button variant='ghost' className='w-full justify-between px-5 py-6'>全部检查项 <span className='meta-chip-dark'>{checks.length}</span><ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='space-y-2 px-5 pb-5'>{failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={selectedCheck === check.name} onSelect={() => setSelectedCheck(current => current === check.name ? null : check.name)} />)}{passedChecks.length ? <div className='pt-3 text-label'>已通过 {passedChecks.length} 项</div> : null}{passedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={selectedCheck === check.name} onSelect={() => setSelectedCheck(current => current === check.name ? null : check.name)} compact />)}</CollapsibleContent></Collapsible></CardContent></Card>
+
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardContent className='p-0'><Collapsible open={configOpen} onOpenChange={setConfigOpen}><CollapsibleTrigger asChild><Button variant='ghost' className='w-full justify-between px-5 py-6'>证据输入与策略配置<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='space-y-4 px-5 pb-5'><div className='grid gap-3 md:grid-cols-2'><Input type='file' className={fileInputClass} onChange={event => setArtifactFile(event.target.files?.[0] ?? null)} /><Input type='file' accept='.json,.jsonl,application/json' className={fileInputClass} onChange={event => setAttestationFile(event.target.files?.[0] ?? null)} /></div><div className='grid gap-3 md:grid-cols-2'><Input placeholder='可信源码仓库（未提供）' value={expectedRepo} onChange={event => setExpectedRepo(event.target.value)} /><Input placeholder='预期 commit（未提供）' value={expectedCommit} onChange={event => setExpectedCommit(event.target.value)} /><Input placeholder='允许 workflow（未配置）' value={allowedWorkflows} onChange={event => setAllowedWorkflows(event.target.value)} /><Input placeholder='可信 builder（未配置）' value={allowedBuilders} onChange={event => setAllowedBuilders(event.target.value)} /></div><div className='flex flex-wrap gap-4'><label className='flex items-center gap-2 text-body'><Switch checked={requireSignature} onCheckedChange={setRequireSignature} />要求签名验签</label><label className='flex items-center gap-2 text-body'><Switch checked={allowSelfHostedRunner} onCheckedChange={setAllowSelfHostedRunner} />允许 self-hosted runner</label></div></CollapsibleContent></Collapsible></CardContent></Card>
+  </div>
+}
+
+const artifactTrustPreviewResult: ArtifactTrustResult = { scan_id: 'preview', artifact: 'preview-release.tar.gz', digest: 'sha256:preview-digest-not-a-real-value', trust_score: 72, level: 'block', checks: [{ name: 'signature_verified', status: 'fail', severity: 'high', evidence: '签名材料未提供' }, { name: 'attestation_max_age', status: 'warn', severity: 'medium', evidence: 'attestation 超出策略时效' }, { name: 'provenance_predicate_type_slsa', status: 'pass', evidence: 'SLSA provenance 已解析' }], findings: [], provenance: {}, policy: {}, tools: [], summary: { check_count: 3, finding_count: 2, trust_score: 72, level: 'block', risk_score: 72, risk_level: 'high', passed: 1, failed: 1, warnings: 1, missing: 0, skipped: 0 }, report: '', warnings: [] }
+
+function ArtifactGateBadge({ score }: { score: number }) { const blocked = score < 90; return <span className={cn('inline-flex h-7 items-center rounded-full border px-3 text-sm font-bold', blocked ? 'border-red-400/35 bg-red-500/10 text-red-200' : 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200')}>{blocked ? '建议阻断' : '允许发布'}</span> }
+function ArtifactScoreRing({ score }: { score: number }) { const tone = score >= 90 ? 'text-emerald-200' : score >= 75 ? 'text-amber-200' : 'text-red-200'; return <div className={cn('grid size-44 place-items-center rounded-full border-4 border-current bg-slate-950/80 text-center shadow-[0_0_26px_rgba(34,211,238,0.12)]', tone)}><span className='text-metric !text-[34px]'>{score}</span></div> }
+function GateMetric({ label, value }: { label: string; value: number }) { return <div className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2'><div className='text-label'>{label}</div><div className='mt-1 text-xl font-extrabold text-slate-100'>{value}</div></div> }
+function EvidenceField({ label, value, code = false }: { label: string; value?: string; code?: boolean }) { const display = value || '未提供'; return <div className='grid min-w-0 grid-cols-[68px_minmax(0,1fr)] gap-2'><span className='text-label'>{label}</span><span className={cn('min-w-0 truncate text-right text-value', code && 'code-evidence px-2 py-1') } title={value}>{code ? truncateMiddle(display, 30) : display}</span></div> }
+function ArtifactGateCheck({ check, selected, onSelect, compact = false }: { check: ArtifactTrustCheck; selected: boolean; onSelect: () => void; compact?: boolean }) { const detail = artifactCheckExplanation(check); return <button type='button' onClick={onSelect} className={cn('w-full rounded-md border p-3 text-left transition', selected ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-slate-900/45 hover:border-slate-300/30')}><div className='flex items-center justify-between gap-3'><div className='min-w-0'><span className='text-card-title !text-[16px]'>{artifactCheckTitle(check.name)}</span><div className='mt-1 truncate code-evidence px-2 py-1' title={check.evidence}>{check.evidence || '未提供'}</div></div><span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span></div>{selected && !compact ? <div className='action-advice mt-3'><span className='font-bold'>建议修复</span><div className='mt-1'>{detail.action}</div></div> : null}</button> }
+function artifactTrustNodes(result: ArtifactTrustResult | undefined, score: number) { const check = (name: string) => result?.checks.find(item => item.name === name); const node = (id: string, label: string, icon: LucideIcon, status: string, className: string, badgeClass: string) => ({ id, label, icon, status, className, badgeClass }); const signature = check('signature_verified'); const attestation = check('attestation_max_age'); return [node('artifact', 'Artifact', Archive, result?.artifact ? '已识别' : '待上传', 'text-cyan-200', 'border-cyan-400/30 text-cyan-200'), node('digest', 'Digest', Fingerprint, check('artifact_digest_matches_subject')?.status === 'fail' ? '失败' : '通过', 'text-emerald-200', 'border-emerald-400/30 text-emerald-200'), node('signature', 'Signature', KeyRound, artifactCheckLabel(signature?.status || 'missing'), 'text-red-200', artifactCheckClass(signature?.status || 'missing')), node('attestation', 'Attestation', FileText, artifactCheckLabel(attestation?.status || 'missing'), 'text-amber-200', artifactCheckClass(attestation?.status || 'missing')), node('provenance', 'Provenance', GitBranch, result?.provenance.commit ? '通过' : '缺失', 'text-cyan-200', 'border-cyan-400/30 text-cyan-200'), node('policy', 'Policy', ShieldCheck, '已加载', 'text-amber-200', 'border-amber-400/30 text-amber-200'), node('gate', 'Release Gate', ShieldAlert, score >= 90 ? '允许' : '阻断', score >= 90 ? 'text-emerald-200' : 'text-red-200', score >= 90 ? 'border-emerald-400/30 text-emerald-200' : 'border-red-400/30 text-red-200')] }
 
 function ArtifactConfigSummary({ label, value }: { label: string; value?: string }) {
   return (
