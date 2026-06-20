@@ -1779,7 +1779,7 @@ function AgentConversationEmpty({
           <Badge variant='outline' className='rounded-md'>
             APT 溯源对话
           </Badge>
-          <h1 className='text-2xl font-semibold tracking-normal sm:text-3xl'>
+          <h1 className='text-page-title'>
             新建一个项目分析对话
           </h1>
         </div>
@@ -2202,13 +2202,13 @@ function ModuleLaunchGrid({
   return (
     <div className='mt-4 space-y-3'>
       <div className='flex flex-wrap items-center justify-between gap-2'>
-        <div className='text-sm font-semibold'>模块详情</div>
+        <div className='text-section-title'>模块详情</div>
         {analysisStarted && !scanRunning ? (
-          <div className='flex items-center gap-2 text-xs'>
-            <span className='rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-200'>
+          <div className='flex items-center gap-2'>
+            <span className='inline-flex h-[26px] items-center whitespace-nowrap rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 text-[13px] font-bold leading-none text-emerald-200'>
               {statusSummary.completed} 已完成
             </span>
-            <span className='rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-200'>
+            <span className='inline-flex h-[26px] items-center whitespace-nowrap rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 text-[13px] font-bold leading-none text-amber-200'>
               {statusSummary.pending} 待补充
             </span>
           </div>
@@ -2266,17 +2266,17 @@ function ModuleLaunchGrid({
                     <span className={cn('grid size-8 shrink-0 place-items-center rounded-md border', tone.iconWrap)}>
                       <Icon className={cn('size-[18px]', tone.icon)} />
                     </span>
-                    <span className='min-w-0 flex-1 whitespace-normal break-words text-sm font-semibold leading-5 text-slate-100'>
+                    <span className='min-w-0 flex-1 whitespace-normal break-words text-card-title leading-5 text-slate-100'>
                       {cardMeta?.title ?? workspaceTabTitles[module]}
                     </span>
-                    <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4', tone.badge)}>
+                    <span className={cn('inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-bold leading-none', tone.badge)}>
                       {statusLabel}
                     </span>
                   </span>
                   {missingChips.length ? (
                     <span className='flex flex-wrap gap-1.5 pl-10'>
                       {missingChips.map((chip) => (
-                        <span key={chip} className={cn('whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4', tone.chip)}>
+                        <span key={chip} className={cn('inline-flex h-6 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold leading-none', tone.chip)}>
                           {chip}
                         </span>
                       ))}
@@ -2448,10 +2448,10 @@ export function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
             <Badge variant='outline' className='rounded-md border-cyan-200 bg-cyan-50 text-cyan-700'>
               APT 溯源 · SBOM · CI/CD · 产物可信 · 日志印证
             </Badge>
-            <h1 className='text-2xl font-semibold tracking-normal sm:text-3xl'>
+            <h1 className='text-page-title'>
               {workspace.workspace.name} APT 供应链攻击溯源总览
             </h1>
-            <p className='max-w-3xl text-sm leading-6 text-muted-foreground'>
+            <p className='max-w-3xl text-body'>
               围绕污染入口、被污染环节、受影响资产和攻击路径组织多源证据，支撑供应链攻击检测与溯源研判。
             </p>
           </div>
@@ -2969,9 +2969,9 @@ function MetricCard({
     <Card className='rounded-md'>
       <CardContent className='flex items-center justify-between gap-3 p-4'>
         <div className='min-w-0'>
-          <div className='text-xs text-muted-foreground'>{label}</div>
-          <div className='mt-1 text-2xl font-semibold'>{value}</div>
-          <div className='mt-1 truncate text-xs text-muted-foreground'>{detail}</div>
+          <div className='text-label'>{label}</div>
+          <div className='mt-1 text-metric text-foreground'>{value}</div>
+          <div className='mt-2 truncate text-subtle'>{detail}</div>
         </div>
         <div className={cn('grid size-10 shrink-0 place-items-center rounded-md', toneClass)}>
           <Icon className='size-5' />
@@ -3007,7 +3007,7 @@ function ModuleRow({ module }: { module: SecurityWorkspace['modules'][number] })
           {module.signals} signals
         </Badge>
       </div>
-      <div className='text-xs leading-5 text-muted-foreground'>{module.description}</div>
+      <div className='text-body'>{module.description}</div>
       <RiskBar value={module.score} />
     </div>
   )
@@ -3145,15 +3145,13 @@ function SupplyReachabilityPanel({
               <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
                 <Route className='size-5' />
               </span>
-              <h2 className='text-[28px] font-semibold leading-tight tracking-normal text-slate-100'>供应链可达性研判</h2>
+              <h2 className='text-page-title text-page-title-on-dark'>供应链可达性研判</h2>
             </div>
             <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
-            <div className='mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400'>
-              <span>{selectedItem ? `${selectedItem.name}@${selectedItem.currentVersion || '-'}` : '-'}</span>
-              <span>·</span>
-              <span>{selectedItem?.packageManager || 'npm'}</span>
-              <span>·</span>
-              <span>{selectedItem?.sourceFiles.join(' / ') || '-'}</span>
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='meta-chip-dark'>{selectedItem ? `${selectedItem.name}@${selectedItem.currentVersion || '-'}` : '-'}</span>
+              <span className='meta-chip-dark'>{selectedItem?.packageManager || 'npm'}</span>
+              {selectedItem?.sourceFiles.slice(0, 2).map((source) => <span key={source} className='meta-chip-dark' title={source}>{compactWorkflowPath(source)}</span>)}
             </div>
           </div>
           <div className='flex flex-wrap gap-2'>
@@ -3380,7 +3378,7 @@ function RiskScoreWorkbenchCard({
       <CardContent className='relative flex h-full flex-col p-4'>
         <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
         <div className='relative flex items-center justify-between gap-3'>
-          <div className='text-xs font-medium text-slate-300'>风险评分</div>
+          <div className='text-label text-slate-300'>风险评分</div>
           <SeverityPill severity={severity} />
         </div>
         <div className='relative flex flex-1 items-center justify-center py-4'>
@@ -3405,8 +3403,8 @@ function RiskScoreWorkbenchCard({
             </svg>
             <div className='absolute inset-0 grid place-items-center'>
               <div className='text-center'>
-                <div className={cn('text-5xl font-semibold leading-none tabular-nums', tone.text)}>{displayScore}</div>
-                <div className='mt-1 text-[11px] text-slate-500'>score</div>
+                <div className={cn('text-metric text-5xl', tone.text)}>{displayScore}</div>
+                <div className='mt-1 text-label'>风险评分</div>
               </div>
             </div>
           </div>
@@ -3418,8 +3416,8 @@ function RiskScoreWorkbenchCard({
             ['证据缺口', gapCount, 'text-amber-200'],
           ].map(([label, value, color]) => (
             <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2 text-center'>
-              <div className='text-[10px] text-slate-500'>{label}</div>
-              <div className={cn('mt-1 text-lg font-semibold tabular-nums', color)}>{value}</div>
+              <div className='text-label'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
             </div>
           ))}
         </div>
@@ -3436,7 +3434,7 @@ function RiskScoreWorkbenchCard({
               />
             ))}
           </div>
-          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500'>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
             {evidenceBar.map((item) => (
               <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
             ))}
@@ -3472,8 +3470,8 @@ function ReachabilityFlowWorkbench({
     <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardHeader className='pb-2'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='text-base text-slate-100'>可达路径图</CardTitle>
-          <span className='text-xs text-slate-500'>{selectedItem?.name || '-'}</span>
+          <CardTitle className='text-section-title'>可达路径图</CardTitle>
+          <span className='meta-chip'>{selectedItem?.name || '-'}</span>
         </div>
       </CardHeader>
       <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
@@ -6156,17 +6154,14 @@ function PipelinePanel({
               <span className='grid size-9 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
                 <GitBranch className='size-5' />
               </span>
-              <h2 className='text-[30px] font-extrabold leading-tight tracking-normal text-slate-50'>CI/CD 构建链研判</h2>
+              <h2 className='text-page-title text-page-title-on-dark'>CI/CD 构建链研判</h2>
             </div>
             <div className='mt-2 h-px w-64 bg-gradient-to-r from-orange-300/50 via-cyan-300/20 to-transparent' />
-            <div className='mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-400'>
-              <span>GitHub Actions</span>
-              <span>·</span>
-              <span>{audit?.summary.workflow_count ?? workflows.length} workflows</span>
-              <span>·</span>
-              <span>{audit?.summary.total_steps ?? 0} steps</span>
-              <span>·</span>
-              <span>{audit?.target?.projectName || audit?.target_path || 'workflow source'}</span>
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='meta-chip-dark'>GitHub Actions</span>
+              <span className='meta-chip-dark'>{audit?.summary.workflow_count ?? workflows.length} workflows</span>
+              <span className='meta-chip-dark'>{audit?.summary.total_steps ?? 0} steps</span>
+              <span className='meta-chip-dark max-w-[220px] truncate' title={audit?.target?.projectName || audit?.target_path || 'workflow source'}>{audit?.target?.projectName || compactWorkflowPath(audit?.target_path || 'workflow source')}</span>
             </div>
           </div>
           <div className='flex flex-wrap gap-2'>
@@ -6995,12 +6990,12 @@ function CicdInfoBlock({
   tone?: 'default' | 'action'
 }) {
   return (
-    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'border-orange-300/30 bg-orange-400/10' : 'border-slate-400/10 bg-slate-950/55')}>
+    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'action-advice' : 'border-slate-400/10 bg-slate-950/55')}>
       <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', tone === 'action' ? 'text-orange-100' : 'text-slate-200')}>
         {tone === 'action' ? <ShieldCheck className='size-4' /> : null}
         {title}
       </div>
-      <div className={cn('break-words text-sm leading-6 [overflow-wrap:anywhere]', mono && 'rounded border border-cyan-300/15 bg-slate-950/85 px-2.5 py-2 font-mono text-[13px] leading-5 text-cyan-100', tone === 'action' && 'font-semibold text-orange-50')}>
+      <div className={cn('break-words text-body [overflow-wrap:anywhere]', mono && 'code-evidence', tone === 'action' && 'font-semibold text-orange-50')}>
         {text}
       </div>
     </div>
