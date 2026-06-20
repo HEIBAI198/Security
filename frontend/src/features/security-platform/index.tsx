@@ -8306,24 +8306,11 @@ function LogsPanel({
             </CardTitle>
           </CardHeader>
           <CardContent className='space-y-3'>
-            <div className='h-[180px] rounded-md border p-2'>
-              <ResponsiveContainer width='100%' height='100%'>
-                <AreaChart data={trend ?? []} margin={{ left: 0, right: 0, top: 8, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray='3 3' vertical={false} />
-                  <XAxis
-                    dataKey='bucket'
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(value) => String(value).slice(11, 16)}
-                    minTickGap={18}
-                  />
-                  <YAxis tickLine={false} axisLine={false} width={28} />
-                  <Tooltip labelFormatter={(value) => String(value).replace('T', ' ').slice(0, 16)} />
-                  <Area type='monotone' dataKey='events' name='事件' stroke='#0891b2' fill='#0891b2' fillOpacity={0.12} />
-                  <Area type='monotone' dataKey='findings' name='风险' stroke='#dc2626' fill='#dc2626' fillOpacity={0.16} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            <Badge variant='outline' className='w-fit rounded-full border-emerald-400/35 bg-emerald-500/10 text-emerald-200'>运行正常</Badge>
+            {['实时接入', '本地缓冲', '规则引擎', '风险趋势'].map((rule) => (
+              <div key={rule} className='flex items-center justify-between rounded-md border border-slate-400/10 px-3 py-2 text-body'><span>{rule}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>
+            ))}
+            <Collapsible><CollapsibleTrigger asChild><Button variant='ghost' className='w-full justify-between px-2'>管道详情<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='mt-2 space-y-2 rounded-md border border-slate-400/10 p-3'>
             {[
               'Vector / HTTP 实时接入',
               '本地 JSONL 事件缓冲',
@@ -8336,11 +8323,11 @@ function LogsPanel({
               'SQL 注入探测',
               '构建上线后的行为漂移',
             ].map((rule) => (
-              <div key={rule} className='flex items-center gap-2 rounded-md border p-3 text-sm'>
+              <div key={rule} className='flex items-center gap-2 text-sm text-slate-300'>
                 <CheckCircle2 className='size-4 text-emerald-600' />
                 {rule}
               </div>
-            ))}
+            ))}</CollapsibleContent></Collapsible>
             {auditWarnings.length ? (
               <>
                 <Separator />
