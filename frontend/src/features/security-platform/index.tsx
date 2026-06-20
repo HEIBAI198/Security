@@ -2228,6 +2228,8 @@ function ModuleLaunchGrid({
           const isCompleted = isReady && step?.status === 'completed'
           const cardMeta = evidenceModuleCards[module]
           const Icon = cardMeta?.icon ?? ShieldCheck
+          const moduleTitle = cardMeta?.title ?? workspaceTabTitles[module]
+          const allowTitleWrap = ['code', 'supply', 'pipeline', 'multimodal'].includes(module)
           const tone = isReady && isSkipped ? evidenceModuleTones.pending : isFailed ? evidenceModuleTones.failed : evidenceModuleTones.completed
           const statusLabel = isReady
             ? isSkipped
@@ -2266,8 +2268,8 @@ function ModuleLaunchGrid({
                     <span className={cn('grid size-8 shrink-0 place-items-center rounded-md border', tone.iconWrap)}>
                       <Icon className={cn('size-[18px]', tone.icon)} />
                     </span>
-                    <span className='min-w-0 flex-1 whitespace-normal break-words text-card-title leading-5 text-slate-100'>
-                      {cardMeta?.title ?? workspaceTabTitles[module]}
+                    <span className={cn('min-w-0 flex-1 !text-[17px] !font-bold leading-5 text-slate-100 [word-break:keep-all]', allowTitleWrap ? 'whitespace-normal' : 'whitespace-nowrap')}>
+                      {moduleTitle}
                     </span>
                     <span className={cn('inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-bold leading-none', tone.badge)}>
                       {statusLabel}
