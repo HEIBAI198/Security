@@ -322,7 +322,7 @@ type ReachabilityAnalysisItem = {
   sourceFiles: string[]
   severity: SecuritySeverity
   riskScore: number
-  status: 'reachable' | 'pending'
+  status: ReachabilityStatus
   evidence: {
     codeRefs: number
     entryHits: number
@@ -335,6 +335,7 @@ type ReachabilityAnalysisItem = {
   rawEvidence: string[]
 }
 type EvidenceRecommendationPriority = '高' | '中' | '低'
+type ReachabilityStatus = 'reachable' | 'triageable' | 'pending' | 'unreachable' | 'unknown'
 type EvidenceRecommendation = {
   id: string
   title: string
@@ -2219,7 +2220,7 @@ function ModuleLaunchGrid({
           </Button>
         )}
       </div>
-      <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3'>
         {modules.map((module, index) => {
           const step = moduleLaunchStep(module, stepByModule)
           const isReady = analysisStarted && !scanRunning
@@ -2253,7 +2254,7 @@ function ModuleLaunchGrid({
                 type='button'
                 variant='outline'
                 className={cn(
-                  'group relative h-[108px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-slate-400/15 bg-slate-950/70 px-4 py-3 text-left shadow-[0_14px_32px_rgba(2,6,23,0.24),inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300/30 hover:bg-slate-900/80 hover:shadow-[0_18px_38px_rgba(2,6,23,0.32),inset_0_1px_0_rgba(255,255,255,0.06)] active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
+                  'group relative h-[132px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-slate-400/15 bg-slate-950/70 px-5 py-4 text-left shadow-[0_8px_8px_rgba(2,6,23,0.22)] backdrop-blur transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300/30 hover:bg-slate-900/80 hover:shadow-[0_8px_8px_rgba(2,6,23,0.3)] active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
                   isCompleted && 'hover:border-emerald-300/35',
                   isReady && isSkipped && 'hover:border-amber-300/35',
                   isFailed && 'hover:border-red-300/35'
@@ -2263,20 +2264,20 @@ function ModuleLaunchGrid({
               >
                 <span className={cn('absolute inset-y-0 left-0 w-[3px]', tone.line)} />
                 <span className={cn('absolute -right-8 -top-10 size-24 rounded-full blur-2xl opacity-20 transition-opacity duration-200 group-hover:opacity-30', tone.glow)} />
-                <span className='flex min-w-0 flex-1 flex-col items-start gap-3'>
-                  <span className='flex w-full min-w-0 items-start gap-2'>
-                    <span className={cn('grid size-8 shrink-0 place-items-center rounded-md border', tone.iconWrap)}>
-                      <Icon className={cn('size-[18px]', tone.icon)} />
+                <span className='flex h-full min-w-0 flex-1 flex-col'>
+                  <span className='grid min-w-0 grid-cols-[44px_minmax(0,1fr)_auto] items-start gap-3'>
+                    <span className={cn('grid size-11 shrink-0 place-items-center rounded-md border', tone.iconWrap)}>
+                      <Icon className={cn('size-5', tone.icon)} />
                     </span>
-                    <span className={cn('min-w-0 flex-1 !text-[17px] !font-bold leading-5 text-slate-100 [word-break:keep-all]', allowTitleWrap ? 'whitespace-normal' : 'whitespace-nowrap')}>
+                    <span className={cn('min-w-0 pt-1 !text-[18px] !font-extrabold leading-[1.15] text-slate-50 [word-break:keep-all]', allowTitleWrap ? 'line-clamp-2 whitespace-normal' : 'truncate whitespace-nowrap')} title={moduleTitle}>
                       {moduleTitle}
                     </span>
-                    <span className={cn('inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-bold leading-none', tone.badge)}>
+                    <span className={cn('inline-flex h-7 shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-3 text-[13px] font-extrabold leading-none', tone.badge)}>
                       {statusLabel}
                     </span>
                   </span>
                   {missingChips.length ? (
-                    <span className='flex flex-wrap gap-1.5 pl-10'>
+                    <span className='mt-auto flex flex-wrap gap-2 pl-14'>
                       {missingChips.map((chip) => (
                         <span key={chip} className={cn('inline-flex h-6 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold leading-none', tone.chip)}>
                           {chip}
@@ -3084,7 +3085,8 @@ function SupplyReachabilityPanel({
     () => buildReachabilityItems(dependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
     [dependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
   )
-  const [filter, setFilter] = useState<'all' | 'reachable' | 'pending' | 'critical'>('all')
+  const [reachabilityFilter, setReachabilityFilter] = useState<ReachabilityStatus | 'all'>('all')
+  const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
   const [selectedDependencyId, setSelectedDependencyId] = useState('')
   const [activeEvidence, setActiveEvidence] = useState('dependency')
   const [scanning, setScanning] = useState(false)
@@ -3098,12 +3100,18 @@ function SupplyReachabilityPanel({
     reachabilityItems.find((item) => item.id === selectedDependencyId) ??
     reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
     reachabilityItems[0]
-  const filteredItems = reachabilityItems.filter((item) => {
-    if (filter === 'reachable') return item.status === 'reachable'
-    if (filter === 'pending') return item.status === 'pending'
-    if (filter === 'critical') return item.severity === 'critical'
-    return true
-  })
+  const reachabilityOptions = useMemo(
+    () => reachabilityStatusOrder.filter((status) => reachabilityItems.some((item) => item.status === status)),
+    [reachabilityItems]
+  )
+  const severityOptions = useMemo(
+    () => severityOrder.filter((severity) => reachabilityItems.some((item) => item.severity === severity)),
+    [reachabilityItems]
+  )
+  const filteredItems = reachabilityItems.filter((item) =>
+    (reachabilityFilter === 'all' || item.status === reachabilityFilter) &&
+    (severityFilter === 'all' || item.severity === severityFilter)
+  )
   const visibleItems = filteredItems.slice(0, 8)
   const pathSteps = [
     { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
@@ -3207,28 +3215,34 @@ function SupplyReachabilityPanel({
         <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
           <CardHeader className='pb-3'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
-              <CardTitle className='text-base text-slate-100'>高风险依赖</CardTitle>
-              <div className='flex flex-wrap gap-1.5'>
-                {[
-                  ['all', '全部'],
-                  ['reachable', '已可达'],
-                  ['pending', '待研判'],
-                  ['critical', '严重'],
-                ].map(([value, label]) => (
+              <CardTitle className='text-section-title text-slate-100'>高风险依赖</CardTitle>
+              <div className='flex flex-wrap items-center justify-end gap-3'>
+                <div className='flex flex-wrap gap-1.5'>
+                {(['all', ...reachabilityOptions] as const).map((value) => (
                   <button
                     key={value}
                     type='button'
                     className={cn(
-                      'rounded-full border px-2.5 py-1 text-xs transition-colors',
-                      filter === value
+                      'inline-flex h-7 items-center whitespace-nowrap rounded-full border px-2.5 text-[13px] font-bold transition-colors',
+                      reachabilityFilter === value
                         ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
-                        : 'border-slate-400/15 bg-slate-900/50 text-slate-400 hover:border-slate-300/30 hover:text-slate-200'
+                        : 'border-slate-400/15 bg-slate-900/50 text-slate-300 hover:border-slate-300/30 hover:text-slate-100'
                     )}
-                    onClick={() => setFilter(value as typeof filter)}
+                    onClick={() => setReachabilityFilter(value)}
                   >
-                    {label}
+                    {value === 'all' ? '全部' : reachabilityStatusLabel(value)}
                   </button>
                 ))}
+                </div>
+                <Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}>
+                  <SelectTrigger size='sm' className='h-7 min-w-[112px] border-slate-400/15 bg-slate-900/50 text-slate-100'>
+                    <SelectValue placeholder='全部等级' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>全部等级</SelectItem>
+                    {severityOptions.map((severity) => <SelectItem key={severity} value={severity}>{severityLabel(severity)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </CardHeader>
@@ -3749,17 +3763,29 @@ function SeverityPill({ severity }: { severity: SecuritySeverity }) {
   )
 }
 
-function ReachabilityStatePill({ state }: { state: 'reachable' | 'pending' }) {
+const reachabilityStatusOrder: ReachabilityStatus[] = ['reachable', 'triageable', 'pending', 'unreachable', 'unknown']
+const severityOrder: SecuritySeverity[] = ['critical', 'high', 'medium', 'low']
+
+function reachabilityStatusLabel(state: ReachabilityStatus) {
+  if (state === 'reachable') return '已可达'
+  if (state === 'triageable') return '可研判'
+  if (state === 'pending') return '待研判'
+  if (state === 'unreachable') return '不可达'
+  return '未知'
+}
+
+function reachabilityStatusClass(state: ReachabilityStatus) {
+  if (state === 'reachable') return 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
+  if (state === 'triageable') return 'border-cyan-400/35 bg-cyan-500/10 text-cyan-200'
+  if (state === 'pending') return 'border-amber-400/35 bg-amber-500/10 text-amber-200'
+  if (state === 'unreachable') return 'border-red-400/35 bg-red-500/10 text-red-200'
+  return 'border-slate-400/25 bg-slate-500/10 text-slate-300'
+}
+
+function ReachabilityStatePill({ state }: { state: ReachabilityStatus }) {
   return (
-    <span
-      className={cn(
-        'rounded-full border px-2 py-0.5 text-xs font-medium',
-        state === 'reachable'
-          ? 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
-          : 'border-amber-400/35 bg-amber-500/10 text-amber-200'
-      )}
-    >
-      {state === 'reachable' ? '已可达' : '待研判'}
+    <span className={cn('inline-flex h-[26px] min-w-[44px] shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-2.5 text-[13px] font-bold leading-none', reachabilityStatusClass(state))}>
+      {reachabilityStatusLabel(state)}
     </span>
   )
 }
@@ -3810,8 +3836,19 @@ function riskGaugeTone(severity: SecuritySeverity) {
   }
 }
 
-function dependencyReachabilityState(dependency: SecurityDependency): 'reachable' | 'pending' {
+function dependencyReachabilityState(dependency: SecurityDependency): ReachabilityStatus {
   const reachability = dependency.reachability
+  const rawStatus = String(
+    (reachability as Record<string, unknown> | undefined)?.status ??
+    (reachability as Record<string, unknown> | undefined)?.reachabilityStatus ??
+    (reachability as Record<string, unknown> | undefined)?.triageStatus ??
+    ''
+  ).toLowerCase()
+  if (['reachable', 'confirmed', '已可达'].includes(rawStatus)) return 'reachable'
+  if (['triageable', '可研判'].includes(rawStatus)) return 'triageable'
+  if (['pending', '待研判'].includes(rawStatus)) return 'pending'
+  if (['unreachable', '不可达'].includes(rawStatus)) return 'unreachable'
+  if (['unknown', '未知'].includes(rawStatus)) return 'unknown'
   const codeEvidence =
     Boolean(reachability?.imported) ||
     Boolean(reachability?.called) ||
