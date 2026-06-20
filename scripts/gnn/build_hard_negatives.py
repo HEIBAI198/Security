@@ -56,6 +56,15 @@ def _with_hard_negative_source(record: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
+def _normalize_keywords(values: list[str] | None) -> list[str]:
+    keyword_values = DEFAULT_KEYWORDS if values is None else values
+    return [
+        normalized
+        for keyword in keyword_values
+        if (normalized := str(keyword).strip().casefold())
+    ]
+
+
 def build_hard_negatives(
     negative_path: str | Path,
     output_path: str | Path,
@@ -66,10 +75,7 @@ def build_hard_negatives(
     if limit < 0:
         raise ValueError("limit must be non-negative")
 
-    keyword_values = DEFAULT_KEYWORDS if keywords is None else keywords
-    normalized_keywords = [
-        keyword.casefold() for keyword in keyword_values if keyword.casefold()
-    ]
+    normalized_keywords = _normalize_keywords(keywords)
     records: list[dict[str, Any]] = []
     summary = {"read": 0, "written": 0, "skipped_limit": 0}
 

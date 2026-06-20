@@ -96,6 +96,59 @@ class NegativeBuilderTests(unittest.TestCase):
             self.assertEqual(summary["excluded_positive"], 1)
             self.assertEqual(packages, {("npm", "alpha"), ("pypi", "first-pkg")})
 
+    def test_missing_positive_path_fails_fast(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metadata = root / "metadata.jsonl"
+            output = root / "negatives.jsonl"
+            metadata.write_text(
+                json.dumps({"ecosystem": "npm", "package": "safe-lib"}) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(FileNotFoundError):
+                build_ecosystem_negatives(
+                    metadata,
+                    root / "missing-positives.jsonl",
+                    output,
+                )
+
+    def test_blank_package_falls_back_to_name_or_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metadata = root / "metadata.jsonl"
+            positives = root / "positives.jsonl"
+            output = root / "negatives.jsonl"
+            metadata.write_text(
+                "\n".join(
+                    json.dumps(item)
+                    for item in [
+                        {
+                            "ecosystem": "npm",
+                            "package": " ",
+                            "name": "real-name",
+                        },
+                        {
+                            "ecosystem": "npm",
+                            "package": " ",
+                            "id": "pkg:npm/id-name@1.0.0",
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            positives.write_text("", encoding="utf-8")
+
+            summary = build_ecosystem_negatives(metadata, positives, output)
+
+            rows = [
+                json.loads(line)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(summary["written"], 2)
+            self.assertEqual({row["package"] for row in rows}, {"id-name", "real-name"})
+
     def test_builds_hard_negatives_from_sensitive_terms(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -132,6 +185,33 @@ class NegativeBuilderTests(unittest.TestCase):
             self.assertEqual(summary["written"], 1)
             self.assertEqual(rows[0]["package"], "token-helper")
             self.assertIn("hard_negative", rows[0]["evidence_sources"])
+
+    def test_hard_negative_keywords_are_stripped_before_matching(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            negatives = root / "negatives.jsonl"
+            output = root / "hard.jsonl"
+            negatives.write_text(
+                json.dumps(
+                    {
+                        "ecosystem": "npm",
+                        "package": "token-helper",
+                        "text": "helper",
+                        "label": 0,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = build_hard_negatives(negatives, output, keywords=[" token ", 123])
+
+            rows = [
+                json.loads(line)
+                for line in output.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(summary["written"], 1)
+            self.assertEqual(rows[0]["package"], "token-helper")
 
     def test_builds_hard_negatives_with_default_keywords_without_duplicate_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:

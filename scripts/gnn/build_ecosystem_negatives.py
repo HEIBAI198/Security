@@ -35,11 +35,29 @@ def _split_group_key(value: str) -> tuple[str, str]:
     return ecosystem, package
 
 
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if isinstance(value, str):
+            if value.strip():
+                return value
+            continue
+        if value is not None:
+            return value
+    return ""
+
+
 def _package_identity(record: dict[str, Any]) -> tuple[str, str] | None:
-    group_ecosystem, group_package = _split_group_key(package_group_key(record))
-    ecosystem = normalize_ecosystem(record.get("ecosystem") or group_ecosystem)
+    identity_record = {
+        key: value
+        for key, value in record.items()
+        if key != "package" or _first_present(value)
+    }
+    group_ecosystem, group_package = _split_group_key(package_group_key(identity_record))
+    ecosystem = normalize_ecosystem(
+        _first_present(record.get("ecosystem"), group_ecosystem)
+    )
     package = normalize_package_name(
-        record.get("package") or record.get("name") or group_package,
+        _first_present(record.get("package"), record.get("name"), group_package),
         ecosystem,
     )
     if not package:
@@ -94,7 +112,7 @@ def _negative_record(
 def _load_positive_keys(path: str | Path) -> set[tuple[str, str]]:
     positive_path = Path(path)
     if not positive_path.exists():
-        return set()
+        raise FileNotFoundError(positive_path)
 
     keys: set[tuple[str, str]] = set()
     for record in read_jsonl(positive_path):
