@@ -7951,8 +7951,8 @@ function LogsPanel({
   const [trend, setTrend] = useState<RealtimeLogTrendPoint[]>([])
   const [realtimeBusy, setRealtimeBusy] = useState(false)
   const [activeLogEventId, setActiveLogEventId] = useState<string | null>(null)
-  const [signalFilter, setSignalFilter] = useState('all')
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
+  const [activeEvidenceNode, setActiveEvidenceNode] = useState('event')
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
@@ -7995,7 +7995,6 @@ function LogsPanel({
     : logs
 
   const filteredLogs = displayedLogs.filter((log) =>
-    (signalFilter === 'all' || log.signal === signalFilter) &&
     (severityFilter === 'all' || log.severity === severityFilter)
   )
   const activeLog = filteredLogs.find((log) => (log.id ?? `${log.time}-${log.event}`) === activeLogEventId) ?? filteredLogs[0]
@@ -8005,6 +8004,9 @@ function LogsPanel({
   useEffect(() => {
     if (!activeLogEventId && filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`)
   }, [activeLogEventId, filteredLogs])
+  useEffect(() => {
+    if (filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`)
+  }, [severityFilter])
 
   async function refreshRealtimeLogs(showToast = true) {
     setRealtimeBusy(true)
@@ -8232,12 +8234,14 @@ function LogsPanel({
           </CardContent>
         </Card>
 
+        <Card className={moduleCardClass}><CardHeader><CardTitle className='text-section-title !text-[20px]'><Route className='size-5 text-cyan-300' />运行期证据链</CardTitle></CardHeader><CardContent><div className='flex min-w-max items-center gap-2 overflow-x-auto pb-2'>{[['source','日志来源'],['rule','规则命中'],['event','异常事件'],['attack','攻击链节点'],['action','处置建议']].map(([id,label], index) => <div key={id} className='flex items-center gap-2'>{index ? <span className={cn('h-px w-8 bg-slate-600', activeEvidenceNode === id && 'bg-cyan-300')} /> : null}<button type='button' onClick={() => { setActiveEvidenceNode(id); if (filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`) }} className={cn('w-28 rounded-md border p-3 text-center transition hover:-translate-y-0.5', activeEvidenceNode === id ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/15 bg-slate-900/55')}><div className='text-sm font-bold text-slate-100'>{label}</div><div className='mt-2 text-xs text-slate-300'>{id === 'event' ? activeLog?.event || '待识别' : id === 'rule' ? activeLog?.signal || '待命中' : id === 'source' ? activeLog?.source || '待接入' : id === 'attack' ? '外联通信' : '核查来源'}</div></button></div>)}</div></CardContent></Card>
+
         <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-center justify-between gap-3'><CardTitle className='flex items-center gap-2 text-section-title !text-[20px]'>
               <ShieldAlert className='size-4 text-red-600' />
               运行期风险事件
-            </CardTitle><div className='flex flex-wrap gap-1.5'>{['all', ...Array.from(new Set(displayedLogs.map((log) => log.signal)))].slice(0, 5).map((value) => <button key={value} type='button' onClick={() => setSignalFilter(value)} className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', signalFilter === value ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-slate-400/15 text-slate-300')}>{value === 'all' ? '全部' : value}</button>)}<Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}><SelectTrigger size='sm' className='h-7 w-[100px]'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='all'>全部等级</SelectItem><SelectItem value='high'>高危</SelectItem><SelectItem value='medium'>中危</SelectItem><SelectItem value='low'>低危</SelectItem></SelectContent></Select></div></div>
+            </CardTitle><Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}><SelectTrigger size='sm' className='h-8 w-[112px]'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='all'>全部等级</SelectItem><SelectItem value='high'>高危</SelectItem><SelectItem value='medium'>中危</SelectItem><SelectItem value='low'>低危</SelectItem></SelectContent></Select></div>
           </CardHeader>
           <CardContent>
             <Table>
