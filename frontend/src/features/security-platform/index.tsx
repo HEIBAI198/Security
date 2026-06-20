@@ -3743,7 +3743,7 @@ function SeverityPill({ severity }: { severity: SecuritySeverity }) {
     low: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200',
   }[severity]
   return (
-    <span className={cn('rounded-full border px-2 py-0.5 text-xs font-medium', classes)}>
+    <span className={cn('inline-flex h-[26px] min-w-[44px] shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-[10px] text-[13px] font-bold leading-none', classes)}>
       {severityLabel(severity)}
     </span>
   )
