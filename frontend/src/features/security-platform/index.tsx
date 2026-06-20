@@ -333,7 +333,7 @@ type ReachabilityAnalysisItem = {
   rawEvidence: string[]
 }
 type EvidenceRecommendationPriority = '高' | '中' | '低'
-type ReachabilityStatus = 'reachable' | 'triageable' | 'pending' | 'unreachable' | 'unknown'
+type ReachabilityStatus = 'reachable' | 'pending'
 type EvidenceRecommendation = {
   id: string
   title: string
@@ -3078,13 +3078,25 @@ function SupplyReachabilityPanel({
     () => [...(workspace.dependencies ?? [])].sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0)),
     [workspace.dependencies]
   )
+  const riskDependencies = useMemo(
+    () =>
+      dependencies.filter(
+        (dependency) =>
+          dependency.risk >= 50 ||
+          (dependency.signals?.length ?? 0) > 0 ||
+          (dependency.vulnerabilities?.length ?? 0) > 0 ||
+          dominantVexStatus(dependency) === 'affected'
+      ),
+    [dependencies]
+  )
   const reachability = buildReachabilityViewModel(workspace)
   const reachabilityItems = useMemo(
-    () => buildReachabilityItems(dependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
-    [dependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
+    () => buildReachabilityItems(riskDependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
+    [riskDependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
   )
   const [reachabilityFilter, setReachabilityFilter] = useState<ReachabilityStatus | 'all'>('all')
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
+  const [showAllRiskRows, setShowAllRiskRows] = useState(false)
   const [selectedDependencyId, setSelectedDependencyId] = useState('')
   const [activeEvidence, setActiveEvidence] = useState('dependency')
   const [scanning, setScanning] = useState(false)
@@ -3098,12 +3110,12 @@ function SupplyReachabilityPanel({
     reachabilityItems.find((item) => item.id === selectedDependencyId) ??
     reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
     reachabilityItems[0]
-  const allRows = reachabilityItems
+  const baseRows = reachabilityItems
   const reachabilityOptions = reachabilityStatusOrder
   const severityOptions = severityOrder
   const filteredRows = useMemo(
     () =>
-      allRows.filter((item) => {
+      baseRows.filter((item) => {
         const itemReachability = normalizeReachabilityStatus(item.status)
         const itemSeverity = normalizeSeverity(item.severity)
         const matchesReachability = reachabilityFilter === 'all' || itemReachability === reachabilityFilter
@@ -3111,8 +3123,13 @@ function SupplyReachabilityPanel({
 
         return matchesReachability && matchesSeverity
       }),
-    [allRows, reachabilityFilter, severityFilter]
+    [baseRows, reachabilityFilter, severityFilter]
   )
+  const hasMoreRiskRows = filteredRows.length > 12
+  const visibleRows = showAllRiskRows || !hasMoreRiskRows ? filteredRows : filteredRows.slice(0, 12)
+  useEffect(() => {
+    setShowAllRiskRows(false)
+  }, [reachabilityFilter, severityFilter])
   useEffect(() => {
     if (!import.meta.env.DEV) return
 
@@ -3126,14 +3143,14 @@ function SupplyReachabilityPanel({
     console.debug('[ReachabilityFilter]', {
       reachabilityFilter,
       severityFilter,
-      allRowsCount: allRows.length,
+      baseRowsCount: baseRows.length,
       filteredRowsCount: filteredRows.length,
-      allStatuses: countBy(allRows, (row) => normalizeReachabilityStatus(row.status)),
+      baseStatuses: countBy(baseRows, (row) => normalizeReachabilityStatus(row.status)),
       filteredStatuses: countBy(filteredRows, (row) => normalizeReachabilityStatus(row.status)),
-      allSeverities: countBy(allRows, (row) => normalizeSeverity(row.severity)),
+      baseSeverities: countBy(baseRows, (row) => normalizeSeverity(row.severity)),
       filteredSeverities: countBy(filteredRows, (row) => normalizeSeverity(row.severity)),
     })
-  }, [allRows, filteredRows, reachabilityFilter, severityFilter])
+  }, [baseRows, filteredRows, reachabilityFilter, severityFilter])
   const pathSteps = [
     { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
     { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
@@ -3281,7 +3298,7 @@ function SupplyReachabilityPanel({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredRows.length ? filteredRows.map((item) => {
+                  {visibleRows.length ? visibleRows.map((item) => {
                     const selected = item.id === selectedItem?.id
                     return (
                       <TableRow
@@ -3313,6 +3330,13 @@ function SupplyReachabilityPanel({
                 </TableBody>
               </Table>
             </div>
+            {hasMoreRiskRows ? (
+              <div className='mt-3 flex justify-center'>
+                <Button variant='ghost' size='sm' onClick={() => setShowAllRiskRows((current) => !current)}>
+                  {showAllRiskRows ? '收起' : `展开全部 ${filteredRows.length} 条`}
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
@@ -3784,16 +3808,13 @@ function SeverityPill({ severity }: { severity: SecuritySeverity }) {
   )
 }
 
-const reachabilityStatusOrder: ReachabilityStatus[] = ['reachable', 'triageable', 'pending', 'unreachable', 'unknown']
+const reachabilityStatusOrder: ReachabilityStatus[] = ['reachable', 'pending']
 const severityOrder: SecuritySeverity[] = ['critical', 'high', 'medium', 'low']
 
 function normalizeReachabilityStatus(raw: unknown): ReachabilityStatus {
   const value = String(raw ?? '').trim().toLowerCase()
   if (['reachable', 'confirmed', '已可达'].includes(value)) return 'reachable'
-  if (['triageable', '可研判'].includes(value)) return 'triageable'
-  if (['pending', '待研判'].includes(value)) return 'pending'
-  if (['unreachable', '不可达'].includes(value)) return 'unreachable'
-  return 'unknown'
+  return 'pending'
 }
 
 function normalizeSeverity(raw: unknown): SecuritySeverity {
@@ -3806,18 +3827,12 @@ function normalizeSeverity(raw: unknown): SecuritySeverity {
 
 function reachabilityStatusLabel(state: ReachabilityStatus) {
   if (state === 'reachable') return '已可达'
-  if (state === 'triageable') return '可研判'
-  if (state === 'pending') return '待研判'
-  if (state === 'unreachable') return '不可达'
-  return '未知'
+  return '待研判'
 }
 
 function reachabilityStatusClass(state: ReachabilityStatus) {
   if (state === 'reachable') return 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
-  if (state === 'triageable') return 'border-cyan-400/35 bg-cyan-500/10 text-cyan-200'
-  if (state === 'pending') return 'border-amber-400/35 bg-amber-500/10 text-amber-200'
-  if (state === 'unreachable') return 'border-red-400/35 bg-red-500/10 text-red-200'
-  return 'border-slate-400/25 bg-slate-500/10 text-slate-300'
+  return 'border-amber-400/35 bg-amber-500/10 text-amber-200'
 }
 
 function ReachabilityStatePill({ state }: { state: ReachabilityStatus }) {
