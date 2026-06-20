@@ -7444,7 +7444,7 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   const [requireSignature, setRequireSignature] = useState(true)
   const [allowSelfHostedRunner, setAllowSelfHostedRunner] = useState(false)
   const [scanning, setScanning] = useState(false)
-  const [selectedNode, setSelectedNode] = useState('gate')
+  const [selectedNode, setSelectedNode] = useState('artifact')
   const [selectedCheck, setSelectedCheck] = useState<string | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
   const activeResult = result ?? (import.meta.env.DEV ? artifactTrustPreviewResult : undefined)
@@ -7481,24 +7481,25 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
       </div>
       <div className='flex flex-wrap gap-2'>
         <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}重新验证</Button>
-        <Button variant='outline' size='sm' onClick={() => setConfigOpen(true)}><Upload />上传证据</Button>
+        <Button variant='outline' size='sm' onClick={() => setSelectedNode('artifact')}><Upload />上传证据</Button>
         <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
       </div>
     </section>
 
     <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,45fr)_minmax(250px,25fr)]'>
-      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col justify-between p-5'>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
+        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'><Upload className='size-5 text-cyan-300' />证据输入</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待上传'}</span></div>
+        <div className='mt-5 grid gap-3'><Input type='file' className={fileInputClass} onChange={event => setArtifactFile(event.target.files?.[0] ?? null)} /><Input type='file' accept='.json,.jsonl,application/json' className={fileInputClass} onChange={event => setAttestationFile(event.target.files?.[0] ?? null)} /></div>
+        <div className='mt-5 grid grid-cols-2 gap-2'>{artifactTrustNodes(activeResult, score).slice(0, 6).map(node => <button key={node.id} type='button' onClick={() => setSelectedNode(node.id)} className={cn('rounded-md border p-2 text-left transition hover:-translate-y-0.5', selectedNode === node.id ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-slate-900/55')}><div className='flex items-center justify-between gap-2'><span className='text-sm font-bold text-slate-100'>{node.label}</span><node.icon className={cn('size-4', node.className)} /></div><span className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</span></button>)}</div>
+      </CardContent></Card>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
         <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>发布门禁</span><ArtifactGateBadge score={score} /></div>
         <div className='flex flex-1 items-center justify-center'><ArtifactScoreRing score={score} /></div>
-        <div className='grid grid-cols-3 gap-2 text-center'><GateMetric label='检查项' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败/缺失' value={failedChecks.length} /></div>
-      </CardContent></Card>
-      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='p-5'>
-        <div className='flex items-center justify-between'><h2 className='text-section-title !text-[20px]'><Route className='size-5 text-cyan-300' />可信验证链路</h2><span className='meta-chip-dark'>{activeResult?.artifact ?? '待上传'}</span></div>
-        <div className='mt-8 overflow-x-auto pb-3'><div className='flex min-w-max items-center gap-2 px-2'>{nodes.map((node, index) => <div key={node.id} className='flex items-center gap-2'>{index ? <span className={cn('h-px w-7 bg-slate-600', index <= nodes.findIndex((item) => item.id === selectedNode) && 'bg-cyan-300')} /> : null}<button type='button' onClick={() => setSelectedNode(node.id)} className={cn('w-28 rounded-md border p-3 text-center transition hover:-translate-y-0.5', selectedNode === node.id ? 'border-cyan-300/60 bg-cyan-400/10' : 'border-slate-400/15 bg-slate-900/60')}><node.icon className={cn('mx-auto size-5', node.className)} /><div className='mt-2 text-sm font-bold text-slate-100'>{node.label}</div><div className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</div></button></div>)}</div></div>
-        <div className='mt-5 rounded-md border border-slate-400/10 bg-slate-900/55 p-3'><span className='text-label'>当前节点</span><div className='mt-1 text-card-title'>{nodes.find((node) => node.id === selectedNode)?.label}</div></div>
+        <div className='text-body text-center'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div>
+        <div className='mt-4 grid grid-cols-4 gap-2 text-center'><GateMetric label='检查' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败' value={failedChecks.length} /><GateMetric label='警告' value={checks.filter(check => check.status === 'warn').length} /></div>
       </CardContent></Card>
       <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='space-y-3 p-5'>
-        <h2 className='text-section-title !text-[20px]'>当前证据</h2>
+        <h2 className='text-section-title !text-[20px]'>当前证据 · {nodes.find((node) => node.id === selectedNode)?.label ?? 'Artifact'}</h2>
         <EvidenceField label='Artifact' value={artifactFile?.name ?? activeResult?.artifact} />
         <EvidenceField label='Digest' value={activeResult?.digest} code />
         <EvidenceField label='Repo' value={activeResult?.provenance.source_repo} />
