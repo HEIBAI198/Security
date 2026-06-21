@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -5,7 +6,11 @@ from pathlib import Path
 
 from scripts.gnn.train_package_risk import train_package_risk
 from scripts.gnn.train_graphsage_package_risk import train_graphsage_package_risk
+from scripts.gnn.train_pyg_graphsage_package_risk import train_pyg_graphsage_package_risk
 from supplyguard.gnn_risk import PackageRiskScorer
+
+
+HAS_TORCH_PYG = bool(importlib.util.find_spec("torch") and importlib.util.find_spec("torch_geometric"))
 
 
 class PackageRiskScorerTests(unittest.TestCase):
@@ -138,6 +143,15 @@ class PackageRiskScorerTests(unittest.TestCase):
             "\n".join(json.dumps(edge) for edge in edges) + "\n",
             encoding="utf-8",
         )
+
+    def _write_pyg_graphsage_fixture(self, data_dir: Path):
+        self._write_graphsage_fixture(data_dir)
+        splits = {
+            "train": ["pkg:npm:evil", "pkg:pypi:requests"],
+            "val": ["pkg:npm:token-stealer"],
+            "test": ["pkg:pypi:flask"],
+        }
+        (data_dir / "splits.json").write_text(json.dumps(splits), encoding="utf-8")
 
     def test_missing_model_uses_rule_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -304,6 +318,33 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertIn("gnn_confidence", result)
             self.assertIn("gnn_explanations", result)
             self.assertIn("similar_malicious_packages", result)
+
+    @unittest.skipUnless(HAS_TORCH_PYG, "torch/PyG not installed")
+    def test_valid_pyg_artifact_wins_loader_priority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "features"
+            model_dir = root / "model"
+            data_dir.mkdir()
+            self._write_pyg_graphsage_fixture(data_dir)
+            train_pyg_graphsage_package_risk(
+                data_dir,
+                model_dir,
+                epochs=2,
+                hidden_dim=4,
+                dropout=0.0,
+                random_state=17,
+            )
+            train_graphsage_package_risk(data_dir, model_dir, epochs=4, hidden_dim=4, random_state=11)
+
+            scorer = PackageRiskScorer(model_dir)
+            result = scorer.score_package("npm", "evil", "1.0.0", ["postinstall token"], [])
+
+            self._assert_common_fields(result)
+            self.assertTrue(result["model_available"])
+            self.assertEqual(result["gnn_model_type"], "pyg_graphsage_package_risk")
+            self.assertGreaterEqual(result["gnn_score"], 0.0)
+            self.assertLessEqual(result["gnn_score"], 1.0)
 
 
 if __name__ == "__main__":
