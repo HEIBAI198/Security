@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import Any
 
 import networkx as nx
@@ -11,6 +10,9 @@ from .graph_rag_retrievers import (
     graph_path_text,
     graph_risk_score,
     query_tokens,
+    safe_float,
+    safe_list,
+    safe_str_list,
 )
 
 
@@ -45,10 +47,12 @@ def rank_graph_rag_candidates(
     max_paths: int,
     hops: int,
 ) -> dict[str, list[dict[str, Any]]]:
-    nodes = [node for node in graph_payload.get("nodes", []) if isinstance(node, dict)]
-    edges = [edge for edge in graph_payload.get("edges", []) if isinstance(edge, dict)]
+    graph_payload = graph_payload if isinstance(graph_payload, dict) else {}
+    channels = channels if isinstance(channels, dict) else {}
+    nodes = [node for node in safe_list(graph_payload.get("nodes")) if isinstance(node, dict)]
+    edges = [edge for edge in safe_list(graph_payload.get("edges")) if isinstance(edge, dict)]
     attack_paths = [
-        path for path in graph_payload.get("attack_paths", []) if isinstance(path, dict)
+        path for path in safe_list(graph_payload.get("attack_paths")) if isinstance(path, dict)
     ]
     node_by_id = {str(node.get("id")): node for node in nodes if node.get("id")}
     edge_by_id = {str(edge.get("id")): edge for edge in edges if edge.get("id")}
@@ -66,7 +70,14 @@ def rank_graph_rag_candidates(
     if not seed_scores:
         seed_scores = {
             str(node.get("id")): graph_risk_score(node)
-            for node in sorted(nodes, key=graph_risk_score, reverse=True)[: max(1, max_nodes // 2)]
+            for node in sorted(
+                nodes,
+                key=lambda node: (
+                    -graph_risk_score(node),
+                    str(node.get("id") or ""),
+                    str(node.get("label") or ""),
+                ),
+            )[: max(1, max_nodes // 2)]
             if node.get("id")
         }
         why_by_node = {node_id: {"risk fallback seed"} for node_id in seed_scores}
@@ -81,23 +92,42 @@ def rank_graph_rag_candidates(
 
     ranked_nodes = sorted(
         (node_by_id[node_id] for node_id in expanded_ids if node_id in node_by_id),
-        key=lambda node: _ranking_score(node, tokens, seed_scores, pagerank),
-        reverse=True,
+        key=lambda node: (
+            -_ranking_score(node, tokens, seed_scores, pagerank),
+            str(node.get("id") or ""),
+            str(node.get("label") or ""),
+        ),
     )[:max_nodes]
     ranked_node_ids = {str(node.get("id")) for node in ranked_nodes}
-    ranked_path_ids = _channel_path_ids(channels)
 
     selected_nodes = [
         _with_node_reasons(node, tokens, seed_scores, pagerank, why_by_node)
         for node in ranked_nodes
     ]
+    path_candidates = _rank_attack_paths(attack_paths, ranked_node_ids, channels, tokens, intent)[:max_paths]
+    ranked_path_ids = _channel_path_ids(channels) | {
+        str(path.get("id")) for path in path_candidates if path.get("id")
+    }
+    selected_path_edge_ids = {
+        edge_id
+        for path in path_candidates
+        for edge_id in safe_str_list(path.get("edge_ids"))
+    }
     selected_edges = [
         _with_edge_reasons(edge, intent, ranked_path_ids, path_by_id)
-        for edge in _rank_edges(edges, ranked_node_ids, edge_by_id, intent, path_by_id, ranked_path_ids)[:max_edges]
+        for edge in _rank_edges(
+            edges,
+            ranked_node_ids,
+            edge_by_id,
+            intent,
+            path_by_id,
+            ranked_path_ids,
+            selected_path_edge_ids,
+        )[:max_edges]
     ]
     selected_paths = [
         _with_path_reasons(path, ranked_node_ids, channels, intent)
-        for path in _rank_attack_paths(attack_paths, ranked_node_ids, channels, tokens, intent)[:max_paths]
+        for path in path_candidates
     ]
 
     retrieval_trace = [
@@ -155,7 +185,7 @@ def _seed_scores(nodes: list[dict[str, Any]], tokens: set[str]) -> dict[str, flo
         matches = sum(1 for token in tokens if token in text)
         if matches:
             scores[node_id] = float(matches) + graph_risk_score(node) * 0.25 + graph_gnn_score(node) * 0.5
-    return dict(sorted(scores.items(), key=lambda item: item[1], reverse=True))
+    return dict(sorted(scores.items(), key=lambda item: (-item[1], item[0])))
 
 
 def _merge_channel_node_boosts(
@@ -166,18 +196,18 @@ def _merge_channel_node_boosts(
     for item in channels.get("keyword", []):
         if item.get("kind") == "node" and item.get("id"):
             node_id = str(item["id"])
-            seed_scores[node_id] = max(seed_scores.get(node_id, 0.0), float(item.get("score") or 0))
+            seed_scores[node_id] = max(seed_scores.get(node_id, 0.0), safe_float(item.get("score")))
             why_by_node.setdefault(node_id, set()).add("keyword channel match")
 
     for item in channels.get("risk", [])[:8]:
         if item.get("kind") == "node" and item.get("id"):
             node_id = str(item["id"])
-            seed_scores[node_id] = max(seed_scores.get(node_id, 0.0), float(item.get("score") or 0) * 0.5)
+            seed_scores[node_id] = max(seed_scores.get(node_id, 0.0), safe_float(item.get("score")) * 0.5)
             why_by_node.setdefault(node_id, set()).add("risk channel signal")
 
     for item in channels.get("attack_path", [])[:5]:
-        for node_id in item.get("node_ids", []) if isinstance(item.get("node_ids"), list) else []:
-            seed_scores[str(node_id)] = max(seed_scores.get(str(node_id), 0.0), float(item.get("score") or 0) * 0.25)
+        for node_id in safe_str_list(item.get("node_ids")):
+            seed_scores[str(node_id)] = max(seed_scores.get(str(node_id), 0.0), safe_float(item.get("score")) * 0.25)
             why_by_node.setdefault(str(node_id), set()).add("attack-path channel overlap")
 
 
@@ -186,16 +216,8 @@ def _expand_nodes(graph: nx.Graph, seeds: Any, hops: int) -> set[str]:
     for seed in seeds:
         if seed not in graph:
             continue
-        queue: deque[tuple[str, int]] = deque([(seed, 0)])
-        while queue:
-            node_id, depth = queue.popleft()
-            if node_id in expanded and depth > 0:
-                continue
-            expanded.add(node_id)
-            if depth >= hops:
-                continue
-            for neighbor in graph.neighbors(node_id):
-                queue.append((neighbor, depth + 1))
+        lengths = nx.single_source_shortest_path_length(graph, seed, cutoff=max(0, hops))
+        expanded.update(str(node_id) for node_id in lengths)
     return expanded
 
 
@@ -236,11 +258,18 @@ def _rank_edges(
     intent: str,
     path_by_id: dict[str, dict[str, Any]],
     ranked_path_ids: set[str],
+    selected_path_edge_ids: set[str],
 ) -> list[dict[str, Any]]:
     selected_edges = [
         edge_by_id.get(str(edge.get("id")), edge)
         for edge in edges
-        if str(edge.get("source")) in selected_node_ids and str(edge.get("target")) in selected_node_ids
+        if (
+            str(edge.get("id") or "") in selected_path_edge_ids
+            or (
+                str(edge.get("source")) in selected_node_ids
+                and str(edge.get("target")) in selected_node_ids
+            )
+        )
     ]
     return sorted(
         selected_edges,
@@ -267,8 +296,8 @@ def _edge_score(
     target = str(edge.get("target") or "")
     for path_id in ranked_path_ids:
         path = path_by_id.get(path_id, {})
-        edge_ids = {str(item) for item in path.get("edge_ids", [])}
-        node_ids = {str(item) for item in path.get("node_ids", [])}
+        edge_ids = set(safe_str_list(path.get("edge_ids")))
+        node_ids = set(safe_str_list(path.get("node_ids")))
         if edge_id and edge_id in edge_ids:
             score += 2.5
         elif source in node_ids and target in node_ids:
@@ -284,21 +313,21 @@ def _rank_attack_paths(
     intent: str,
 ) -> list[dict[str, Any]]:
     channel_scores = {
-        str(item.get("id")): float(item.get("score") or 0)
+        str(item.get("id")): safe_float(item.get("score"))
         for item in channels.get("attack_path", [])
         if item.get("id")
     }
     related = []
     for path in attack_paths:
         path_id = str(path.get("id") or "")
-        node_ids = {str(node_id) for node_id in path.get("node_ids", [])}
+        node_ids = set(safe_str_list(path.get("node_ids")))
         overlap = len(node_ids & selected_node_ids)
         lexical = sum(1 for token in tokens if token in graph_path_text(path))
         channel_score = channel_scores.get(path_id, 0.0)
         if overlap or lexical or channel_score:
             score = (
                 overlap * 10.0
-                + float(path.get("score") or 0) / 10.0
+                + safe_float(path.get("score")) / 10.0
                 + lexical
                 + channel_score
                 + (2.0 if intent == "attack_path" else 0.0)
@@ -342,7 +371,7 @@ def _with_edge_reasons(
     edge_id = str(edge.get("id") or "")
     for path_id in ranked_path_ids:
         path = path_by_id.get(path_id, {})
-        if edge_id and edge_id in {str(item) for item in path.get("edge_ids", [])}:
+        if edge_id and edge_id in set(safe_str_list(path.get("edge_ids"))):
             reasons.add("appears in recalled attack path")
             break
     return _copy_with_reasons(edge, reasons)
@@ -355,7 +384,7 @@ def _with_path_reasons(
     intent: str,
 ) -> dict[str, Any]:
     reasons = set()
-    node_ids = {str(node_id) for node_id in path.get("node_ids", [])}
+    node_ids = set(safe_str_list(path.get("node_ids")))
     overlap = len(node_ids & selected_node_ids)
     if overlap:
         reasons.add(f"overlaps {overlap} selected graph nodes")
@@ -364,7 +393,7 @@ def _with_path_reasons(
         reasons.add("recalled by attack-path channel")
     if intent == "attack_path":
         reasons.add("matches attack-path intent")
-    if float(path.get("score") or 0) > 0:
+    if safe_float(path.get("score")) > 0:
         reasons.add(f"path score {path.get('score')}")
     return _copy_with_reasons(path, reasons)
 

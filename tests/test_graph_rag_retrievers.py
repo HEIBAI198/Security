@@ -25,6 +25,27 @@ class GraphRagRetrieverTests(unittest.TestCase):
         self.assertTrue(channels["attack_path"])
         self.assertIn("embedding", channels)
 
+    def test_general_intent_does_not_recall_unrelated_scored_paths(self):
+        graph = {
+            "nodes": [],
+            "edges": [],
+            "attack_paths": [
+                {"id": "path:unrelated", "title": "unrelated chain", "score": 99, "node_ids": ["a", "b"]}
+            ],
+        }
+
+        channels = retrieve_channels(graph, "plain question", intent="general")
+
+        self.assertEqual(channels["attack_path"], [])
+
+    def test_malformed_payload_fields_return_empty_channels(self):
+        channels = retrieve_channels({"nodes": None, "edges": None, "attack_paths": None}, None, intent="general")
+
+        self.assertEqual(channels["keyword"], [])
+        self.assertEqual(channels["risk"], [])
+        self.assertEqual(channels["attack_path"], [])
+        self.assertEqual(channels["embedding"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

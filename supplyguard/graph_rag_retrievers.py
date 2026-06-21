@@ -28,9 +28,10 @@ def retrieve_channels(
     query: str,
     intent: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    nodes = [node for node in graph_payload.get("nodes", []) if isinstance(node, dict)]
+    graph_payload = graph_payload if isinstance(graph_payload, dict) else {}
+    nodes = [node for node in safe_list(graph_payload.get("nodes")) if isinstance(node, dict)]
     attack_paths = [
-        path for path in graph_payload.get("attack_paths", []) if isinstance(path, dict)
+        path for path in safe_list(graph_payload.get("attack_paths")) if isinstance(path, dict)
     ]
     tokens = query_tokens(query)
 
@@ -43,7 +44,7 @@ def retrieve_channels(
 
 
 def query_tokens(query: str) -> set[str]:
-    lowered = query.lower()
+    lowered = str(query or "").lower()
     tokens = {
         token.lower()
         for token in TOKEN_RE.findall(lowered)
@@ -71,14 +72,14 @@ def graph_path_text(path: dict[str, Any]) -> str:
         path.get("title"),
         path.get("description"),
         path.get("conclusion"),
-        json.dumps(path.get("node_ids") or [], ensure_ascii=False),
-        json.dumps(path.get("edge_ids") or [], ensure_ascii=False),
+        json.dumps(safe_str_list(path.get("node_ids")), ensure_ascii=False),
+        json.dumps(safe_str_list(path.get("edge_ids")), ensure_ascii=False),
     ]
     return " ".join(str(part) for part in parts if part is not None).lower()
 
 
 def graph_risk_score(node: dict[str, Any]) -> float:
-    score = float(node.get("score") or 0) / 100.0
+    score = safe_float(node.get("score")) / 100.0
     severity = SEVERITY_WEIGHT.get(str(node.get("risk") or "").lower(), 0.0)
     return max(score, severity)
 
@@ -99,6 +100,21 @@ def raw_properties(node: dict[str, Any]) -> dict[str, Any]:
     if isinstance(nested, dict):
         return nested
     return properties
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def safe_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def safe_str_list(value: Any) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
 
 
 def _keyword_channel(
@@ -136,7 +152,7 @@ def _keyword_channel(
                 {
                     "kind": "attack_path",
                     "id": path_id,
-                    "score": float(len(matches)) + float(path.get("score") or 0) / 100.0,
+                    "score": float(len(matches)) + safe_float(path.get("score")) / 100.0,
                     "matches": matches,
                     "reason": "keyword_match",
                 }
@@ -178,12 +194,12 @@ def _attack_path_channel(
         if not path_id:
             continue
         matches = sorted(token for token in tokens if token in graph_path_text(path))
-        score = float(path.get("score") or 0) / 100.0
+        score = safe_float(path.get("score")) / 100.0
         if matches:
             score += float(len(matches))
         if intent == "attack_path":
             score += 1.0
-        if matches or intent == "attack_path" or score > 0:
+        if matches or intent == "attack_path":
             candidates.append(
                 {
                     "kind": "attack_path",
@@ -191,8 +207,8 @@ def _attack_path_channel(
                     "score": score,
                     "matches": matches,
                     "reason": "attack_path_recall",
-                    "node_ids": [str(node_id) for node_id in path.get("node_ids", [])],
-                    "edge_ids": [str(edge_id) for edge_id in path.get("edge_ids", [])],
+                    "node_ids": safe_str_list(path.get("node_ids")),
+                    "edge_ids": safe_str_list(path.get("edge_ids")),
                 }
             )
     return sorted(candidates, key=lambda item: (-float(item["score"]), str(item["id"])))

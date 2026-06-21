@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def classify_graph_rag_intent(query: str) -> str:
-    text = query.lower()
+    text = str(query or "").lower()
     if any(word in text for word in ("攻击路径", "attack path", "path", "链路")):
         return "attack_path"
     if any(word in text for word in ("运行", "日志", "runtime", "log", "外联")):

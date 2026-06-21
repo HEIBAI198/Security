@@ -16,6 +16,9 @@ class GraphRagIntentTests(unittest.TestCase):
     def test_attack_path_question(self):
         self.assertEqual(classify_graph_rag_intent("解释这条攻击路径为什么高风险"), "attack_path")
 
+    def test_none_query_defaults_to_general(self):
+        self.assertEqual(classify_graph_rag_intent(None), "general")
+
 
 if __name__ == "__main__":
     unittest.main()
