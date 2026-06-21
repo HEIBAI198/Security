@@ -130,6 +130,8 @@ import {
   type SecurityAssistantResponse,
   type SecurityDependency,
   type SecurityFinding,
+  type SecurityGraphRagResult,
+  type SecurityGraphNode,
   type SecurityLogEvent,
   type SecurityPipelineStep,
   type SecuritySeverity,
@@ -2998,6 +3000,7 @@ function SupplyChainPanel({
                   </TableCell>
                   <TableCell>
                     <RiskBar value={dependency.risk} />
+                    <DependencyGnnBadge dependency={dependency} />
                   </TableCell>
                 </TableRow>
               )) : (
@@ -3065,6 +3068,28 @@ function DependencyVexBadge({ dependency }: { dependency: SecurityDependency }) 
   )
 }
 
+function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) {
+  if (typeof dependency.gnn_score !== 'number') {
+    return null
+  }
+  const score = Math.round(dependency.gnn_score * 100)
+  const tone =
+    dependency.gnn_label === 'high'
+      ? severityClasses.high
+      : dependency.gnn_label === 'elevated'
+        ? severityClasses.medium
+        : severityClasses.low
+  return (
+    <Badge
+      variant='outline'
+      className={cn('mt-1 w-fit rounded-md text-[10px]', tone)}
+      title={dependency.gnn_reasons?.join('；') || 'Graph risk model score'}
+    >
+      GNN {score}%
+    </Badge>
+  )
+}
+
 function DependencyVexRecommendation({ dependency }: { dependency: SecurityDependency }) {
   const statements = dependency.vex ?? []
   const visibleStatements = statements.slice(0, 3)
@@ -3082,9 +3107,12 @@ function DependencyVexRecommendation({ dependency }: { dependency: SecurityDepen
             {dependency.version} · {versionSourceLabel(dependency.version_source)}
           </div>
         </div>
-        <Badge variant='outline' className='rounded-md'>
-          风险 {dependency.risk}
-        </Badge>
+        <div className='flex shrink-0 flex-col items-end gap-1'>
+          <Badge variant='outline' className='rounded-md'>
+            风险 {dependency.risk}
+          </Badge>
+          <DependencyGnnBadge dependency={dependency} />
+        </div>
       </div>
 
       <div className='mt-3 rounded-md border bg-muted/25 p-3'>
@@ -3093,6 +3121,8 @@ function DependencyVexRecommendation({ dependency }: { dependency: SecurityDepen
       </div>
 
       <DependencyEvidenceSummary dependency={dependency} />
+
+      <DependencyGnnEvidence dependency={dependency} />
 
       <div className='mt-3 grid gap-2 text-xs text-muted-foreground'>
         <div>生态：{dependency.ecosystem || '-'}</div>
@@ -3272,6 +3302,11 @@ function versionSourceLabel(source: string | undefined) {
 
 function dependencyKey(dependency: SecurityDependency) {
   return `${dependency.ecosystem}-${dependency.name}-${dependency.version}-${dependency.source_file ?? dependency.manifest_type ?? ''}`
+}
+
+function formatPercent(value: number) {
+  const normalized = value > 1 ? value : value * 100
+  return `${Math.round(normalized)}%`
 }
 
 function dependencyPanelStats(
@@ -9414,6 +9449,7 @@ function CopilotPanel({
   const retrieval = answer?.retrieval?.length ? answer.retrieval : assistant.retrieval
   const nextActions = answer?.next_actions?.length ? answer.next_actions : assistant.next_actions
   const modelName = answer?.model || 'demo-rag-security-analyst'
+  const graphRag = answer?.graph_rag
   const hasDeepseek = modelName.toLowerCase().includes('deepseek')
   const promptSuggestions = [
     '解释本次 Agent 为什么判定存在供应链攻击风险',
@@ -9540,6 +9576,8 @@ function CopilotPanel({
       </Card>
 
       <div className='space-y-4 xl:sticky xl:top-20 xl:self-start'>
+        <GraphRagEvidenceCard graphRag={graphRag} />
+
         <Card className='rounded-md'>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
@@ -9583,6 +9621,274 @@ function CopilotPanel({
     </div>
     </div>
   )
+}
+
+function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency }) {
+  const explanations = dependency.gnn_explanations?.length
+    ? dependency.gnn_explanations
+    : dependency.gnn_reasons ?? []
+  const similarPackages = dependency.similar_malicious_packages ?? []
+  const hasModelEvidence =
+    dependency.gnn_model_type
+    || typeof dependency.gnn_confidence === 'number'
+    || explanations.length
+    || similarPackages.length
+
+  if (!hasModelEvidence) {
+    return null
+  }
+
+  return (
+    <div className='mt-3 rounded-md border bg-muted/20 p-3'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <div className='text-xs font-medium'>GNN 模型证据</div>
+        {dependency.gnn_model_type ? (
+          <Badge variant='outline' className='rounded-md text-[10px]'>
+            {dependency.gnn_model_type}
+          </Badge>
+        ) : null}
+        {typeof dependency.gnn_confidence === 'number' ? (
+          <Badge variant='outline' className='rounded-md bg-cyan-50 text-[10px] text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
+            置信 {formatPercent(dependency.gnn_confidence)}
+          </Badge>
+        ) : null}
+      </div>
+
+      {similarPackages.length ? (
+        <div className='mt-2 space-y-1'>
+          <div className='text-[11px] text-muted-foreground'>相似恶意包</div>
+          {similarPackages.slice(0, 3).map((item, index) => (
+            <div key={`${item.ecosystem || 'pkg'}-${item.package || index}`} className='flex items-start justify-between gap-2 rounded-md bg-background/70 px-2 py-1.5 text-xs'>
+              <div className='min-w-0'>
+                <div className='truncate font-medium'>{item.package || 'unknown package'}</div>
+                <div className='text-muted-foreground'>{item.ecosystem || '-'}{item.reason ? ` · ${item.reason}` : ''}</div>
+              </div>
+              {typeof item.score === 'number' ? (
+                <Badge variant='outline' className='shrink-0 rounded-md text-[10px]'>
+                  {formatPercent(item.score)}
+                </Badge>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {explanations.length ? (
+        <div className='mt-2 space-y-1 text-xs leading-5 text-muted-foreground'>
+          {explanations.slice(0, 4).map((reason) => (
+            <div key={reason}>{reason}</div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function GraphRagEvidenceCard({ graphRag }: { graphRag?: SecurityGraphRagResult | null }) {
+  if (!graphRag) return null
+
+  const topNodes = graphRag.top_nodes?.slice(0, 4) ?? []
+  const topPaths = graphRag.top_attack_paths?.slice(0, 2) ?? []
+  const channelEntries = Object.entries(graphRag.channels ?? {}).filter(([, hits]) => hits.length)
+  const evidenceRows = graphRag.evidence_table?.slice(0, 5) ?? []
+  const retrievalTrace = graphRag.retrieval_trace?.slice(0, 5) ?? []
+  const missingEvidence = graphRag.missing_evidence?.slice(0, 5) ?? []
+  const explanation = graphRag.explanation
+
+  return (
+    <Card className='rounded-md'>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Network className='size-4 text-cyan-600' />
+          GraphRAG 证据
+        </CardTitle>
+        <CardDescription>
+          {explanation?.ranking || '关键词种子、图扩展、PageRank 和模型风险分数共同排序'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='grid grid-cols-2 gap-2 text-xs sm:grid-cols-4'>
+          <InfoPill label='意图' value={graphRag.intent || String(explanation?.intent || 'general')} />
+          <InfoPill label='种子' value={String(explanation?.seed_count ?? graphRag.seed_node_ids?.length ?? 0)} />
+          <InfoPill label='跳数' value={`${explanation?.hop_limit ?? 2} hop`} />
+          <InfoPill label='扩展' value={String(graphRag.expanded_node_ids?.length ?? 0)} />
+        </div>
+
+        {channelEntries.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium text-muted-foreground'>召回通道</div>
+            <div className='flex flex-wrap gap-1.5'>
+              {channelEntries.map(([channel, hits]) => (
+                <Badge key={channel} variant='outline' className='rounded-md text-[10px]'>
+                  {graphRagChannelLabel(channel)} {hits.length}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {topNodes.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium text-muted-foreground'>Top 节点</div>
+            {topNodes.map((node) => {
+              const rawProps = graphNodeRawProperties(node)
+              const gnnScore = typeof rawProps.gnn_score === 'number' ? Math.round(rawProps.gnn_score * 100) : null
+              const risk = normalizeGraphNodeRisk(node.risk)
+              return (
+                <div key={node.id} className='rounded-md border p-2 text-xs'>
+                  <div className='flex items-start justify-between gap-2'>
+                    <div className='min-w-0'>
+                      <div className='truncate font-medium'>{node.label}</div>
+                      <div className='mt-0.5 text-muted-foreground'>{node.type}</div>
+                    </div>
+                    <div className='flex shrink-0 flex-col items-end gap-1'>
+                      <Badge variant='outline' className={cn('rounded-md', severityClasses[risk])}>
+                        {severityLabel(risk)}
+                      </Badge>
+                      {gnnScore !== null ? (
+                        <Badge variant='outline' className='rounded-md bg-cyan-50 text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
+                          GNN {gnnScore}%
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                  {node.description ? (
+                    <div className='mt-2 line-clamp-2 leading-5 text-muted-foreground'>{node.description}</div>
+                  ) : null}
+                  <GraphRagReasonList reasons={node.why_selected} />
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+
+        {topPaths.length ? (
+          <div className='space-y-2'>
+            <div className='flex items-center gap-1 text-xs font-medium text-muted-foreground'>
+              <Route className='size-3.5' />
+              命中攻击路径
+            </div>
+            {topPaths.map((path) => (
+              <div key={path.id} className='rounded-md border border-cyan-200/70 bg-cyan-50/45 p-2 text-xs leading-5 dark:border-cyan-900 dark:bg-cyan-950/20'>
+                <div className='font-medium text-cyan-900 dark:text-cyan-100'>{path.title}</div>
+                <div className='mt-1 text-muted-foreground'>
+                  分数 {path.score} · {path.description || path.conclusion || '已与当前问题相关'}
+                </div>
+                <GraphRagReasonList reasons={path.why_selected} />
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {evidenceRows.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium text-muted-foreground'>证据压缩表</div>
+            {evidenceRows.map((row, index) => (
+              <div key={`${row.kind || 'evidence'}-${row.id || index}`} className='rounded-md border bg-background/70 p-2 text-xs leading-5'>
+                <div className='flex items-center justify-between gap-2'>
+                  <span className='font-medium'>{row.summary || row.id || row.kind || 'evidence'}</span>
+                  {row.kind ? (
+                    <Badge variant='outline' className='shrink-0 rounded-md text-[10px]'>
+                      {row.kind}
+                    </Badge>
+                  ) : null}
+                </div>
+                {row.source || row.id ? (
+                  <div className='mt-1 truncate text-muted-foreground'>{row.source || row.id}</div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {retrievalTrace.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium text-muted-foreground'>检索轨迹</div>
+            <div className='space-y-1'>
+              {retrievalTrace.map((item, index) => (
+                <div key={`${item.stage || 'trace'}-${index}`} className='rounded-md bg-muted/35 px-2 py-1.5 text-xs leading-5'>
+                  <span className='font-medium'>{item.stage || `stage ${index + 1}`}</span>
+                  <span className='text-muted-foreground'> · {formatGraphRagTrace(item)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {missingEvidence.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium text-muted-foreground'>证据缺口</div>
+            {missingEvidence.map((item, index) => (
+              <div key={`${item.kind || 'missing'}-${index}`} className='rounded-md border border-amber-200/70 bg-amber-50/60 p-2 text-xs leading-5 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/20 dark:text-amber-100'>
+                <span className='font-medium'>{item.kind || 'missing evidence'}</span>
+                {item.reason ? <span> · {item.reason}</span> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function GraphRagReasonList({ reasons }: { reasons?: string[] }) {
+  if (!reasons?.length) {
+    return null
+  }
+  return (
+    <div className='mt-2 flex flex-wrap gap-1'>
+      {reasons.slice(0, 3).map((reason) => (
+        <Badge key={reason} variant='outline' className='max-w-full rounded-md text-[10px]'>
+          <span className='truncate'>{reason}</span>
+        </Badge>
+      ))}
+    </div>
+  )
+}
+
+function graphRagChannelLabel(channel: string) {
+  const labels: Record<string, string> = {
+    keyword: '关键词',
+    risk: '风险',
+    attack_path: '攻击路径',
+    embedding: 'Embedding',
+  }
+  return labels[channel] ?? channel
+}
+
+function formatGraphRagTrace(item: Record<string, unknown>) {
+  const details = Object.entries(item)
+    .filter(([key]) => key !== 'stage')
+    .map(([key, value]) => `${key}=${formatGraphRagValue(value)}`)
+  return details.length ? details.join('，') : '完成'
+}
+
+function formatGraphRagValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.slice(0, 3).join(', ')
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value)
+  }
+  return String(value ?? '-')
+}
+
+function graphNodeRawProperties(node: SecurityGraphNode): Record<string, unknown> {
+  const properties = node.properties
+  if (properties && typeof properties === 'object' && 'properties' in properties) {
+    const nested = properties.properties
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      return nested as Record<string, unknown>
+    }
+  }
+  return properties ?? {}
+}
+
+function normalizeGraphNodeRisk(value?: string): SecuritySeverity {
+  if (value === 'critical' || value === 'high' || value === 'medium' || value === 'low') {
+    return value
+  }
+  return 'medium'
 }
 
 function CopilotMessage({
