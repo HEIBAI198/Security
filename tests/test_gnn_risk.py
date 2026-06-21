@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from scripts.gnn.train_package_risk import train_package_risk
 from scripts.gnn.train_graphsage_package_risk import train_graphsage_package_risk
 from scripts.gnn.train_pyg_graphsage_package_risk import train_pyg_graphsage_package_risk
@@ -153,6 +155,89 @@ class PackageRiskScorerTests(unittest.TestCase):
         }
         (data_dir / "splits.json").write_text(json.dumps(splits), encoding="utf-8")
 
+    def _write_sklearn_fixture(self, data_dir: Path):
+        (data_dir / "feature_schema.json").write_text(
+            json.dumps(
+                {
+                    "features": [
+                        "ecosystem_npm",
+                        "ecosystem_pypi",
+                        "name_length",
+                        "name_separator_count",
+                        "has_scope",
+                        "has_digits",
+                        "version_count",
+                        "alias_count",
+                        "evidence_source_count",
+                        "risk_keyword_count",
+                        "text_length",
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        nodes = [
+            {
+                "id": "pkg:npm:evil",
+                "label": 1,
+                "features": {
+                    "ecosystem_npm": 1,
+                    "ecosystem_pypi": 0,
+                    "name_length": 4,
+                    "name_separator_count": 0,
+                    "has_scope": 0,
+                    "has_digits": 0,
+                    "version_count": 1,
+                    "alias_count": 1,
+                    "evidence_source_count": 0,
+                    "risk_keyword_count": 2,
+                    "text_length": 32,
+                },
+            },
+            {
+                "id": "pkg:pypi:requests",
+                "label": 0,
+                "features": {
+                    "ecosystem_npm": 0,
+                    "ecosystem_pypi": 1,
+                    "name_length": 8,
+                    "name_separator_count": 0,
+                    "has_scope": 0,
+                    "has_digits": 0,
+                    "version_count": 1,
+                    "alias_count": 0,
+                    "evidence_source_count": 1,
+                    "risk_keyword_count": 0,
+                    "text_length": 16,
+                },
+            },
+        ]
+        edges = [
+            {"source": "pkg:npm:evil", "target": "signal:postinstall", "type": "has_risk_signal"},
+            {"source": "pkg:pypi:requests", "target": "source:requirements", "type": "observed_in"},
+        ]
+        (data_dir / "train_nodes.jsonl").write_text(
+            "\n".join(json.dumps(node) for node in nodes) + "\n",
+            encoding="utf-8",
+        )
+        (data_dir / "train_edges.jsonl").write_text(
+            "\n".join(json.dumps(edge) for edge in edges) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_malformed_graphsage_artifact(self, model_dir: Path):
+        np.savez_compressed(
+            model_dir / "package_risk_gnn.npz",
+            w1=np.zeros((2, 4), dtype=np.float32),
+            b1=np.zeros(4, dtype=np.float32),
+            w2=np.zeros((4, 1), dtype=np.float32),
+            b2=np.zeros(1, dtype=np.float32),
+            mean=np.zeros(6, dtype=np.float32),
+            scale=np.ones(6, dtype=np.float32),
+            feature_names=np.asarray(["ecosystem_npm", "ecosystem_pypi", "name_length"], dtype=np.str_),
+            raw_feature_dim=np.asarray([3], dtype=np.int64),
+        )
+
     def test_missing_model_uses_rule_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             scorer = PackageRiskScorer(Path(tmp) / "missing")
@@ -180,74 +265,7 @@ class PackageRiskScorerTests(unittest.TestCase):
             data_dir = root / "features"
             model_dir = root / "model"
             data_dir.mkdir()
-            (data_dir / "feature_schema.json").write_text(
-                json.dumps(
-                    {
-                        "features": [
-                            "ecosystem_npm",
-                            "ecosystem_pypi",
-                            "name_length",
-                            "name_separator_count",
-                            "has_scope",
-                            "has_digits",
-                            "version_count",
-                            "alias_count",
-                            "evidence_source_count",
-                            "risk_keyword_count",
-                            "text_length",
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            nodes = [
-                {
-                    "id": "pkg:npm:evil",
-                    "label": 1,
-                    "features": {
-                        "ecosystem_npm": 1,
-                        "ecosystem_pypi": 0,
-                        "name_length": 4,
-                        "name_separator_count": 0,
-                        "has_scope": 0,
-                        "has_digits": 0,
-                        "version_count": 1,
-                        "alias_count": 1,
-                        "evidence_source_count": 0,
-                        "risk_keyword_count": 2,
-                        "text_length": 32,
-                    },
-                },
-                {
-                    "id": "pkg:pypi:requests",
-                    "label": 0,
-                    "features": {
-                        "ecosystem_npm": 0,
-                        "ecosystem_pypi": 1,
-                        "name_length": 8,
-                        "name_separator_count": 0,
-                        "has_scope": 0,
-                        "has_digits": 0,
-                        "version_count": 1,
-                        "alias_count": 0,
-                        "evidence_source_count": 1,
-                        "risk_keyword_count": 0,
-                        "text_length": 16,
-                    },
-                },
-            ]
-            edges = [
-                {"source": "pkg:npm:evil", "target": "signal:postinstall", "type": "has_risk_signal"},
-                {"source": "pkg:pypi:requests", "target": "source:requirements", "type": "observed_in"},
-            ]
-            (data_dir / "train_nodes.jsonl").write_text(
-                "\n".join(json.dumps(node) for node in nodes) + "\n",
-                encoding="utf-8",
-            )
-            (data_dir / "train_edges.jsonl").write_text(
-                "\n".join(json.dumps(edge) for edge in edges) + "\n",
-                encoding="utf-8",
-            )
+            self._write_sklearn_fixture(data_dir)
             train_package_risk(data_dir, model_dir)
 
             scorer = PackageRiskScorer(model_dir)
@@ -263,6 +281,29 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertGreaterEqual(result["gnn_score"], 0.0)
             self.assertLessEqual(result["gnn_score"], 1.0)
             self.assertIn(result["gnn_label"], {"low", "elevated", "high"})
+
+    def test_malformed_graphsage_artifact_falls_back_to_sklearn_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "features"
+            model_dir = root / "model"
+            data_dir.mkdir()
+            self._write_sklearn_fixture(data_dir)
+            train_package_risk(data_dir, model_dir)
+            self._write_malformed_graphsage_artifact(model_dir)
+
+            scorer = PackageRiskScorer(model_dir)
+            result = scorer.score_package(
+                ecosystem="npm",
+                name="evil",
+                version="1.0.0",
+                signals=["postinstall token exfiltration"],
+            )
+
+            self._assert_common_fields(result)
+            self.assertTrue(result["model_available"])
+            self.assertEqual(result["gnn_model_type"], "sklearn_logistic_regression_graph_features")
+            self.assertNotEqual(result["gnn_model_type"], "rule_fallback")
 
     def test_prefers_graphsage_model_when_available(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -131,19 +131,60 @@ class PackageRiskModelRegistry:
                 }
                 self.feature_names = [str(item) for item in artifact["feature_names"].tolist()]
                 self._raw_feature_dim = int(artifact["raw_feature_dim"][0])
+            self._validate_graphsage_model()
         except Exception as exc:  # pragma: no cover - defensive startup guard
             self._record_load_error("numpy_graphsage", str(exc))
-            self._npz_model = None
-            return False
-        if not self.feature_names or self._raw_feature_dim <= 0:
-            self._record_load_error("numpy_graphsage", "invalid graphsage model artifact")
-            self._npz_model = None
+            self._clear_graphsage_model()
             return False
         self.model = self._npz_model
         self.model_type = "numpy_graphsage_mean_aggregator"
         self.model_available = True
         self.load_error = "; ".join(self._load_errors) or None
         return True
+
+    def _validate_graphsage_model(self) -> None:
+        if self._npz_model is None:
+            raise ValueError("missing graphsage model arrays")
+        if self._raw_feature_dim <= 0:
+            raise ValueError("invalid graphsage raw_feature_dim")
+        if len(self.feature_names) < self._raw_feature_dim:
+            raise ValueError("graphsage feature_names shorter than raw_feature_dim")
+
+        expected_width = self._raw_feature_dim * 2
+        w1 = self._npz_model["w1"]
+        b1 = self._npz_model["b1"]
+        w2 = self._npz_model["w2"]
+        b2 = self._npz_model["b2"]
+        mean = self._npz_model["mean"]
+        scale = self._npz_model["scale"]
+
+        if mean.shape != (expected_width,):
+            raise ValueError("graphsage mean shape does not match online feature width")
+        if scale.shape != (expected_width,):
+            raise ValueError("graphsage scale shape does not match online feature width")
+        if not np.all(np.isfinite(mean)):
+            raise ValueError("graphsage mean contains non-finite values")
+        if not np.all(np.isfinite(scale)) or np.any(np.abs(scale) < 1e-12):
+            raise ValueError("graphsage scale contains non-finite or zero values")
+        if w1.ndim != 2 or w1.shape[0] != expected_width:
+            raise ValueError("graphsage w1 shape does not match online feature width")
+        hidden_dim = int(w1.shape[1])
+        if hidden_dim <= 0:
+            raise ValueError("graphsage hidden dimension must be positive")
+        if b1.shape != (hidden_dim,):
+            raise ValueError("graphsage b1 shape does not match w1 output dimension")
+        if w2.ndim != 2 or w2.shape != (hidden_dim, 1):
+            raise ValueError("graphsage w2 shape must produce one output logit")
+        if b2.shape != (1,):
+            raise ValueError("graphsage b2 must contain one bias value")
+        for name, value in self._npz_model.items():
+            if not np.all(np.isfinite(value)):
+                raise ValueError(f"graphsage {name} contains non-finite values")
+
+    def _clear_graphsage_model(self) -> None:
+        self._npz_model = None
+        self._raw_feature_dim = 0
+        self.feature_names = []
 
     def _predict_pyg_score(self, values: dict[str, float]) -> float:
         if self._pyg_model is None or self._pyg_torch is None or self._pyg_data_cls is None:
