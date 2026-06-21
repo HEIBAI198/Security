@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,23 +21,37 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 
-def _validate_inputs(labels: list[int], scores: list[float]) -> tuple[list[int], list[float]]:
+def _validate_inputs(labels: list[Any], scores: list[Any]) -> tuple[list[int], list[float]]:
     if len(labels) != len(scores):
         raise ValueError("labels and scores must have the same length")
     if not labels:
         raise ValueError("labels and scores must contain at least one sample")
 
-    normalized_labels = [int(label) for label in labels]
-    invalid_labels = sorted(set(normalized_labels) - {0, 1})
-    if invalid_labels:
-        raise ValueError(f"labels must be binary 0/1; found {invalid_labels}")
+    normalized_labels: list[int] = []
+    for label in labels:
+        if type(label) is not int or label not in {0, 1}:
+            raise ValueError("labels must be strict binary integers 0/1")
+        normalized_labels.append(label)
 
-    return normalized_labels, [float(score) for score in scores]
+    normalized_scores: list[float] = []
+    for score in scores:
+        if isinstance(score, bool) or not isinstance(score, (int, float)):
+            raise ValueError("scores must be finite numeric values")
+        score_value = float(score)
+        if not math.isfinite(score_value):
+            raise ValueError("scores must be finite numeric values")
+        normalized_scores.append(score_value)
+
+    return normalized_labels, normalized_scores
 
 
 def classification_metrics(labels: list[int], scores: list[float], *, threshold: float = 0.5) -> dict[str, Any]:
     label_values, score_values = _validate_inputs(labels, scores)
-    predictions = [1 if score >= float(threshold) else 0 for score in score_values]
+    threshold_value = float(threshold)
+    if not math.isfinite(threshold_value):
+        raise ValueError("threshold must be finite")
+
+    predictions = [1 if score >= threshold_value else 0 for score in score_values]
     tn, fp, fn, tp = confusion_matrix(label_values, predictions, labels=[0, 1]).ravel()
 
     metrics: dict[str, Any] = {
@@ -63,6 +78,7 @@ def classification_metrics(labels: list[int], scores: list[float], *, threshold:
 
 
 def top_k_hit_rate(labels: list[int], scores: list[float], *, k: int = 10) -> float:
+    """Return the positive-label fraction among the top-k scores, also known as precision@k."""
     label_values, score_values = _validate_inputs(labels, scores)
     if int(k) <= 0:
         raise ValueError("k must be > 0")
@@ -74,19 +90,22 @@ def top_k_hit_rate(labels: list[int], scores: list[float], *, k: int = 10) -> fl
     return float(sum(label for _, label in selected) / len(selected))
 
 
-def _read_labels_scores_jsonl(path: Path) -> tuple[list[int], list[float]]:
-    labels: list[int] = []
-    scores: list[float] = []
+def _read_labels_scores_jsonl(path: Path) -> tuple[list[Any], list[Any]]:
+    labels: list[Any] = []
+    scores: list[Any] = []
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
             continue
-        payload = json.loads(line)
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"line {line_number} must be valid JSON") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"line {line_number} must be a JSON object")
         if "label" not in payload or "score" not in payload:
             raise ValueError(f"line {line_number} must contain label and score")
-        labels.append(int(payload["label"]))
-        scores.append(float(payload["score"]))
+        labels.append(payload["label"])
+        scores.append(payload["score"])
     return labels, scores
 
 
@@ -99,9 +118,11 @@ def main() -> int:
     args = parser.parse_args()
 
     labels, scores = _read_labels_scores_jsonl(args.labels_scores_jsonl)
+    precision_at_k = top_k_hit_rate(labels, scores, k=args.top_k)
     summary: dict[str, Any] = {
         "classification": classification_metrics(labels, scores, threshold=args.threshold),
-        "top_k_hit_rate": top_k_hit_rate(labels, scores, k=args.top_k),
+        "precision_at_k": precision_at_k,
+        "top_k_hit_rate": precision_at_k,
         "top_k": int(args.top_k),
         "threshold": float(args.threshold),
     }
