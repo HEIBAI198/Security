@@ -25,6 +25,8 @@ class PackageRiskModelRegistry:
         self._npz_model: dict[str, np.ndarray] | None = None
         self._raw_feature_dim = 0
         self._embedding_index: PackageEmbeddingIndex | None = None
+        self._pyg_feature_mean: np.ndarray | None = None
+        self._pyg_feature_scale: np.ndarray | None = None
         self._load_model()
 
     def predict(self, feature_values: dict[str, float]) -> dict[str, Any]:
@@ -40,18 +42,24 @@ class PackageRiskModelRegistry:
 
         try:
             if self._pyg_model is not None:
-                score = self._predict_pyg_score(feature_values)
+                raw_score = self._predict_pyg_score(feature_values)
+                score, calibration_note = self._calibrate_pyg_online_score(raw_score, feature_values)
             elif self._npz_model is not None:
                 score = self._predict_graphsage_score(feature_values)
+                calibration_note = None
             else:
                 score = self._predict_sklearn_score(feature_values)
+                calibration_note = None
             score = self._bounded_score(score)
+            explanations = self._explanations(score, feature_values)
+            if calibration_note:
+                explanations.append(calibration_note)
             return {
                 "score": score,
                 "model_available": True,
                 "model_type": self.model_type,
                 "confidence": self._confidence(score),
-                "explanations": self._explanations(score, feature_values),
+                "explanations": explanations,
                 "model_error": self.load_error,
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
@@ -69,14 +77,16 @@ class PackageRiskModelRegistry:
         if limit <= 0:
             return []
         vector = self._embedding_for_features(feature_values)
-        if vector is None:
-            return []
         index = self._package_embedding_index()
         if not index.available:
             return []
-        hits = index.similar_to_vector(vector, limit=limit, malicious_only=True)
+        hits: list[dict[str, Any]] = []
+        if vector is not None and float(np.linalg.norm(vector)) > 1e-12:
+            hits = index.similar_to_vector(vector, limit=limit, malicious_only=True)
+            if not hits:
+                hits = index.similar_to_vector(vector, limit=limit)
         if not hits:
-            hits = index.similar_to_vector(vector, limit=limit)
+            hits = self._similar_packages_by_feature_values(feature_values, index, limit=limit)
         return [
             {
                 "package": str(item.get("package") or ""),
@@ -90,6 +100,68 @@ class PackageRiskModelRegistry:
             }
             for item in hits[:limit]
         ]
+
+    def _similar_packages_by_feature_values(
+        self,
+        feature_values: dict[str, float],
+        index: PackageEmbeddingIndex,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        query = self._scaled_pyg_row(feature_vector_from_values(self.feature_names, feature_values))
+        query_norm = float(np.linalg.norm(query))
+        if query_norm <= 1e-12:
+            return []
+        candidates: list[dict[str, Any]] = []
+        for record in index.records:
+            values = self._feature_values_from_record(record)
+            if values is None:
+                continue
+            similarity = float(values @ query / max(float(np.linalg.norm(values)) * query_norm, 1e-12))
+            if not np.isfinite(similarity):
+                continue
+            candidates.append(
+                {
+                    "id": record.id,
+                    "ecosystem": record.ecosystem,
+                    "package": record.package,
+                    "score": max(0.0, min(1.0, similarity)),
+                    "similarity": similarity,
+                    "label": record.label,
+                }
+            )
+        malicious = [item for item in candidates if item.get("label") == 1]
+        pool = malicious or candidates
+        return sorted(pool, key=lambda item: (-float(item["similarity"]), str(item["id"])))[:limit]
+
+    def _feature_values_from_record(self, record: Any) -> np.ndarray | None:
+        ecosystem = str(getattr(record, "ecosystem", "") or "")
+        package = str(getattr(record, "package", "") or "")
+        record_id = str(getattr(record, "id", "") or "")
+        if not ecosystem and record_id.startswith("pkg:npm:"):
+            ecosystem = "npm"
+        elif not ecosystem and record_id.startswith("pkg:pypi:"):
+            ecosystem = "pypi"
+        if not package and record_id.startswith("pkg:npm:"):
+            package = record_id.removeprefix("pkg:npm:")
+        elif not package and record_id.startswith("pkg:pypi:"):
+            package = record_id.removeprefix("pkg:pypi:")
+        if not ecosystem or not package:
+            return None
+        values = {
+            "ecosystem_npm": 1.0 if ecosystem == "npm" else 0.0,
+            "ecosystem_pypi": 1.0 if ecosystem == "pypi" else 0.0,
+            "name_length": float(len(package)),
+            "name_separator_count": float(package.count("-") + package.count("_") + package.count(".")),
+            "has_scope": 1.0 if package.startswith("@") else 0.0,
+            "has_digits": 1.0 if any(char.isdigit() for char in package) else 0.0,
+            "version_count": 0.0,
+            "alias_count": 0.0,
+            "evidence_source_count": 1.0,
+            "risk_keyword_count": 0.0,
+            "text_length": float(len(package)),
+        }
+        return self._scaled_pyg_row(feature_vector_from_values(self.feature_names, values))
 
     def _load_model(self) -> None:
         if self._load_pyg_model():
@@ -118,6 +190,9 @@ class PackageRiskModelRegistry:
                 raise ValueError("invalid PyG metadata")
             if input_dim != len(feature_names):
                 raise ValueError("PyG metadata input_dim does not match feature_names")
+            feature_mean = _optional_float_array(metadata.get("feature_mean"), input_dim, default=0.0)
+            feature_scale = _optional_float_array(metadata.get("feature_scale"), input_dim, default=1.0)
+            feature_scale = np.where(np.abs(feature_scale) < 1e-6, 1.0, feature_scale).astype(np.float32)
 
             torch, Data, SAGEConv = self._load_torch_pyg()
             model = self._build_pyg_model(torch, SAGEConv, input_dim, hidden_dim, dropout)
@@ -132,6 +207,8 @@ class PackageRiskModelRegistry:
             self._pyg_torch = torch
             self._pyg_data_cls = Data
             self.feature_names = feature_names
+            self._pyg_feature_mean = feature_mean
+            self._pyg_feature_scale = feature_scale
             self.model_type = model_type
             self.model_available = True
             self.load_error = "; ".join(self._load_errors) or None
@@ -215,13 +292,13 @@ class PackageRiskModelRegistry:
     def _predict_pyg_score(self, values: dict[str, float]) -> float:
         if self._pyg_model is None or self._pyg_torch is None or self._pyg_data_cls is None:
             raise RuntimeError("PyG GraphSAGE model is not loaded")
-        row = [
+        row = self._scaled_pyg_row([
             float(values.get(name, 0.0) or 0.0)
             for name in self.feature_names
-        ]
+        ])
         torch = self._pyg_torch
         data = self._pyg_data_cls(
-            x=torch.tensor([row], dtype=torch.float32),
+            x=torch.tensor(row.reshape(1, -1), dtype=torch.float32),
             edge_index=torch.empty((2, 0), dtype=torch.long),
         )
         self._pyg_model.eval()
@@ -230,19 +307,37 @@ class PackageRiskModelRegistry:
             probabilities = torch.softmax(logits, dim=1)
         return float(probabilities[0, 1].detach().cpu().item())
 
+    def _calibrate_pyg_online_score(self, score: float, values: dict[str, float]) -> tuple[float, str | None]:
+        evidence_strength = (
+            float(values.get("risk_keyword_count", 0.0) or 0.0)
+            + float(values.get("alias_count", 0.0) or 0.0)
+            + max(0.0, float(values.get("graph_degree", 1.0) or 1.0) - 1.0)
+        )
+        if score >= 0.75 and evidence_strength <= 0:
+            return 0.6, "online evidence calibration reduced an unsupported high PyG score"
+        return score, None
+
     def _embedding_for_features(self, values: dict[str, float]) -> np.ndarray | None:
         if self._pyg_model is None or self._pyg_torch is None or self._pyg_data_cls is None:
             return None
-        row = feature_vector_from_values(self.feature_names, values)
+        row = self._scaled_pyg_row(feature_vector_from_values(self.feature_names, values))
         torch = self._pyg_torch
         data = self._pyg_data_cls(
-            x=torch.tensor([row.tolist()], dtype=torch.float32),
+            x=torch.tensor(row.reshape(1, -1), dtype=torch.float32),
             edge_index=torch.empty((2, 0), dtype=torch.long),
         )
         self._pyg_model.eval()
         with torch.no_grad():
             embedding = self._pyg_model.encode(data.x, data.edge_index, apply_dropout=False)
         return embedding.detach().cpu().numpy().reshape(-1)
+
+    def _scaled_pyg_row(self, row: Any) -> np.ndarray:
+        values = np.asarray(row, dtype=np.float32).reshape(-1)
+        if self._pyg_feature_mean is None or self._pyg_feature_scale is None:
+            return values
+        if values.shape != self._pyg_feature_mean.shape:
+            return values
+        return (values - self._pyg_feature_mean) / self._pyg_feature_scale
 
     def _package_embedding_index(self) -> PackageEmbeddingIndex:
         if self._embedding_index is None:
@@ -360,3 +455,15 @@ class PackageRiskModelRegistry:
     @staticmethod
     def _confidence(score: float) -> float:
         return max(0.0, min(1.0, abs(float(score) - 0.5) * 2.0))
+
+
+def _optional_float_array(value: Any, size: int, *, default: float) -> np.ndarray:
+    if not isinstance(value, list) or len(value) != size:
+        return np.full(size, float(default), dtype=np.float32)
+    try:
+        array = np.asarray([float(item) for item in value], dtype=np.float32)
+    except (TypeError, ValueError):
+        return np.full(size, float(default), dtype=np.float32)
+    if not np.all(np.isfinite(array)):
+        return np.full(size, float(default), dtype=np.float32)
+    return array

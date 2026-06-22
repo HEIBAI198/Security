@@ -3,12 +3,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
 from scripts.gnn.train_package_risk import train_package_risk
 from scripts.gnn.train_graphsage_package_risk import train_graphsage_package_risk
 from scripts.gnn.train_pyg_graphsage_package_risk import train_pyg_graphsage_package_risk
+from supplyguard.gnn_models import PackageRiskModelRegistry
 from supplyguard.gnn_risk import PackageRiskScorer
 
 
@@ -415,6 +417,73 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertIn("ecosystem", similar)
             self.assertIn("score", similar)
             self.assertIn("reason", similar)
+
+    @unittest.skipUnless(HAS_TORCH_PYG, "torch/PyG not installed")
+    def test_pyg_prediction_applies_metadata_feature_scaling(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "features"
+            model_dir = root / "model"
+            data_dir.mkdir()
+            self._write_pyg_graphsage_fixture(data_dir)
+            train_pyg_graphsage_package_risk(
+                data_dir,
+                model_dir,
+                epochs=2,
+                hidden_dim=4,
+                dropout=0.0,
+                random_state=23,
+            )
+            metadata_path = model_dir / "package_risk_graphsage_metadata.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["feature_mean"] = [0.0 for _ in metadata["feature_names"]]
+            metadata["feature_scale"] = [2.0 for _ in metadata["feature_names"]]
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            scorer = PackageRiskScorer(model_dir)
+            captured: dict[str, Any] = {}
+            original_forward = scorer.registry._pyg_model.forward
+
+            def capturing_forward(data):
+                captured["x"] = data.x.detach().cpu().numpy()
+                return original_forward(data)
+
+            scorer.registry._pyg_model.forward = capturing_forward
+            scorer.score_package("npm", "evil", "1.0.0", ["postinstall token"], [])
+
+            risk_index = scorer.registry.feature_names.index("risk_keyword_count")
+            self.assertEqual(captured["x"][0][risk_index], 1.0)
+
+    def test_pyg_prediction_calibrates_high_score_without_online_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            (model_dir / "package_risk_graphsage_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "model_type": "pyg_graphsage_package_risk",
+                        "feature_names": ["risk_keyword_count"],
+                        "input_dim": 1,
+                        "hidden_dim": 4,
+                        "dropout": 0.0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(PackageRiskModelRegistry, "_load_pyg_model", return_value=True):
+                registry = PackageRiskModelRegistry(model_dir)
+            registry.model_available = True
+            registry.model = object()
+            registry.model_type = "pyg_graphsage_package_risk"
+            registry.feature_names = ["risk_keyword_count"]
+            registry._pyg_model = object()
+            registry._pyg_torch = object()
+            registry._pyg_data_cls = object()
+            with mock.patch.object(registry, "_predict_pyg_score", return_value=0.98):
+                prediction = registry.predict({"risk_keyword_count": 0.0})
+
+            self.assertLess(prediction["score"], 0.75)
+            self.assertIn("online evidence calibration", prediction["explanations"][-1])
 
 
 if __name__ == "__main__":

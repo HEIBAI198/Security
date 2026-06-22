@@ -238,6 +238,76 @@ class PyGGraphSageContractTests(unittest.TestCase):
             },
         )
 
+    def test_training_mask_can_limit_positive_ratio(self):
+        class FakeTorch:
+            bool = "bool"
+
+            @staticmethod
+            def tensor(values, dtype=None):
+                return np.asarray(values, dtype=bool)
+
+        node_ids = ["pkg:npm:a", "pkg:npm:b", "pkg:npm:c", "pkg:pypi:d", "pkg:pypi:e", "pkg:pypi:f"]
+        labels = np.asarray([1, 1, 1, 1, 0, 0])
+        mask = trainer._balanced_training_mask(
+            FakeTorch,
+            node_ids,
+            node_ids,
+            labels,
+            max_positive_ratio=1.0,
+            random_state=7,
+        )
+
+        self.assertEqual(int(((mask == True) & (labels == 1)).sum()), 2)
+        self.assertEqual(int(((mask == True) & (labels == 0)).sum()), 2)
+
+    def test_package_edges_can_skip_large_shared_target_groups(self):
+        node_ids = ["pkg:npm:a", "pkg:npm:b", "pkg:npm:c", "pkg:npm:d"]
+        edges = [
+            {"source": "pkg:npm:a", "target": "signal:token", "type": "has_risk_signal"},
+            {"source": "pkg:npm:b", "target": "signal:token", "type": "has_risk_signal"},
+            {"source": "pkg:npm:c", "target": "signal:token", "type": "has_risk_signal"},
+            {"source": "pkg:npm:a", "target": "signal:postinstall", "type": "has_risk_signal"},
+            {"source": "pkg:npm:d", "target": "signal:postinstall", "type": "has_risk_signal"},
+        ]
+
+        package_edges = trainer._package_package_edges(node_ids, edges, max_group_size=2)
+
+        self.assertEqual(package_edges, [(0, 3), (3, 0)])
+
+    @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("torch_geometric"), "torch/PyG not installed")
+    def test_training_writes_online_no_edge_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = self._write_tiny_dataset(root)
+            output = root / "model"
+
+            metrics = train_pyg_graphsage_package_risk(
+                data,
+                output,
+                epochs=3,
+                hidden_dim=8,
+                device="cpu",
+                online_loss_weight=0.5,
+                max_edge_group_size=8,
+                random_state=5,
+                max_train_positive_ratio=1.0,
+            )
+
+            self.assertIn("online_no_edge", metrics)
+            self.assertIn("benign_mean_score", metrics["online_no_edge"])
+            self.assertIn("malicious_mean_score", metrics["online_no_edge"])
+            self.assertIn("sanity_cases", metrics["online_no_edge"])
+            self.assertEqual(metrics["device"], "cpu")
+            self.assertEqual(metrics["online_loss_weight"], 0.5)
+            self.assertIsInstance(metrics["online_no_edge"]["sanity_cases"]["requests"], float)
+            metadata = json.loads((output / "package_risk_graphsage_metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["max_train_positive_ratio"], 1.0)
+            self.assertEqual(metadata["device"], "cpu")
+            self.assertEqual(metadata["online_loss_weight"], 0.5)
+            self.assertEqual(metadata["max_edge_group_size"], 8)
+            self.assertEqual(len(metadata["feature_mean"]), metadata["input_dim"])
+            self.assertEqual(len(metadata["feature_scale"]), metadata["input_dim"])
+
     def test_missing_dependency_runtime_error_is_exact(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
