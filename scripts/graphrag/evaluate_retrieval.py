@@ -16,12 +16,14 @@ def evaluate_retrieval_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             "target_attack_path_recall": 0.0,
             "evidence_coverage": 0.0,
             "retrieval_trace_completeness": 0.0,
+            "embedding_channel_hit_rate": 0.0,
         }
 
     dependency_recalls: list[float] = []
     path_recalls: list[float] = []
     evidence_hits = 0
     trace_hits = 0
+    embedding_hits = 0
 
     for case in normalized_cases:
         result = case.get("result") if isinstance(case.get("result"), dict) else {}
@@ -36,6 +38,8 @@ def evaluate_retrieval_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             evidence_hits += 1
         if _non_empty_list(result.get("retrieval_trace")):
             trace_hits += 1
+        if _embedding_channel_has_hits(result):
+            embedding_hits += 1
 
     return {
         "case_count": case_count,
@@ -43,6 +47,7 @@ def evaluate_retrieval_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "target_attack_path_recall": _average(path_recalls),
         "evidence_coverage": round(evidence_hits / case_count, 4),
         "retrieval_trace_completeness": round(trace_hits / case_count, 4),
+        "embedding_channel_hit_rate": round(embedding_hits / case_count, 4),
     }
 
 
@@ -76,6 +81,13 @@ def _string_set(value: Any) -> set[str]:
 
 def _non_empty_list(value: Any) -> bool:
     return isinstance(value, list) and bool(value)
+
+
+def _embedding_channel_has_hits(result: dict[str, Any]) -> bool:
+    channels = result.get("channels")
+    if not isinstance(channels, dict):
+        return False
+    return _non_empty_list(channels.get("embedding"))
 
 
 def _load_cases(path: Path) -> list[dict[str, Any]]:

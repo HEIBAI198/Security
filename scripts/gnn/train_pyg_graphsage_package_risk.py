@@ -441,6 +441,7 @@ def train_pyg_graphsage_package_risk(
             "index": idx,
             "id": node_id,
             "ecosystem": str(package_nodes[idx].get("ecosystem") or ""),
+            "label": int(labels[idx]),
             "package": str(package_nodes[idx].get("package") or ""),
         }
         for idx, node_id in enumerate(node_ids)

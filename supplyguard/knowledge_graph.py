@@ -19,7 +19,8 @@ from typing import Any, Iterable
 from .artifact_trust import ArtifactTrustResult
 from .cicd_audit import CICDAuditResult
 from .code_audit import CodeAuditResult
-from .dependency_audit import DependencyAuditResult
+from .dependency_audit import DependencyAuditResult, dependency_gnn_scorer
+from .gnn_risk import score_dependency_payload
 from .log_audit import LogAuditResult
 
 
@@ -479,6 +480,15 @@ def add_dependency_audit_facts(builder: FactBuilder, result: DependencyAuditResu
 
     for dependency in result.dependencies:
         key = dependency_key(getattr(dependency, "ecosystem", ""), getattr(dependency, "name", ""))
+        dependency_payload = {
+            "name": getattr(dependency, "name", ""),
+            "version": getattr(dependency, "version", ""),
+            "ecosystem": getattr(dependency, "ecosystem", ""),
+            "risk": getattr(dependency, "risk", 0),
+            "signals": list(getattr(dependency, "signals", []) or []),
+            "vulnerabilities": list(getattr(dependency, "vulnerabilities", []) or []),
+        }
+        gnn_risk = score_dependency_payload(dependency_payload, scorer=dependency_gnn_scorer())
         asset_id = builder.add_asset(
             FactAsset(
                 id=dependency_asset_id(dependency),
@@ -501,6 +511,14 @@ def add_dependency_audit_facts(builder: FactBuilder, result: DependencyAuditResu
                     "dependency_type": getattr(dependency, "dependency_type", ""),
                     "signals": list(getattr(dependency, "signals", []) or []),
                     "vulnerabilities": list(getattr(dependency, "vulnerabilities", []) or []),
+                    "gnn_score": gnn_risk["gnn_score"],
+                    "gnn_label": gnn_risk["gnn_label"],
+                    "gnn_reasons": gnn_risk["gnn_reasons"],
+                    "gnn_model_available": gnn_risk["model_available"],
+                    "gnn_model_type": gnn_risk["model_type"],
+                    "gnn_confidence": gnn_risk.get("gnn_confidence", 0.0),
+                    "gnn_explanations": gnn_risk.get("gnn_explanations", []),
+                    "similar_malicious_packages": gnn_risk.get("similar_malicious_packages", []),
                 },
             )
         )

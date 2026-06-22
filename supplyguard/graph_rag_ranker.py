@@ -210,6 +210,14 @@ def _merge_channel_node_boosts(
             seed_scores[str(node_id)] = max(seed_scores.get(str(node_id), 0.0), safe_float(item.get("score")) * 0.25)
             why_by_node.setdefault(str(node_id), set()).add("attack-path channel overlap")
 
+    for item in channels.get("embedding", [])[:8]:
+        if item.get("kind") == "node" and item.get("id"):
+            node_id = str(item["id"])
+            similarity = safe_float(item.get("similarity"), safe_float(item.get("score")))
+            seed_scores[node_id] = max(seed_scores.get(node_id, 0.0), safe_float(item.get("score")) * 0.75)
+            source = str(item.get("source_package") or "embedding seed")
+            why_by_node.setdefault(node_id, set()).add(f"embedding similarity {similarity:.2f} from {source}")
+
 
 def _expand_nodes(graph: nx.Graph, seeds: Any, hops: int) -> set[str]:
     expanded: set[str] = set()

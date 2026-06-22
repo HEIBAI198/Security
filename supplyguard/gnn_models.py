@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from .package_embeddings import PackageEmbeddingIndex, feature_vector_from_values
+
 
 class PackageRiskModelRegistry:
     def __init__(self, model_dir: str | Path = Path("storage/graph_models")) -> None:
@@ -22,6 +24,7 @@ class PackageRiskModelRegistry:
         self._pyg_data_cls: type[Any] | None = None
         self._npz_model: dict[str, np.ndarray] | None = None
         self._raw_feature_dim = 0
+        self._embedding_index: PackageEmbeddingIndex | None = None
         self._load_model()
 
     def predict(self, feature_values: dict[str, float]) -> dict[str, Any]:
@@ -63,7 +66,30 @@ class PackageRiskModelRegistry:
             }
 
     def similar_packages(self, feature_values: dict[str, float], *, limit: int = 3) -> list[dict[str, Any]]:
-        return []
+        if limit <= 0:
+            return []
+        vector = self._embedding_for_features(feature_values)
+        if vector is None:
+            return []
+        index = self._package_embedding_index()
+        if not index.available:
+            return []
+        hits = index.similar_to_vector(vector, limit=limit, malicious_only=True)
+        if not hits:
+            hits = index.similar_to_vector(vector, limit=limit)
+        return [
+            {
+                "package": str(item.get("package") or ""),
+                "ecosystem": str(item.get("ecosystem") or ""),
+                "score": round(float(item.get("score") or 0.0), 4),
+                "reason": (
+                    "embedding similarity to malicious training package"
+                    if item.get("label") == 1
+                    else "embedding similarity to training package"
+                ),
+            }
+            for item in hits[:limit]
+        ]
 
     def _load_model(self) -> None:
         if self._load_pyg_model():
@@ -203,6 +229,25 @@ class PackageRiskModelRegistry:
             logits = self._pyg_model(data)
             probabilities = torch.softmax(logits, dim=1)
         return float(probabilities[0, 1].detach().cpu().item())
+
+    def _embedding_for_features(self, values: dict[str, float]) -> np.ndarray | None:
+        if self._pyg_model is None or self._pyg_torch is None or self._pyg_data_cls is None:
+            return None
+        row = feature_vector_from_values(self.feature_names, values)
+        torch = self._pyg_torch
+        data = self._pyg_data_cls(
+            x=torch.tensor([row.tolist()], dtype=torch.float32),
+            edge_index=torch.empty((2, 0), dtype=torch.long),
+        )
+        self._pyg_model.eval()
+        with torch.no_grad():
+            embedding = self._pyg_model.encode(data.x, data.edge_index, apply_dropout=False)
+        return embedding.detach().cpu().numpy().reshape(-1)
+
+    def _package_embedding_index(self) -> PackageEmbeddingIndex:
+        if self._embedding_index is None:
+            self._embedding_index = PackageEmbeddingIndex(self.model_dir)
+        return self._embedding_index
 
     def _load_sklearn_model(self) -> bool:
         model_path = self.model_dir / "package_risk.pkl"

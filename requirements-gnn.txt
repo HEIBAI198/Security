@@ -1,0 +1,7 @@
+numpy>=1.24,<2.4
+scikit-learn>=1.4,<2.0
+
+# Optional standard GNN upgrade path. The current one-week GraphSAGE-style
+# trainer runs on NumPy, so these are not required for the demo pipeline.
+# torch
+# torch-geometric

@@ -1,6 +1,13 @@
 import unittest
+import tempfile
+from pathlib import Path
+from unittest import mock
+
+import json
+import numpy as np
 
 from supplyguard.graph_rag import graph_rag_retrieve
+from supplyguard.package_embeddings import PackageEmbeddingIndex
 
 
 class GraphRagRetrievalTests(unittest.TestCase):
@@ -184,6 +191,41 @@ class GraphRagRetrievalTests(unittest.TestCase):
 
         self.assertEqual(result["top_attack_paths"][0]["id"], "path:runtime")
         self.assertEqual([edge["id"] for edge in result["top_edges"]], ["edge:path"])
+
+    def test_embedding_channel_boosts_similar_dependency_node(self):
+        graph = {
+            "nodes": [
+                {"id": "pkg:npm:evil", "label": "npm:evil", "type": "DependencyPackage", "risk": "critical", "score": 95, "properties": {"properties": {"gnn_score": 0.9}}},
+                {"id": "pkg:npm:near", "label": "npm:near", "type": "DependencyPackage", "risk": "low", "score": 5},
+            ],
+            "edges": [
+                {"id": "edge:near", "source": "pkg:npm:evil", "target": "pkg:npm:near", "type": "SIMILAR_PACKAGE"}
+            ],
+            "attack_paths": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            np.save(root / "package_embeddings.npy", np.asarray([[1.0, 0.0], [0.99, 0.01]], dtype=np.float32))
+            (root / "package_embedding_index.json").write_text(
+                json.dumps(
+                    [
+                        {"index": 0, "id": "pkg:npm:evil", "ecosystem": "npm", "package": "evil"},
+                        {"index": 1, "id": "pkg:npm:near", "ecosystem": "npm", "package": "near"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch(
+                "supplyguard.graph_rag_retrievers.PackageEmbeddingIndex",
+                return_value=PackageEmbeddingIndex(root),
+            ):
+                result = graph_rag_retrieve(graph, "evil dependency risk", max_nodes=2)
+
+        self.assertTrue(result["channels"]["embedding"])
+        self.assertIn("pkg:npm:near", [node["id"] for node in result["top_nodes"]])
+        near_node = next(node for node in result["top_nodes"] if node["id"] == "pkg:npm:near")
+        self.assertTrue(any("embedding similarity" in reason for reason in near_node["why_selected"]))
+        self.assertIn("embedding=", result["context"])
 
 
 if __name__ == "__main__":

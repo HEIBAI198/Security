@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from .package_embeddings import PackageEmbeddingIndex
+
 
 TOKEN_RE = re.compile(r"[@A-Za-z0-9_.:/-]+")
 SEVERITY_WEIGHT = {"critical": 1.0, "high": 0.75, "medium": 0.45, "low": 0.2}
@@ -27,6 +29,8 @@ def retrieve_channels(
     graph_payload: dict[str, Any],
     query: str,
     intent: str,
+    *,
+    embedding_index: PackageEmbeddingIndex | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     graph_payload = graph_payload if isinstance(graph_payload, dict) else {}
     nodes = [node for node in safe_list(graph_payload.get("nodes")) if isinstance(node, dict)]
@@ -39,7 +43,7 @@ def retrieve_channels(
         "keyword": _keyword_channel(nodes, attack_paths, tokens),
         "risk": _risk_channel(nodes),
         "attack_path": _attack_path_channel(attack_paths, tokens, intent),
-        "embedding": _embedding_channel(),
+        "embedding": _embedding_channel(nodes, embedding_index=embedding_index),
     }
 
 
@@ -214,5 +218,70 @@ def _attack_path_channel(
     return sorted(candidates, key=lambda item: (-float(item["score"]), str(item["id"])))
 
 
-def _embedding_channel() -> list[dict[str, Any]]:
-    return []
+def _embedding_channel(
+    nodes: list[dict[str, Any]],
+    *,
+    embedding_index: PackageEmbeddingIndex | None = None,
+) -> list[dict[str, Any]]:
+    index = embedding_index or PackageEmbeddingIndex()
+    if not index.available:
+        return []
+
+    node_by_record_id = {
+        record.id: node
+        for node in nodes
+        if (record := index.record_for_node(node)) is not None
+    }
+    if not node_by_record_id:
+        return []
+
+    candidate_nodes = [
+        node for node in node_by_record_id.values()
+        if graph_gnn_score(node) > 0 or graph_risk_score(node) >= 0.75
+    ] or list(node_by_record_id.values())
+    seed_nodes = sorted(
+        candidate_nodes,
+        key=lambda node: (
+            -(graph_gnn_score(node) + graph_risk_score(node)),
+            str(node.get("id") or ""),
+        ),
+    )[:5]
+    allowed_ids = set(node_by_record_id)
+    hits: dict[str, dict[str, Any]] = {}
+    for seed_node in seed_nodes:
+        seed_record = index.record_for_node(seed_node)
+        if seed_record is None:
+            continue
+        seed_vector = index.vector_for_record(seed_record)
+        if seed_vector is None:
+            continue
+        similar = index.similar_to_vector(
+            seed_vector,
+            limit=8,
+            allowed_ids=allowed_ids,
+            exclude_ids={seed_record.id},
+        )
+        source_package = _display_package(seed_record.ecosystem, seed_record.package)
+        for item in similar:
+            node_id = str(item.get("id") or "")
+            if not node_id:
+                continue
+            score = float(item.get("score") or 0.0)
+            existing = hits.get(node_id)
+            if existing and float(existing.get("score") or 0.0) >= score:
+                continue
+            hits[node_id] = {
+                "kind": "node",
+                "id": node_id,
+                "score": score,
+                "similarity": float(item.get("similarity") or 0.0),
+                "reason": "embedding_similarity",
+                "source_package": source_package,
+                "matched_package": _display_package(str(item.get("ecosystem") or ""), str(item.get("package") or "")),
+            }
+
+    return sorted(hits.values(), key=lambda item: (-float(item["score"]), str(item["id"])))[:10]
+
+
+def _display_package(ecosystem: str, package: str) -> str:
+    return f"{ecosystem}:{package}" if ecosystem and package else package or ecosystem

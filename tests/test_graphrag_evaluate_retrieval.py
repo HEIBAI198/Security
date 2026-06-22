@@ -15,6 +15,7 @@ class GraphRagEvaluationTests(unittest.TestCase):
                     "top_attack_paths": [{"id": "path:1"}],
                     "evidence_table": [{"id": "dep:evil"}],
                     "retrieval_trace": [{"stage": "keyword"}],
+                    "channels": {"embedding": [{"id": "dep:near"}]},
                 },
             }
         ]
@@ -25,6 +26,7 @@ class GraphRagEvaluationTests(unittest.TestCase):
         self.assertEqual(metrics["target_dependency_recall"], 1.0)
         self.assertEqual(metrics["target_attack_path_recall"], 1.0)
         self.assertEqual(metrics["retrieval_trace_completeness"], 1.0)
+        self.assertEqual(metrics["embedding_channel_hit_rate"], 1.0)
 
 
 if __name__ == "__main__":

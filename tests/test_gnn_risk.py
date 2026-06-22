@@ -387,6 +387,35 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertGreaterEqual(result["gnn_score"], 0.0)
             self.assertLessEqual(result["gnn_score"], 1.0)
 
+    @unittest.skipUnless(HAS_TORCH_PYG, "torch/PyG not installed")
+    def test_pyg_model_returns_similar_packages_from_embeddings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "features"
+            model_dir = root / "model"
+            data_dir.mkdir()
+            self._write_pyg_graphsage_fixture(data_dir)
+            train_pyg_graphsage_package_risk(
+                data_dir,
+                model_dir,
+                epochs=2,
+                hidden_dim=4,
+                dropout=0.0,
+                random_state=19,
+            )
+
+            scorer = PackageRiskScorer(model_dir)
+            result = scorer.score_package("npm", "evil", "1.0.0", ["postinstall token"], [])
+
+            self._assert_common_fields(result)
+            self.assertEqual(result["gnn_model_type"], "pyg_graphsage_package_risk")
+            self.assertTrue(result["similar_malicious_packages"])
+            similar = result["similar_malicious_packages"][0]
+            self.assertIn("package", similar)
+            self.assertIn("ecosystem", similar)
+            self.assertIn("score", similar)
+            self.assertIn("reason", similar)
+
 
 if __name__ == "__main__":
     unittest.main()
