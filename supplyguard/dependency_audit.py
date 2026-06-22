@@ -29,6 +29,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import ROOT
+from .gnn_risk import PackageRiskScorer, score_dependency_payload
 from .project_imports import ImportErrorDetail, load_import, load_latest_import
 
 try:
@@ -321,6 +322,14 @@ KNOWN_LICENSES = {
 }
 
 COPYLEFT_LICENSE_HINTS = {"GPL", "AGPL", "LGPL", "SSPL"}
+_GNN_SCORER: PackageRiskScorer | None = None
+
+
+def dependency_gnn_scorer() -> PackageRiskScorer:
+    global _GNN_SCORER
+    if _GNN_SCORER is None:
+        _GNN_SCORER = PackageRiskScorer()
+    return _GNN_SCORER
 
 
 class DependencyAuditRequest(BaseModel):
@@ -3168,7 +3177,7 @@ def serialize_dependency_audit(result: DependencyAuditResult | None) -> dict[str
 
 
 def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
-    return {
+    payload = {
         "name": dependency.name,
         "version": dependency.version,
         "ecosystem": dependency.ecosystem,
@@ -3188,6 +3197,20 @@ def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
         "dependency_type": dependency.dependency_type,
         "resolved": dependency.resolved,
     }
+    gnn_risk = score_dependency_payload(payload, scorer=dependency_gnn_scorer())
+    payload.update(
+        {
+            "gnn_score": gnn_risk["gnn_score"],
+            "gnn_label": gnn_risk["gnn_label"],
+            "gnn_reasons": gnn_risk["gnn_reasons"],
+            "gnn_model_available": gnn_risk["model_available"],
+            "gnn_model_type": gnn_risk["model_type"],
+            "gnn_confidence": gnn_risk.get("gnn_confidence", 0.0),
+            "gnn_explanations": gnn_risk.get("gnn_explanations", []),
+            "similar_malicious_packages": gnn_risk.get("similar_malicious_packages", []),
+        }
+    )
+    return payload
 
 
 def serialize_tool_status(status: ToolStatus) -> dict[str, Any]:

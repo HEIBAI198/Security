@@ -89,8 +89,9 @@ from ..multimodal_audit import (
     run_multimodal_text_audit,
     serialize_multimodal_audit,
 )
+from ..graph_rag import graph_rag_retrieve
 from ..knowledge_graph import build_knowledge_graph, build_unified_facts
-from ..llm_assistant import ask_deepseek_security_assistant
+from ..llm_assistant import ask_deepseek_security_assistant, assistant_retrieval_with_graph_rag
 from ..project_imports import ImportErrorDetail, load_import
 from ..workspaces import (
     create_workspace,
@@ -558,6 +559,7 @@ def build_security_report_from_payload(payload: dict[str, Any]) -> str:
         for index, item in enumerate(evidence_for_report(attack_paths, evidence), start=1)
     )
     multimodal_section = render_multimodal_fusion_section(payload)
+    graph_rag_gnn_section = render_graph_rag_gnn_section(payload)
     actions = "\n".join(render_recommendation(item, index) for index, item in enumerate(attack_paths[:8], start=1))
     if not actions:
         actions = "\n".join(f"- {action}" for action in payload["assistant"]["next_actions"])
@@ -613,6 +615,10 @@ def build_security_report_from_payload(payload: dict[str, Any]) -> str:
 ## 多模态证据融合
 
 {multimodal_section}
+
+## GraphRAG / GNN 风险增强
+
+{graph_rag_gnn_section}
 
 ## 修复建议
 
@@ -699,6 +705,100 @@ def render_multimodal_fusion_section(payload: dict[str, Any]) -> str:
 | Evidence ID | 类型 | 风险 | 关联实体 | 命中规则 | 识别文本摘要 |
 | --- | --- | --- | --- | --- | --- |
 {chr(10).join(rows) or '| - | - | - | - | - | - |'}"""
+
+
+def render_graph_rag_gnn_section(payload: dict[str, Any]) -> str:
+    graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else {}
+    nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict)]
+    gnn_nodes = [
+        node for node in nodes
+        if isinstance(graph_node_raw_properties(node).get("gnn_score"), (int, float))
+    ]
+    model_info = graph_model_info()
+    scores = [
+        float(graph_node_raw_properties(node).get("gnn_score"))
+        for node in gnn_nodes
+        if isinstance(graph_node_raw_properties(node).get("gnn_score"), (int, float))
+    ]
+    high_risk = [score for score in scores if score >= 0.75]
+    top_rows = "\n".join(render_gnn_node_report_row(node) for node in sorted(
+        gnn_nodes,
+        key=lambda item: -float(graph_node_raw_properties(item).get("gnn_score") or 0.0),
+    )[:5])
+    graph_rag = payload.get("graph_rag") if isinstance(payload.get("graph_rag"), dict) else {}
+    evidence_rows = "\n".join(
+        "- {kind} `{id}`：{summary}".format(
+            kind=markdown_cell(row.get("kind") or "evidence"),
+            id=markdown_cell(row.get("id") or row.get("label") or "-"),
+            summary=markdown_cell(short_text(row.get("summary") or row.get("title") or "-", 120)),
+        )
+        for row in graph_rag.get("evidence_table", [])[:5]
+        if isinstance(row, dict)
+    )
+    missing_rows = "\n".join(
+        "- {kind}：{reason}".format(
+            kind=markdown_cell(item.get("kind") or "missing"),
+            reason=markdown_cell(item.get("reason") or "-"),
+        )
+        for item in graph_rag.get("missing_evidence", [])[:5]
+        if isinstance(item, dict)
+    )
+    embedding_hits = 0
+    channels = graph_rag.get("channels") if isinstance(graph_rag.get("channels"), dict) else {}
+    if isinstance(channels.get("embedding"), list):
+        embedding_hits = len(channels["embedding"])
+    return f"""- GNN 模型类型：{markdown_cell(model_info.get('model_type') or '-')}
+- 训练设备：{markdown_cell(model_info.get('device') or '-')}；torch={markdown_cell(model_info.get('torch_version') or '-')}；CUDA={markdown_cell(model_info.get('torch_cuda_version') or '-')}
+- 测试集 F1：{markdown_cell(model_info.get('test_f1') or '-')}
+- 带 GNN 分数的图谱节点：{len(gnn_nodes)}
+- 高风险 GNN 节点：{len(high_risk)}
+- GraphRAG embedding 命中：{embedding_hits}
+- 说明：当前指标基于构造数据集和本地负样本，不能等同真实世界恶意包检测准确率。
+
+| 依赖节点 | GNN 分数 | 标签 | 解释 |
+| --- | ---: | --- | --- |
+{top_rows or '| - | - | - | 暂无 GNN 风险节点 |'}
+
+GraphRAG 证据摘要：
+{evidence_rows or '- 当前报告未附带 assistant GraphRAG 查询结果。'}
+
+证据缺口：
+{missing_rows or '- 当前 GraphRAG 查询未报告证据缺口。'}"""
+
+
+def graph_node_raw_properties(node: dict[str, Any]) -> dict[str, Any]:
+    properties = node.get("properties") if isinstance(node.get("properties"), dict) else {}
+    nested = properties.get("properties")
+    return nested if isinstance(nested, dict) else properties
+
+
+def render_gnn_node_report_row(node: dict[str, Any]) -> str:
+    raw = graph_node_raw_properties(node)
+    reasons = raw.get("gnn_explanations") or raw.get("gnn_reasons") or []
+    if not isinstance(reasons, list):
+        reasons = []
+    return "| {label} | {score:.2f} | {label_name} | {reason} |".format(
+        label=markdown_cell(node.get("label") or node.get("id") or "-"),
+        score=float(raw.get("gnn_score") or 0.0),
+        label_name=markdown_cell(raw.get("gnn_label") or "-"),
+        reason=markdown_cell(short_text("; ".join(str(item) for item in reasons[:2]), 120) or "-"),
+    )
+
+
+def graph_model_info() -> dict[str, str]:
+    path = Path("storage/graph_models/graphsage_eval.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        test = payload.get("splits", {}).get("test", {}) if isinstance(payload.get("splits"), dict) else {}
+        return {
+            "model_type": str(payload.get("model_type") or "-"),
+            "device": str(payload.get("device") or "-"),
+            "torch_version": str(payload.get("torch_version") or "-"),
+            "torch_cuda_version": str(payload.get("torch_cuda_version") or "-"),
+            "test_f1": f"{float(test.get('f1')):.4f}" if isinstance(test.get("f1"), (int, float)) else "-",
+        }
+    except Exception:
+        return {}
 
 
 def render_attack_path_section(
@@ -3012,8 +3112,20 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
     question = payload.question.strip()
     workspace = build_workspace_payload()
     base = workspace["assistant"]
+    graph_rag_result: dict[str, Any] | None = None
+    if isinstance(workspace.get("graph"), dict):
+        try:
+            graph_rag_result = graph_rag_retrieve(workspace["graph"], question)
+        except Exception:
+            graph_rag_result = None
+    retrieval = assistant_retrieval_with_graph_rag(base["retrieval"], graph_rag_result)
     try:
-        deepseek_answer = await ask_deepseek_security_assistant(question, workspace, base["retrieval"])
+        deepseek_answer = await ask_deepseek_security_assistant(
+            question,
+            workspace,
+            retrieval,
+            graph_rag=graph_rag_result,
+        )
     except (httpx.HTTPError, ValueError):
         deepseek_answer = None
 
@@ -3021,7 +3133,8 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
         return {
             "question": question,
             "answer": deepseek_answer["answer"],
-            "retrieval": base["retrieval"],
+            "retrieval": retrieval,
+            "graph_rag": graph_rag_result,
             "next_actions": base["next_actions"],
             "model": deepseek_answer["model"],
         }
@@ -3031,7 +3144,8 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
     return {
         "question": question,
         "answer": answer,
-        "retrieval": base["retrieval"],
+        "retrieval": retrieval,
+        "graph_rag": graph_rag_result,
         "next_actions": base["next_actions"],
         "model": "demo-rag-security-analyst",
     }

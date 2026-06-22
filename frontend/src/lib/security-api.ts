@@ -190,6 +190,19 @@ export type SecurityDependency = {
   reachability?: DependencyReachability
   vex?: VexStatement[]
   recommendation: string
+  gnn_score?: number
+  gnn_label?: 'low' | 'elevated' | 'high' | string
+  gnn_reasons?: string[]
+  gnn_model_available?: boolean
+  gnn_model_type?: string
+  gnn_confidence?: number
+  gnn_explanations?: string[]
+  similar_malicious_packages?: Array<{
+    package?: string
+    ecosystem?: string
+    score?: number
+    reason?: string
+  }>
 }
 
 export type DependencyReachability = {
@@ -764,6 +777,7 @@ export type SecurityGraphNode = {
   source_model?: string
   evidence_ids?: string[]
   properties?: Record<string, unknown>
+  why_selected?: string[]
   position?: {
     x: number
     y: number
@@ -780,6 +794,7 @@ export type SecurityGraphEdge = {
   reason?: string
   evidence_ids?: string[]
   properties?: Record<string, unknown>
+  why_selected?: string[]
 }
 
 export type SecurityAttackPath = {
@@ -848,6 +863,36 @@ export type SecurityAttackPath = {
   }>
   mappings?: Array<Record<string, unknown>>
   references?: string[]
+  why_selected?: string[]
+}
+
+export interface SecurityGraphRagChannelHit {
+  id?: string
+  kind?: string
+  node_id?: string
+  path_id?: string
+  score?: number
+  similarity?: number
+  reason?: string
+  matches?: string[]
+}
+
+export interface SecurityGraphRagEvidenceRow {
+  kind?: string
+  id?: string
+  summary?: string
+  source?: string
+}
+
+export interface SecurityGraphRagTraceItem {
+  stage?: string
+  detail?: string
+  [key: string]: unknown
+}
+
+export interface SecurityGraphRagMissingEvidence {
+  kind?: string
+  reason?: string
 }
 
 export type SecurityFactAsset = {
@@ -925,6 +970,28 @@ export type SecurityAssistantPayload = {
   answer: string
   retrieval: string[]
   next_actions: string[]
+}
+
+export type SecurityGraphRagResult = {
+  query?: string
+  intent?: string
+  channels?: Record<string, SecurityGraphRagChannelHit[]>
+  seed_node_ids?: string[]
+  expanded_node_ids?: string[]
+  top_nodes?: SecurityGraphNode[]
+  top_edges?: SecurityGraphEdge[]
+  top_attack_paths?: SecurityAttackPath[]
+  evidence_table?: SecurityGraphRagEvidenceRow[]
+  retrieval_trace?: SecurityGraphRagTraceItem[]
+  missing_evidence?: SecurityGraphRagMissingEvidence[]
+  context?: string
+  explanation?: {
+    method?: string
+    seed_count?: number
+    hop_limit?: number
+    ranking?: string
+    [key: string]: unknown
+  }
 }
 
 export type SecurityWorkspace = {
@@ -1033,6 +1100,7 @@ export type SecurityAssistantResponse = {
   question: string
   answer: string
   retrieval: string[]
+  graph_rag?: SecurityGraphRagResult | null
   next_actions: string[]
   model: string
 }

@@ -22,7 +22,11 @@ outputs/
 storage/imports/
 storage/code_audit/
 storage/agent_runs/
+storage/gnn_datasets/
+storage/graph_models/
+storage/eval/
 storage/*.log
+datasets/
 .tmp-shadcn-admin/
 frontend/node_modules/
 frontend/dist/
