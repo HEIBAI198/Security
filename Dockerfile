@@ -8,7 +8,7 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-FROM python:3.12-slim
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 ARG GITLEAKS_VERSION=8.30.1
 
