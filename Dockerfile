@@ -27,6 +27,10 @@ RUN apt-get update \
     | tar -xz -C /usr/local/bin gitleaks \
   && chmod +x /usr/local/bin/gitleaks
 
+COPY requirements-gnn-pyg.txt .
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
+  && pip install --no-cache-dir torch_geometric
+
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 
