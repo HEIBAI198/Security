@@ -769,6 +769,21 @@
       "fixed": 0,
       "ignored": 0,
       "tools": []
+    },
+    {
+      "scan_id": "cicd-20260618090131",
+      "generated_at": "2026-06-18T09:01:31.007477+00:00",
+      "target_key": "import:imp_91c9f0f3fffd",
+      "projectName": "3CX X_TRADER replay",
+      "total": 3,
+      "critical": 0,
+      "high": 2,
+      "medium": 0,
+      "low": 1,
+      "new": 3,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": []
     }
   ]
 }
