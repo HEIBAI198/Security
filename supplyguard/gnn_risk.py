@@ -22,6 +22,11 @@ RISK_KEYWORDS = (
     "obfuscat",
 )
 
+RISK_KEYWORD_PATTERNS = tuple(
+    re.compile(rf"(?<![a-z0-9-]){re.escape(keyword)}(?![a-z0-9-])", re.IGNORECASE)
+    for keyword in RISK_KEYWORDS
+)
+
 
 def normalize_ecosystem(value: Any) -> str:
     text = str(value or "").strip().lower()
@@ -73,6 +78,7 @@ class PackageRiskScorer:
             if isinstance(vuln, dict)
         )
         text = f"{normalized_name} {version} {signal_text} {vulnerability_text}"
+        evidence_text = f"{signal_text} {vulnerability_text}"
 
         feature_values = self._feature_values(
             normalized_ecosystem,
@@ -81,6 +87,7 @@ class PackageRiskScorer:
             signals or [],
             vulnerabilities or [],
             text,
+            evidence_text=evidence_text,
         )
 
         prediction = self.registry.predict(feature_values)
@@ -120,8 +127,17 @@ class PackageRiskScorer:
         signals: list[Any],
         vulnerabilities: list[dict[str, Any]],
         text: str,
+        evidence_text: str | None = None,
     ) -> dict[str, float]:
-        risk_keyword_count = float(sum(1 for keyword in RISK_KEYWORDS if keyword in text.lower()))
+        keyword_text = evidence_text
+        if keyword_text is None:
+            keyword_text = " ".join(str(item) for item in signals)
+            keyword_text = f"{keyword_text} " + " ".join(
+                " ".join(str(value) for value in vuln.values())
+                for vuln in vulnerabilities
+                if isinstance(vuln, dict)
+            )
+        risk_keyword_count = float(_risk_keyword_count(keyword_text))
         signal_count = float(len(signals))
         vulnerability_count = float(len(vulnerabilities))
         return {
@@ -154,7 +170,13 @@ class PackageRiskScorer:
             score += 0.3
         if signals:
             score += 0.15
-        if any(keyword in text.lower() for keyword in RISK_KEYWORDS):
+        keyword_text = " ".join(str(item) for item in signals)
+        keyword_text = f"{keyword_text} " + " ".join(
+            " ".join(str(value) for value in vuln.values())
+            for vuln in vulnerabilities
+            if isinstance(vuln, dict)
+        )
+        if _risk_keyword_count(keyword_text) > 0:
             score += 0.2
         score += min(max(float(existing_risk or 0), 0.0), 100.0) / 100.0 * 0.2
         return max(0.0, min(1.0, score))
@@ -217,3 +239,7 @@ def score_dependency_payload(
         vulnerabilities=list(dependency.get("vulnerabilities") or []),
         existing_risk=dependency.get("risk") or 0,
     )
+
+
+def _risk_keyword_count(text: str) -> int:
+    return sum(1 for pattern in RISK_KEYWORD_PATTERNS if pattern.search(text or ""))

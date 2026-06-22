@@ -11,7 +11,7 @@ from scripts.gnn.train_package_risk import train_package_risk
 from scripts.gnn.train_graphsage_package_risk import train_graphsage_package_risk
 from scripts.gnn.train_pyg_graphsage_package_risk import train_pyg_graphsage_package_risk
 from supplyguard.gnn_models import PackageRiskModelRegistry
-from supplyguard.gnn_risk import PackageRiskScorer
+from supplyguard.gnn_risk import PackageRiskScorer, _risk_keyword_count
 
 
 HAS_TORCH_PYG = bool(importlib.util.find_spec("torch") and importlib.util.find_spec("torch_geometric"))
@@ -41,6 +41,25 @@ class PackageRiskScorerTests(unittest.TestCase):
         self.assertIsInstance(result["gnn_reasons"], list)
         self.assertIsInstance(result["gnn_explanations"], list)
         self.assertIsInstance(result["similar_malicious_packages"], list)
+
+    def test_package_name_substrings_do_not_count_as_risk_keywords(self):
+        scorer = PackageRiskScorer(Path("definitely-missing-model-dir"))
+
+        asttokens = scorer._feature_values("pypi", "asttokens", "3.0.1", [], [], "asttokens 3.0.1")
+        pure_eval = scorer._feature_values("pypi", "pure-eval", "0.2.3", [], [], "pure-eval 0.2.3")
+        suspicious = scorer._feature_values(
+            "npm",
+            "x-trader-codec",
+            "4.7.1",
+            ["install script: postinstall"],
+            [],
+            "x-trader-codec 4.7.1 install script: postinstall",
+        )
+
+        self.assertEqual(asttokens["risk_keyword_count"], 0.0)
+        self.assertEqual(pure_eval["risk_keyword_count"], 0.0)
+        self.assertEqual(_risk_keyword_count("pure-eval 0.2.3"), 0)
+        self.assertGreaterEqual(suspicious["risk_keyword_count"], 1.0)
 
     def _write_graphsage_fixture(self, data_dir: Path):
         (data_dir / "feature_schema.json").write_text(
