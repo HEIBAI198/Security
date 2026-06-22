@@ -89,8 +89,9 @@ from ..multimodal_audit import (
     run_multimodal_text_audit,
     serialize_multimodal_audit,
 )
+from ..graph_rag import graph_rag_retrieve
 from ..knowledge_graph import build_knowledge_graph, build_unified_facts
-from ..llm_assistant import ask_deepseek_security_assistant
+from ..llm_assistant import ask_deepseek_security_assistant, assistant_retrieval_with_graph_rag
 from ..project_imports import ImportErrorDetail, load_import
 from ..workspaces import (
     create_workspace,
@@ -3012,8 +3013,20 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
     question = payload.question.strip()
     workspace = build_workspace_payload()
     base = workspace["assistant"]
+    graph_rag_result: dict[str, Any] | None = None
+    if isinstance(workspace.get("graph"), dict):
+        try:
+            graph_rag_result = graph_rag_retrieve(workspace["graph"], question)
+        except Exception:
+            graph_rag_result = None
+    retrieval = assistant_retrieval_with_graph_rag(base["retrieval"], graph_rag_result)
     try:
-        deepseek_answer = await ask_deepseek_security_assistant(question, workspace, base["retrieval"])
+        deepseek_answer = await ask_deepseek_security_assistant(
+            question,
+            workspace,
+            retrieval,
+            graph_rag=graph_rag_result,
+        )
     except (httpx.HTTPError, ValueError):
         deepseek_answer = None
 
@@ -3021,7 +3034,8 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
         return {
             "question": question,
             "answer": deepseek_answer["answer"],
-            "retrieval": base["retrieval"],
+            "retrieval": retrieval,
+            "graph_rag": graph_rag_result,
             "next_actions": base["next_actions"],
             "model": deepseek_answer["model"],
         }
@@ -3031,7 +3045,8 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
     return {
         "question": question,
         "answer": answer,
-        "retrieval": base["retrieval"],
+        "retrieval": retrieval,
+        "graph_rag": graph_rag_result,
         "next_actions": base["next_actions"],
         "model": "demo-rag-security-analyst",
     }

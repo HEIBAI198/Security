@@ -35,6 +35,7 @@ async def ask_deepseek_security_assistant(
     question: str,
     workspace: dict[str, Any],
     retrieval: list[str],
+    graph_rag: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not deepseek_enabled():
         return None
@@ -49,7 +50,7 @@ async def ask_deepseek_security_assistant(
                     "\u8bf7\u56de\u7b54\u4e0b\u9762\u7684\u5b89\u5168\u5206\u6790\u95ee\u9898\u3002\n\n"
                     f"\u95ee\u9898\uff1a{question}\n\n"
                     "\u5de5\u4f5c\u53f0\u4e0a\u4e0b\u6587\uff1a\n"
-                    f"{build_assistant_context(workspace, retrieval)}"
+                    f"{build_assistant_context(workspace, retrieval, graph_rag=graph_rag)}"
                 ),
             },
         ],
@@ -81,7 +82,11 @@ async def ask_deepseek_security_assistant(
     }
 
 
-def build_assistant_context(workspace: dict[str, Any], retrieval: list[str]) -> str:
+def build_assistant_context(
+    workspace: dict[str, Any],
+    retrieval: list[str],
+    graph_rag: dict[str, Any] | None = None,
+) -> str:
     context = {
         "workspace": workspace.get("workspace"),
         "summary": workspace.get("summary"),
@@ -94,7 +99,36 @@ def build_assistant_context(workspace: dict[str, Any], retrieval: list[str]) -> 
         "retrieval": retrieval[:8],
         "assistant_next_actions": (workspace.get("assistant") or {}).get("next_actions"),
     }
+    if isinstance(graph_rag, dict):
+        context["graph_rag"] = {
+            "context": graph_rag.get("context"),
+            "intent": graph_rag.get("intent"),
+            "explanation": graph_rag.get("explanation"),
+            "evidence_table": safe_slice(graph_rag.get("evidence_table"), limit=8),
+            "missing_evidence": safe_slice(graph_rag.get("missing_evidence"), limit=6),
+            "retrieval_trace": safe_slice(graph_rag.get("retrieval_trace"), limit=8),
+            "top_nodes": safe_slice(graph_rag.get("top_nodes"), limit=6),
+            "top_edges": safe_slice(graph_rag.get("top_edges"), limit=6),
+            "top_attack_paths": safe_slice(graph_rag.get("top_attack_paths"), limit=3),
+        }
     return short_json(context, limit=12000)
+
+
+def assistant_retrieval_with_graph_rag(
+    retrieval: list[str],
+    graph_rag: dict[str, Any] | None,
+) -> list[str]:
+    merged: list[str] = []
+    graph_context = ""
+    if isinstance(graph_rag, dict):
+        graph_context = str(graph_rag.get("context") or "").strip()
+    if graph_context:
+        merged.append(graph_context)
+    for item in retrieval:
+        text = str(item).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
 
 
 def safe_slice(value: Any, *, limit: int) -> list[Any]:
