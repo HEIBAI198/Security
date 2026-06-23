@@ -2376,7 +2376,11 @@ def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[st
     if bundle.results.log_audit is not None:
         LAST_LOG_AUDIT = bundle.results.log_audit
 
-    workspace = build_workspace_payload()
+    workspace = (
+        persist_current_workspace(workspace_id, module_key="agent", module_payload=bundle.payload)
+        if workspace_id
+        else build_workspace_payload()
+    )
     result = {
         **bundle.payload,
         "workspace": workspace,
@@ -2384,12 +2388,6 @@ def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[st
     }
     if workspace_id:
         result["workspaceId"] = workspace_id
-        result["workspace"] = save_workspace_snapshot(
-            workspace,
-            workspace_id=workspace_id,
-            module_key="agent",
-            module_payload=bundle.payload,
-        )
     LAST_AGENT_RUN = result
     return result
 

@@ -30,6 +30,7 @@ datasets/
 .tmp-shadcn-admin/
 frontend/node_modules/
 frontend/dist/
+mcp/node_modules/
 static/
 site/
 tools/docx-gen/node_modules/

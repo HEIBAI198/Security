@@ -8228,7 +8228,11 @@ function AgentCommandCenter({
     }
     setAgentBusy(true)
     try {
-      const request = agentRequestFromForm(form)
+      const workspaceId = workspace.workspaceId || workspace.workspace?.workspaceId
+      const request = {
+        ...agentRequestFromForm(form),
+        ...(workspaceId ? { workspaceId } : {}),
+      }
       const created = await createSecurityAgentJob(request)
       setAgentRun(created)
       setDefenseBrief(null)
