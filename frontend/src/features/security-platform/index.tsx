@@ -6439,21 +6439,21 @@ function buildOrderedBuildSteps(
   // Group pipeline steps by step type, take latest for each unique step
   const seen = new Map<string, SecurityPipelineStep>()
   for (const s of pipeline) {
-    if (!BUILD_STEP_ORDER[s.step]) continue
-    const existing = seen.get(s.step)
-    if (!existing || (s.time || '') > (existing.time || '')) {
-      seen.set(s.step, s)
+    if (BUILD_STEP_ORDER[s.step]) {
+      const existing = seen.get(s.step)
+      if (!existing || (s.time || '') > (existing.time || '')) {
+        seen.set(s.step, s)
+      }
     }
   }
 
+  // ALWAYS generate all 7 defined steps, even if pipeline data is missing
   const steps: BuildChainStep[] = []
-  for (const [stepType, s] of seen) {
-    const def = BUILD_STEP_ORDER[stepType]
-    if (!def) continue
-    // Match findings to this step type
+  for (const [stepType, def] of Object.entries(BUILD_STEP_ORDER)) {
+    const s = seen.get(stepType)  // may be undefined if step not in pipeline
     const related = findings.filter(f => {
       const ids = cicdFindingNodeIds(f)
-      return ids.includes(stepType) || ids.includes(s.step)
+      return ids.includes(stepType) || (s ? ids.includes(s.step) : false)
     })
     const riskScore = related.reduce((max, f) => Math.max(max, f.score), 0)
     const riskLevel: SecuritySeverity | 'normal' =
@@ -6462,13 +6462,13 @@ function buildOrderedBuildSteps(
     steps.push({
       index: def.index,
       title: def.title,
-      mainEntity: s.name || s.step,
-      description: s.detail || s.actor || '',
-      time: s.time?.slice(0, 16).replace('T', ' ') || '',
-      source: s.actor || stepType,
+      mainEntity: s?.name || s?.step || '—',
+      description: s?.detail || s?.actor || '等待扫描数据',
+      time: s?.time?.slice(0, 16).replace('T', ' ') || '',
+      source: s?.actor || stepType,
       riskLevel,
-      status: s.status || 'observed',
-      stepData: s,
+      status: s?.status || 'waiting',
+      stepData: s || null,
       relatedFindings: related,
       riskCount: related.length,
     })
@@ -6494,7 +6494,7 @@ function CicdConclusionStrip({
         <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2.5 py-1 text-xs font-semibold text-orange-100'>构建链可复现性风险</span>
       </div>
       <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>主要风险</div><div className='truncate text-sm font-bold text-slate-100' title={primary}>{primary}</div></div>
-      <div><div className='text-[11px] font-medium text-slate-500'>影响范围</div><div className='text-sm font-semibold text-slate-200'>{audit.summary.workflow_count} workflows / {audit.summary.total_steps} steps</div></div>
+      <div><div className='text-[11px] font-medium text-slate-500'>影响范围</div><div className='text-sm font-semibold text-slate-200'>{audit.workflows?.length || audit.summary.workflow_count || 0} workflows / {audit.summary.total_steps || audit.summary.job_count || 0} steps</div></div>
       <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>优先处理</div><div className='truncate text-sm font-semibold text-orange-100' title={priorities.join(' / ')}>{priorities.slice(0, 3).join(' / ') || '-'}</div></div>
     </div>
   )
