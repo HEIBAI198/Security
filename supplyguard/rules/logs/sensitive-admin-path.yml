@@ -1,0 +1,38 @@
+id: runtime.sensitive-admin-path
+title: Sensitive Admin Or Runtime Management Path Access
+description: Detects probes against admin, backup, database, debug, and runtime management endpoints.
+source: web
+logsource:
+  category: web
+kind: event
+severity: high
+level: high
+score: 84
+signal: 敏感路径访问
+confidence: 0.86
+fields:
+  - path
+keywords:
+  - /admin
+  - /api/admin
+  - /backup
+  - /db_backup
+  - /actuator
+  - /debug
+  - /phpmyadmin
+  - /wp-admin
+exclude_keywords:
+  - /admin/export
+path_prefix: true
+detection:
+  selection:
+    path|startswith:
+      - /admin
+      - /api/admin
+      - /backup
+      - /db_backup
+      - /actuator
+      - /debug
+      - /phpmyadmin
+      - /wp-admin
+  condition: selection

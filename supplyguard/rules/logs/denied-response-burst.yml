@@ -1,0 +1,26 @@
+id: runtime.401-403-burst
+title: 401 Or 403 Response Burst
+description: Detects a burst of denied HTTP responses in a short window.
+source: web
+logsource:
+  category: web
+kind: window
+severity: medium
+level: medium
+score: 68
+signal: 401/403 暴增
+confidence: 0.68
+statuses:
+  - 401
+  - 403
+threshold: 20
+high_threshold: 50
+window_minutes: 5
+group_by:
+  - source
+detection:
+  selection:
+    status:
+      - 401
+      - 403
+  condition: selection | count() by source >= 20 in 5m

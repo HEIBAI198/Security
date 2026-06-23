@@ -240,6 +240,9 @@ import {
   type InvestigationStepId,
   type PlatformTab,
 } from './investigation-workflow'
+import { MultimodalEvidencePanel } from './multimodal-evidence-panel'
+import { AttackChainGraph } from './attack-chain-graph'
+import { ReportPanel } from './report-panel'
 type KnowledgeGraphNode = NonNullable<
   NonNullable<SecurityWorkspace['graph']>['nodes']
 >[number]
@@ -1458,14 +1461,9 @@ export function SecurityPlatform() {
             </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='graph' className={moduleTabContentClass}>
+          <TabsContent value='graph' className={cn(moduleTabContentClass, 'h-[calc(100vh-8.5rem)]')}>
             <WorkbenchMotionLayer motionKey={`graph-${moduleViewKey}`}>
-            <ModuleQuestion
-              title='本页在回答什么问题？'
-              question='这些证据能否串成一条可信的供应链攻击路径？'
-              terms={['攻击路径', '路径可信度', '证据缺口']}
-            />
-            <KnowledgeGraph workspace={workspace} />
+            <AttackChainGraph workspace={workspace} />
             </WorkbenchMotionLayer>
           </TabsContent>
 
@@ -1540,9 +1538,12 @@ function AgentProjectSidebar({
   return (
     <aside className='flex min-h-[calc(100svh-4rem)] flex-col border-r bg-muted/20'>
       <div className='border-b p-4'>
-        <Button className={cn('w-full justify-start gap-2', actionButtonClass)} onClick={onNewConversation}>
-          <Plus className='size-4' />
-          新建对话
+        <Button className={cn('group relative w-full justify-start gap-2 overflow-hidden', actionButtonClass)} onClick={onNewConversation}>
+          <Plus className='size-4 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-90' />
+          <span className="transition-opacity duration-500 group-hover:opacity-0">新建对话</span>
+          <i className="absolute right-2 top-1 bottom-1 rounded-sm z-10 grid place-items-center transition-all duration-500 bg-white/10 w-1/5 group-hover:w-[calc(100%-0.5rem)]">
+            <Plus className='size-3.5' />
+          </i>
         </Button>
       </div>
 
@@ -1668,10 +1669,12 @@ function ConversationHistoryCard({
     >
       <Card
         className={cn(
-          'group overflow-hidden rounded-md transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-400/40 hover:bg-background hover:shadow-lg hover:shadow-cyan-950/20',
+          'group relative overflow-hidden rounded-md transition-all duration-500',
+          'before:absolute before:inset-0 before:rounded-md before:bg-background/40 before:opacity-100 before:transition-opacity before:duration-700 before:z-10 before:pointer-events-none',
+          'hover:before:opacity-0 hover:-translate-y-1 hover:shadow-lg hover:shadow-cyan-950/20',
           active
-            ? 'border-cyan-400/40 bg-background shadow-lg shadow-cyan-950/25'
-            : 'border-border/80 bg-background/60'
+            ? 'border-cyan-400/50 bg-background shadow-lg shadow-cyan-950/25 ring-1 ring-cyan-400/15'
+            : 'border-border/70 bg-background/50 grayscale-[30%] hover:grayscale-0 hover:border-cyan-400/35 hover:bg-background'
         )}
       >
       <CardContent className={cn('space-y-3 p-3 transition-[padding] duration-300', active && 'p-4')}>
@@ -6110,6 +6113,7 @@ function PipelinePanel({
 }) {
   const [scanning, setScanning] = useState(false)
   const [mutating, setMutating] = useState(false)
+  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null)
   const [activeNodeId, setActiveNodeId] = useState('all')
   const [activeClusterId, setActiveClusterId] = useState('all')
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
@@ -6119,9 +6123,9 @@ function PipelinePanel({
   const workflows = audit?.workflows ?? []
   const corePipeline = useMemo(() => buildCoreCicdPipeline(pipeline), [pipeline])
   const conclusion = buildCicdConclusion(audit, corePipeline, findings)
-  const graphNodes = useMemo(() => buildCicdGraphNodes(audit, corePipeline, findings), [audit, corePipeline, findings])
+  const buildSteps = useMemo(() => buildOrderedBuildSteps(corePipeline, findings), [corePipeline, findings])
   const riskClusters = useMemo(() => buildCicdRiskClusters(findings), [findings])
-  const selectedNode = graphNodes.find((node) => node.id === activeNodeId) ?? graphNodes[0]
+  const activeStep = buildSteps.find(s => s.index === activeStepIndex) ?? buildSteps[0]
   const filteredFindings = findings.filter((finding) => {
     if (activeNodeId !== 'all' && !cicdFindingNodeIds(finding).includes(activeNodeId)) return false
     if (activeClusterId !== 'all' && cicdRiskType(finding).id !== activeClusterId) return false
@@ -6130,7 +6134,6 @@ function PipelinePanel({
     return true
   })
   const selectedFinding = selectedFindingId ? filteredFindings.find((finding) => finding.fingerprint === selectedFindingId) : undefined
-  const selectedNodeLabel = activeNodeId === 'all' ? '全部风险' : cicdGraphNodeLabel(activeNodeId)
 
   useEffect(() => {
     if (selectedFindingId && !filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
@@ -6313,18 +6316,18 @@ function PipelinePanel({
         ) : null}
       </section>
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,25fr)_minmax(0,50fr)_minmax(0,25fr)]'>
         <CicdRiskOverviewCard audit={audit} selectedKey={audit?.scan_id ?? 'empty-cicd'} />
-        <CicdPipelineGraph
-          nodes={graphNodes}
-          activeNodeId={activeNodeId}
-          activeClusterId={activeClusterId}
-          selectedFinding={selectedFinding}
-          onSelectNode={selectNode}
+        <BuildStepFlow
+          steps={buildSteps}
+          activeStepIndex={activeStepIndex}
+          onSelectStep={(index) => {
+            setActiveStepIndex(prev => prev === index ? null : index)
+            setActiveNodeId('all')
+          }}
         />
-        <CicdNodeDetailCard
-          node={selectedNode}
-          finding={selectedFinding}
+        <BuildStepDetail
+          step={activeStep}
           audit={audit}
         />
       </div>
@@ -6394,18 +6397,18 @@ function PipelinePanel({
 
 type CicdFinding = CICDAuditResult['findings'][number]
 
-type CicdGraphNode = {
-  id: string
-  label: string
-  icon: LucideIcon
-  status: 'normal' | 'high' | 'critical' | 'gap' | 'empty'
+type BuildChainStep = {
+  index: number
+  title: string
+  mainEntity: string
+  description: string
+  time: string
+  source: string
+  riskLevel: SecuritySeverity | 'normal'
+  status: string
+  stepData: SecurityPipelineStep | null
+  relatedFindings: CicdFinding[]
   riskCount: number
-  findings: CicdFinding[]
-  meta: {
-    workflow?: string
-    job?: string
-    step?: string
-  }
 }
 
 type CicdRiskCluster = {
@@ -6416,6 +6419,62 @@ type CicdRiskCluster = {
   workflowCount: number
   jobCount: number
   findings: CicdFinding[]
+}
+
+/* ── Build ordered build chain steps from pipeline ── */
+const BUILD_STEP_ORDER: Record<string, { title: string; index: number }> = {
+  commit:    { title: '代码提交',           index: 1 },
+  workflow:  { title: '工作流定义',         index: 2 },
+  build:     { title: '构建环境',           index: 3 },
+  artifact:  { title: '产物生成',           index: 4 },
+  attestation: { title: '来源证明',         index: 5 },
+  deploy:    { title: '产物发布',           index: 6 },
+  'runtime-correlation': { title: '运行期证据关联', index: 7 },
+}
+
+function buildOrderedBuildSteps(
+  pipeline: SecurityPipelineStep[],
+  findings: CicdFinding[],
+): BuildChainStep[] {
+  // Group pipeline steps by step type, take latest for each unique step
+  const seen = new Map<string, SecurityPipelineStep>()
+  for (const s of pipeline) {
+    if (!BUILD_STEP_ORDER[s.step]) continue
+    const existing = seen.get(s.step)
+    if (!existing || (s.time || '') > (existing.time || '')) {
+      seen.set(s.step, s)
+    }
+  }
+
+  const steps: BuildChainStep[] = []
+  for (const [stepType, s] of seen) {
+    const def = BUILD_STEP_ORDER[stepType]
+    if (!def) continue
+    // Match findings to this step type
+    const related = findings.filter(f => {
+      const ids = cicdFindingNodeIds(f)
+      return ids.includes(stepType) || ids.includes(s.step)
+    })
+    const riskScore = related.reduce((max, f) => Math.max(max, f.score), 0)
+    const riskLevel: SecuritySeverity | 'normal' =
+      riskScore >= 90 ? 'critical' : riskScore >= 75 ? 'high' : riskScore >= 55 ? 'medium' : related.length > 0 ? 'low' : 'normal'
+
+    steps.push({
+      index: def.index,
+      title: def.title,
+      mainEntity: s.name || s.step,
+      description: s.detail || s.actor || '',
+      time: s.time?.slice(0, 16).replace('T', ' ') || '',
+      source: s.actor || stepType,
+      riskLevel,
+      status: s.status || 'observed',
+      stepData: s,
+      relatedFindings: related,
+      riskCount: related.length,
+    })
+  }
+
+  return steps.sort((a, b) => a.index - b.index)
 }
 
 function CicdConclusionStrip({
@@ -6482,14 +6541,17 @@ function CicdRiskOverviewCard({
               <span className='text-slate-400'>已修复 <b className='text-emerald-100 tabular-nums'>{audit?.summary.fixed ?? 0}</b></span>
             </div>
           </div>
-          <div className='mt-5 h-2 overflow-hidden rounded-full bg-slate-800'>
-            {severityData.map((item) => (
-              <span
-                key={item.label}
-                className={cn('inline-block h-full transition-all duration-300', item.color)}
-                style={{ width: `${Math.max(item.value ? 8 : 0, (item.value / riskTotal) * 100)}%` }}
-              />
-            ))}
+          <div className='mt-5 h-2.5 overflow-hidden rounded-full bg-slate-800/60'>
+            {severityData.map((item) => {
+              const pct = Math.max(item.value > 0 ? 2 : 0, (item.value / riskTotal) * 100)
+              return (
+                <span
+                  key={item.label}
+                  className={cn('inline-block h-full transition-all duration-500', item.color)}
+                  style={{ width: `${pct}%`, minWidth: item.value > 0 ? '8px' : '0' }}
+                />
+              )
+            })}
           </div>
           <div className='mt-4 grid grid-cols-3 gap-2'>
             {[
@@ -6509,77 +6571,94 @@ function CicdRiskOverviewCard({
   )
 }
 
-function CicdPipelineGraph({
-  nodes,
-  activeNodeId,
-  activeClusterId,
-  selectedFinding,
-  onSelectNode,
+/* ── Step Flow Graph: build chain steps only ── */
+function BuildStepFlow({
+  steps,
+  activeStepIndex,
+  onSelectStep,
 }: {
-  nodes: CicdGraphNode[]
-  activeNodeId: string
-  activeClusterId: string
-  selectedFinding?: CicdFinding
-  onSelectNode: (id: string) => void
+  steps: BuildChainStep[]
+  activeStepIndex: number | null
+  onSelectStep: (index: number) => void
 }) {
-  const reducedMotion = useReducedMotion()
-  const highlighted = selectedFinding ? new Set(cicdFindingNodeIds(selectedFinding)) : new Set<string>()
-  const clusterNodes = new Set(cicdClusterNodeIds(activeClusterId))
-  const activeIndex = Math.max(0, nodes.findIndex((node) => node.id === activeNodeId))
-  const activeNode = nodes.find((node) => node.id === activeNodeId) ?? nodes[0]
-  const nodeWorkflows = new Set(activeNode?.findings.map((finding) => finding.workflow) ?? [])
-  const nodeJobs = new Set(activeNode?.findings.map((finding) => finding.job_id || finding.job_name).filter(Boolean) ?? [])
-  const actions = activeNode?.findings.map((finding) => finding.step_name || finding.job_name || compactWorkflowPath(finding.workflow)).filter(Boolean).slice(0, 3) ?? []
+  const sevColors: Record<string, string> = {
+    critical: 'border-red-500/40 bg-red-950/30 text-red-300',
+    high: 'border-orange-500/40 bg-orange-950/30 text-orange-300',
+    medium: 'border-amber-500/40 bg-amber-950/30 text-amber-300',
+    low: 'border-slate-500/30 bg-slate-900/40 text-slate-300',
+    normal: 'border-slate-500/20 bg-slate-900/30 text-slate-400',
+  }
 
   return (
-    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
-      <CardHeader className='pb-2'>
-        <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><GitBranch className='size-5 text-cyan-200' />构建链路图</CardTitle>
-          <button type='button' onClick={() => onSelectNode('all')} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
-        </div>
+    <Card className='h-full min-h-[390px] surface-raised flex flex-col'>
+      <CardHeader className='pb-2 shrink-0'>
+        <CardTitle className='flex items-center gap-2 text-sm font-bold'><GitBranch className='size-4 text-cyan-400' />构建链路图</CardTitle>
       </CardHeader>
-      <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
-        <div className='snap-x snap-mandatory overflow-x-auto pb-2 [scrollbar-color:rgba(148,163,184,0.22)_transparent] [scrollbar-width:thin]'>
-          <div className='relative grid min-h-[190px] min-w-max grid-cols-[repeat(9,132px)] items-center gap-5 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-6 py-6'>
-            <div className='absolute left-[90px] right-[90px] top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
-            <div
-              className='absolute left-[90px] top-1/2 h-px -translate-y-1/2 bg-orange-300/45 transition-all duration-300'
-              style={{ width: activeNodeId === 'all' ? 'calc(100% - 11.25rem)' : `calc((100% - 11.25rem) * ${activeIndex / Math.max(1, nodes.length - 1)})` }}
-            />
-            <motion.div
-              className='absolute left-[90px] top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent'
-              animate={reducedMotion ? undefined : { x: ['0%', '980%'] }}
-              transition={{ duration: 3.8, repeat: Infinity, ease: 'linear' }}
-            />
-            {nodes.map((node, index) => {
-              const Icon = node.icon
-              const active = activeNodeId === node.id || highlighted.has(node.id) || clusterNodes.has(node.id)
+      <CardContent className='flex-1 min-h-0 overflow-hidden px-3'>
+        <div className='h-full overflow-x-auto pb-3 snap-x snap-mandatory [scrollbar-width:thin]'>
+          <div className='relative flex items-stretch gap-3 min-w-max py-4 pl-1 pr-4'>
+            {/* Connection line */}
+            <div className='absolute left-10 right-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-slate-700/40 via-slate-600/60 to-slate-700/40' />
+            {/* Active progress line */}
+            {activeStepIndex != null && (
+              <div
+                className='absolute left-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-cyan-500/60 to-orange-400/50 transition-all duration-500'
+                style={{ width: `calc((100% - 5rem) * ${activeStepIndex / Math.max(1, steps.length - 1)})` }}
+              />
+            )}
+
+            {steps.map((step, i) => {
+              const active = activeStepIndex === step.index
+              const s = sevColors[step.riskLevel] || sevColors.normal
               return (
-                <UiTooltip key={node.id}>
+                <UiTooltip key={step.index}>
                   <UiTooltipTrigger asChild>
                     <motion.button
                       type='button'
                       initial={{ opacity: 0, y: 12 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.24, delay: index * 0.035 }}
-                      onClick={() => onSelectNode(node.id)}
+                      transition={{ duration: 0.28, delay: i * 0.05 }}
+                      onClick={() => onSelectStep(step.index)}
                       className={cn(
-                        'relative z-10 grid h-[138px] w-[132px] grid-rows-[44px_40px_24px] content-center justify-items-center gap-2 rounded-lg border px-2 py-2 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70 snap-start',
-                        active ? 'border-orange-300/45 bg-orange-400/10 shadow-[0_0_26px_rgba(251,146,60,0.14)]' : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
+                        'relative z-10 flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border w-[148px] h-[130px] px-3 py-3 transition-all duration-300 snap-start',
+                        'hover:-translate-y-1 hover:shadow-lg active:scale-[0.98]',
+                        active
+                          ? 'border-cyan-400/50 bg-cyan-950/30 shadow-[0_0_20px_rgba(6,182,212,0.12)]'
+                          : `${s} hover:border-white/10`,
                       )}
                     >
-                      <span className={cn('grid size-11 place-items-center rounded-full border', cicdNodeTone(node.status), node.riskCount > 0 && 'motion-safe:animate-pulse')}>
-                        <Icon className='size-5' />
+                      {/* Step number */}
+                      <span className={cn(
+                        'grid size-8 shrink-0 place-items-center rounded-full text-[11px] font-black tabular-nums',
+                        active ? 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/30' : 'bg-slate-800/60 text-slate-400',
+                      )}>
+                        {step.index}
                       </span>
-                      <span className='grid h-10 w-full place-items-center px-1 text-center text-[15px] font-bold leading-5 text-slate-100'>{cicdGraphNodeLabel(node.id)}</span>
-                      <span className={cn('inline-flex h-6 items-center rounded-full border px-2.5 text-xs font-bold leading-none', cicdNodeTone(node.status))}>{cicdNodeStatusLabel(node.status)} · {node.riskCount}</span>
+                      {/* Title — always 1 line, truncated */}
+                      <span
+                        className={cn(
+                          'w-full text-center text-[13px] font-bold leading-tight truncate',
+                          active ? 'text-foreground' : 'text-slate-300',
+                        )}
+                        title={step.title}
+                      >
+                        {step.title}
+                      </span>
+                      {/* Risk indicator or placeholder to keep height consistent */}
+                      <span className={cn(
+                        'inline-flex h-5 items-center rounded-full px-2 text-[10px] font-bold shrink-0',
+                        step.riskLevel !== 'normal' ? s : 'text-transparent',
+                      )}>
+                        {step.riskLevel !== 'normal' ? `${step.riskCount} 风险` : ' '}
+                      </span>
                     </motion.button>
                   </UiTooltipTrigger>
                   <UiTooltipContent>
-                    <div className='space-y-1 text-xs'>
-                      <div>{node.label} · {node.riskCount} 风险</div>
-                      <div>{node.meta.workflow || node.meta.job || node.meta.step || '-'}</div>
+                    <div className='space-y-1 text-xs max-w-[220px]'>
+                      <div className='font-bold'>{step.title}</div>
+                      <div className='text-muted-foreground break-all'>{step.mainEntity}</div>
+                      {step.description && <div className='text-muted-foreground line-clamp-2'>{step.description}</div>}
+                      <div>{step.time}</div>
                     </div>
                   </UiTooltipContent>
                 </UiTooltip>
@@ -6587,102 +6666,135 @@ function CicdPipelineGraph({
             })}
           </div>
         </div>
-        <motion.div
-          key={`${activeNodeId}-${activeClusterId}`}
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.18 }}
-          className='rounded-md border border-slate-400/10 bg-slate-950/45 px-3 py-2'
-        >
-          <div className='flex flex-wrap items-center justify-between gap-2'>
-            <div><div className='text-[11px] font-medium text-slate-500'>当前节点</div><div className='text-base font-bold text-slate-100'>{activeNode?.label || '全部节点'}</div></div>
-            <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', cicdNodeTone(activeNode?.status ?? 'empty'))}>
-              风险 {activeNode?.riskCount ?? nodes.reduce((sum, node) => sum + node.riskCount, 0)}
-            </span>
-          </div>
-          <div className='mt-2 flex flex-wrap items-center gap-2 text-xs'>
-            <span className='rounded-full border border-slate-400/10 bg-slate-900/65 px-2 py-1 font-medium text-slate-300'>影响 {nodeWorkflows.size || 0} workflows / {nodeJobs.size || 0} jobs</span>
-            {actions.slice(0, 2).map((action) => <span key={action} className='max-w-[180px] truncate rounded-full border border-orange-300/20 bg-orange-400/5 px-2 py-1 font-medium text-orange-100' title={action}>{action}</span>)}
-          </div>
-        </motion.div>
       </CardContent>
     </Card>
   )
 }
 
-function CicdNodeDetailCard({
-  node,
-  finding,
+/* ── Step Detail Card ── */
+function BuildStepDetail({
+  step,
   audit,
 }: {
-  node?: CicdGraphNode
-  finding?: CicdFinding
+  step?: BuildChainStep
   audit?: CICDAuditResult | null
 }) {
-  const findingNodeIds = finding ? cicdFindingNodeIds(finding) : []
-  const showLogUpload = node?.id === 'logs' || findingNodeIds.includes('logs') || (node?.status === 'gap' && node?.id === 'runner')
-  const showArtifactUpload = node?.id === 'artifact' || node?.id === 'provenance' || findingNodeIds.includes('artifact') || findingNodeIds.includes('provenance')
+  if (!step) {
+    return (
+      <Card className='h-full min-h-[390px] surface-raised flex items-center justify-center'>
+        <p className='text-sm text-muted-foreground'>点击上方步骤查看详情</p>
+      </Card>
+    )
+  }
+
+  const findings = step.relatedFindings
+  const uniqueWorkflows = [...new Set(findings.map(f => f.workflow).filter(Boolean))]
+  const uniqueJobs = [...new Set(findings.map(f => f.job_id || f.job_name).filter(Boolean))]
+
   return (
     <motion.div
-      key={`${node?.id ?? 'node'}-${finding?.fingerprint ?? 'finding'}`}
+      key={step.index}
       className='h-full'
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22 }}
     >
-      <Card className='h-full min-h-[390px] rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
-        <CardHeader className='pb-3'>
-          <div className='text-xs font-medium text-slate-500'>当前研判节点</div>
-          <CardTitle className='mt-1 text-xl font-bold text-slate-100'>{node?.label ?? '节点详情'}</CardTitle>
+      <Card className='h-full min-h-[390px] surface-raised overflow-y-auto flex flex-col'>
+        <CardHeader className='pb-3 shrink-0'>
+          <div className='flex items-center gap-2.5'>
+            <span className='grid size-8 shrink-0 place-items-center rounded-lg bg-cyan-950/50 text-xs font-black text-cyan-300 ring-1 ring-cyan-500/20'>
+              {step.index}
+            </span>
+            <div className='min-w-0'>
+              <div className='text-[10px] text-muted-foreground uppercase tracking-wider'>构建链步骤</div>
+              <CardTitle className='text-base font-bold truncate' title={step.title}>{step.title}</CardTitle>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent className='space-y-3'>
-          <div className='flex flex-wrap gap-2'>
-            <span className={cn('rounded-full border px-2 py-0.5 text-xs', cicdNodeTone(node?.status ?? 'empty'))}>{cicdNodeStatusLabel(node?.status ?? 'empty')}</span>
-            <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>风险 {node?.riskCount ?? 0}</span>
+        <CardContent className='space-y-3 flex-1'>
+          {/* Status badges */}
+          <div className='flex flex-wrap gap-1.5'>
+            <span className={cn(
+              'rounded-full border px-2 py-0.5 text-[10px] font-bold shrink-0',
+              step.riskLevel === 'critical' ? 'border-red-500/30 bg-red-950/30 text-red-300' :
+              step.riskLevel === 'high' ? 'border-orange-500/30 bg-orange-950/30 text-orange-300' :
+              step.riskLevel === 'medium' ? 'border-amber-500/30 bg-amber-950/30 text-amber-300' :
+              step.riskLevel === 'low' ? 'border-slate-500/30 bg-slate-900/30 text-slate-300' :
+              'border-emerald-500/20 bg-emerald-950/20 text-emerald-300'
+            )}>
+              {step.riskLevel === 'normal' ? '正常' : `${step.riskCount} 风险`}
+            </span>
+            <span className='rounded-full border border-slate-500/20 bg-slate-900/30 px-2 py-0.5 text-[10px] text-slate-300 shrink-0'>
+              {step.status}
+            </span>
           </div>
-          <div className='grid gap-2'>
-            <CicdDetailRow label='Workflow' value={finding?.workflow || node?.meta.workflow || audit?.workflows?.[0] || '-'} />
-            <CicdDetailRow label='Job' value={finding?.job_id || node?.meta.job || '-'} />
-            <CicdDetailRow label='Step' value={finding?.step_name || node?.meta.step || '-'} />
-            <CicdDetailRow label='位置' value={finding ? `${compactWorkflowPath(finding.workflow)}:${finding.line}` : '-'} />
-          </div>
-          {finding ? (
-            <div className='rounded-md border border-slate-400/10 bg-slate-900/45 p-3'>
-              <div className='flex items-center justify-between gap-2'>
-                <div className='truncate text-base font-bold text-slate-100'>{cicdFindingTitle(finding)}</div>
-                <SeverityPill severity={finding.severity} />
+
+          {/* Main entity — truncated with title tooltip */}
+          <div className='rounded-lg surface-inset p-3 space-y-1.5'>
+            <div className='text-[10px] uppercase tracking-wider text-muted-foreground'>主实体</div>
+            <div className='text-sm font-bold truncate' title={step.mainEntity}>{step.mainEntity}</div>
+            {step.description && (
+              <div className='text-xs text-muted-foreground line-clamp-2 break-all' title={step.description}>
+                {step.description}
               </div>
-              <div className='mt-3 truncate rounded border border-cyan-300/15 bg-slate-950/75 px-2.5 py-2 font-mono text-[13px] text-cyan-100' title={finding.evidence || '-'}>{finding.evidence || '-'}</div>
+            )}
+            <div className='flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap'>
+              <span className='shrink-0'>{step.time}</span>
+              <span className='shrink-0'>·</span>
+              <span className='truncate' title={step.source}>{step.source}</span>
             </div>
-          ) : null}
-          {showLogUpload || showArtifactUpload ? (
-            <div className='grid grid-cols-2 gap-2'>
-              {showLogUpload ? (
-                <Button variant='outline' size='sm' onClick={() => jumpToPlatformTab('logs')}>
-                  <Upload className='size-4' />
-                  上传日志
-                </Button>
-              ) : null}
-              {showArtifactUpload ? (
-                <Button variant='outline' size='sm' onClick={() => jumpToPlatformTab('artifact')}>
-                  <Fingerprint className='size-4' />
-                  上传产物
-                </Button>
-              ) : null}
+          </div>
+
+          {/* Evidence summary — equal height cells */}
+          <div className='grid grid-cols-3 gap-2 text-center text-xs'>
+            <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
+              <div className='text-xl font-black text-cyan-400 tabular-nums'>{uniqueWorkflows.length}</div>
+              <div className='mt-0.5 text-[10px] text-muted-foreground'>Workflows</div>
             </div>
-          ) : null}
+            <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
+              <div className='text-xl font-black text-orange-400 tabular-nums'>{uniqueJobs.length}</div>
+              <div className='mt-0.5 text-[10px] text-muted-foreground'>Jobs</div>
+            </div>
+            <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
+              <div className='text-xl font-black text-slate-300 tabular-nums'>{findings.length}</div>
+              <div className='mt-0.5 text-[10px] text-muted-foreground'>风险发现</div>
+            </div>
+          </div>
+
+          {/* Finding list — with truncation + tooltip */}
+          {findings.length > 0 && (
+            <div className='space-y-2'>
+              <div className='text-[10px] uppercase tracking-wider text-muted-foreground'>关联风险发现</div>
+              {findings.slice(0, 6).map(f => (
+                <div key={f.id} className='rounded-lg border border-border/40 bg-card/50 p-2.5'>
+                  <div className='flex items-start justify-between gap-2'>
+                    <div className='min-w-0 flex-1'>
+                      <div className='text-xs font-bold truncate' title={cicdFindingTitle(f)}>{cicdFindingTitle(f)}</div>
+                      <div className='mt-1 text-[10px] text-muted-foreground font-mono line-clamp-2 break-all' title={f.evidence || ''}>
+                        {f.evidence || '—'}
+                      </div>
+                      <div className='mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground flex-wrap'>
+                        <span className='truncate max-w-[120px] font-mono' title={`${compactWorkflowPath(f.workflow)}:${f.line}`}>
+                          {compactWorkflowPath(f.workflow)}:{f.line}
+                        </span>
+                        {f.job_name && (
+                          <>
+                            <span>·</span>
+                            <span className='truncate max-w-[100px]' title={f.job_name}>{f.job_name}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <SeverityPill severity={f.severity} />
+                  </div>
+                </div>
+              ))}
+              {findings.length > 6 && <p className='text-xs text-muted-foreground text-center'>+{findings.length - 6} 条</p>}
+            </div>
+          )}
         </CardContent>
       </Card>
     </motion.div>
-  )
-}
-
-function CicdDetailRow({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className='grid grid-cols-[68px_minmax(0,1fr)] items-center gap-2 rounded-md border border-slate-400/10 bg-slate-900/35 px-2.5 py-2'>
-      <span className='text-xs font-medium text-slate-500'>{label}</span>
-      <span className='truncate text-sm font-semibold text-slate-200' title={typeof value === 'string' ? value : undefined}>{value}</span>
-    </div>
   )
 }
 
@@ -7931,6 +8043,66 @@ function applyMultimodalAuditToWorkspace(workspace: SecurityWorkspace, result: M
   }
 }
 
+function formatLocalTime(isoString: string) {
+  try {
+    const d = new Date(isoString)
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  } catch { return isoString.slice(11, 16) }
+}
+
+function LogTrendChart({ trend }: { trend: RealtimeLogTrendPoint[] }) {
+  const peak = useMemo(() => {
+    if (!trend.length) return null
+    let maxVal = 0; let maxBucket = ''
+    for (const t of trend) {
+      const total = (t.events ?? 0) + (t.findings ?? 0)
+      if (total > maxVal) { maxVal = total; maxBucket = t.bucket }
+    }
+    return maxVal > 0 ? formatLocalTime(maxBucket) : null
+  }, [trend])
+
+  return (
+    <div className='rounded-md border border-slate-400/15 bg-slate-950/65 p-4'>
+      <div className='flex items-center justify-between'>
+        <span className='text-section-title !text-[20px]'>异常趋势与风险峰值</span>
+        {peak ? (
+          <span className='meta-chip-dark'>{peak} 峰值</span>
+        ) : (
+          <span className='text-xs text-muted-foreground'>等待实时数据</span>
+        )}
+      </div>
+      <div className='mt-3 h-[220px]'>
+        {trend.length > 0 ? (
+          <ResponsiveContainer width='100%' height='100%'>
+            <AreaChart data={trend}>
+              <CartesianGrid strokeDasharray='3 3' vertical={false} />
+              <XAxis
+                dataKey='bucket'
+                tickFormatter={formatLocalTime}
+                interval="preserveStartEnd"
+                tick={{ fontSize: 10 }}
+              />
+              <YAxis width={28} tick={{ fontSize: 10 }} />
+              <Tooltip
+                labelFormatter={(value) => {
+                  try { return new Date(String(value)).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) }
+                  catch { return String(value).replace('T', ' ').slice(0, 19) }
+                }}
+              />
+              <Area type='monotone' dataKey='events' name='事件' stroke='#22d3ee' fill='#22d3ee' fillOpacity={0.1} />
+              <Area type='monotone' dataKey='findings' name='风险' stroke='#fb7185' fill='#fb7185' fillOpacity={0.2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>
+            暂无趋势数据，上传日志文件后将显示实时时间轴
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function LogsPanel({
   logs,
   audit,
@@ -7955,7 +8127,6 @@ function LogsPanel({
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
-  const auditWarnings = audit?.warnings ?? []
   const displayedLogs: Array<
     SecurityLogEvent & {
       id?: string
@@ -8193,7 +8364,7 @@ function LogsPanel({
           <CardContent className='space-y-4'>
             <div className='grid gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,50fr)_minmax(220px,20fr)]'>
               <div className='rounded-md border border-red-400/25 bg-red-950/20 p-5'><div className='text-section-title !text-[20px]'>运行期风险结论</div><div className='mt-4 text-metric text-red-200'>{realtime?.summary.risk_score ?? audit?.summary.risk_score ?? 0}</div><div className='mt-3 text-body'>发现敏感路径访问与异常外联 IP，可作为攻击链运行期印证证据。</div><div className='mt-4 flex flex-wrap gap-2'><span className='meta-chip-dark'>GET /admin/export</span><span className='meta-chip-dark'>异常外联 IP</span></div></div>
-              <div className='rounded-md border border-slate-400/15 bg-slate-950/65 p-4'><div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>异常趋势与风险峰值</span><span className='meta-chip-dark'>16:44 峰值</span></div><div className='mt-3 h-[220px]'><ResponsiveContainer width='100%' height='100%'><AreaChart data={trend ?? []}><CartesianGrid strokeDasharray='3 3' vertical={false} /><XAxis dataKey='bucket' tickFormatter={(value) => String(value).slice(11, 16)} /><YAxis width={28} /><Tooltip labelFormatter={(value) => String(value).replace('T', ' ').slice(0, 16)} /><Area type='monotone' dataKey='events' name='事件' stroke='#22d3ee' fill='#22d3ee' fillOpacity={0.1} /><Area type='monotone' dataKey='findings' name='风险' stroke='#fb7185' fill='#fb7185' fillOpacity={0.2} /></AreaChart></ResponsiveContainer></div></div>
+              <LogTrendChart trend={trend ?? []} />
               <div className='rounded-md border border-slate-400/15 bg-slate-900/50 p-5'><div className='text-section-title !text-[20px]'>实时管道</div>{['实时接入','本地缓冲','规则引擎','风险趋势'].map(item => <div key={item} className='mt-3 flex items-center justify-between text-body'><span>{item}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>)}</div>
             </div>
             <div className='grid gap-3 md:grid-cols-4'>
@@ -8275,50 +8446,43 @@ function LogsPanel({
       </div>
 
       <div className={moduleSidebarColumnClass}>
-        <Card className={moduleCardClass}><CardHeader><CardTitle className='text-section-title !text-[20px]'>当前事件详情</CardTitle></CardHeader><CardContent className='space-y-3'>{activeLog ? <><div className='text-risk-title'>{activeLog.event}</div><div className='flex gap-2'><Badge variant='outline' className={cn('rounded-full', severityClasses[activeLog.severity])}>{activeLog.signal}</Badge><span className='meta-chip-dark'>{Math.round((activeLog.confidence ?? 0) * 100)}%</span></div><div className='grid gap-2'>{[['日志来源', activeLog.source], ['异常时间', activeLog.time], ['攻击链节点', activeLog.signal]].map(([label, value]) => <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] gap-3 rounded-md border border-slate-400/10 px-3 py-2'><span className='text-label'>{label}</span><span className='truncate text-right text-value' title={value}>{value}</span></div>)}</div><div className='code-evidence truncate' title={activeLog.evidence}>{activeLog.evidence || '未提供证据片段'}</div><div className='action-advice p-4'><div className='font-bold'>建议处理</div><div className='mt-1 line-clamp-2 leading-6'>核查访问来源，隔离异常外联，并关联攻击链节点复核。</div></div></> : <div className='text-body'>当前筛选下无风险事件。</div>}</CardContent></Card>
-        <Card className={moduleCardClass}>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <ShieldCheck className='size-4 text-emerald-600' />
-              实时管道
-            </CardTitle>
+        <Card className={cn(moduleCardClass, 'min-h-[620px]')}>
+          <CardHeader className='pb-3'>
+            <CardTitle className='text-section-title !text-[20px]'>当前事件详情</CardTitle>
           </CardHeader>
-          <CardContent className='space-y-3'>
-            <Badge variant='outline' className='w-fit rounded-full border-emerald-400/35 bg-emerald-500/10 text-emerald-200'>运行正常</Badge>
-            {['实时接入', '本地缓冲', '规则引擎', '风险趋势'].map((rule) => (
-              <div key={rule} className='flex items-center justify-between rounded-md border border-slate-400/10 px-3 py-2 text-body'><span>{rule}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>
-            ))}
-            <Collapsible><CollapsibleTrigger asChild><Button variant='ghost' className='w-full justify-between px-2'>管道详情<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='mt-2 space-y-2 rounded-md border border-slate-400/10 p-3'>
-            {[
-              'Vector / HTTP 实时接入',
-              '本地 JSONL 事件缓冲',
-              '分钟/小时风险趋势',
-              'rule + IP + path 窗口去重',
-              '基线与误报标记',
-              '敏感接口异常访问',
-              '未知域名外联',
-              '认证失败峰值',
-              'SQL 注入探测',
-              '构建上线后的行为漂移',
-            ].map((rule) => (
-              <div key={rule} className='flex items-center gap-2 text-sm text-slate-300'>
-                <CheckCircle2 className='size-4 text-emerald-600' />
-                {rule}
-              </div>
-            ))}</CollapsibleContent></Collapsible>
-            {auditWarnings.length ? (
+          <CardContent className='flex h-full flex-col space-y-4 p-5'>
+            {activeLog ? (
               <>
-                <Separator />
-                <div className='space-y-2'>
-                  <div className='text-sm font-medium'>扫描提示</div>
-                  {auditWarnings.map((warning) => (
-                    <div key={warning} className='rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground'>
-                      {warning}
+                <div className='text-risk-title leading-tight'>{activeLog.event}</div>
+                <div className='flex flex-wrap gap-2'>
+                  <Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(activeLog)])}>
+                    {activeLog.signal}
+                  </Badge>
+                  <span className='meta-chip-dark'>{Math.round((activeLog.confidence ?? 0) * 100)}%</span>
+                </div>
+                <div className='grid gap-2'>
+                  {[
+                    ['日志来源', activeLog.source],
+                    ['异常时间', activeLog.time],
+                    ['攻击链节点', activeLog.signal],
+                  ].map(([label, value]) => (
+                    <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 px-4 py-3'>
+                      <span className='text-label whitespace-nowrap'>{label}</span>
+                      <span className='min-w-0 break-words text-right text-value' title={value}>{value}</span>
                     </div>
                   ))}
                 </div>
+                <div className='code-evidence min-w-0 whitespace-pre-wrap break-words px-4 py-3 leading-6' title={activeLog.evidence}>
+                  {activeLog.evidence || '未提供证据片段'}
+                </div>
+                <div className='action-advice mt-auto p-5'>
+                  <div className='font-bold'>建议处理</div>
+                  <div className='mt-2 leading-7'>先核查访问来源与账号行为；对异常外联会话执行隔离，再结合敏感路径访问记录复核攻击链影响范围。</div>
+                </div>
               </>
-            ) : null}
+            ) : (
+              <div className='text-body'>当前筛选下无风险事件。</div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -8326,7 +8490,7 @@ function LogsPanel({
   )
 }
 
-function MultimodalEvidencePanel({
+function _MultimodalEvidencePanel_OLD({
   result,
   workspaceId,
   onScanned,
@@ -13019,7 +13183,7 @@ function EvidenceItem({ value }: { value: string }) {
   )
 }
 
-function ReportPanel({ workspace, animationKey }: { workspace: SecurityWorkspace; animationKey: number }) {
+function _OldReportPanel({ workspace, animationKey }: { workspace: SecurityWorkspace; animationKey: number }) {
   const [reportMode, setReportMode] = useState<'preview' | 'source'>('preview')
   const report = getWorkspaceReport(workspace)
   const workspaceId = workspace.workspaceId || workspace.workspace?.workspaceId

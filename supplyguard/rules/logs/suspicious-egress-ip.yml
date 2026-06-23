@@ -1,0 +1,36 @@
+id: runtime.suspicious-egress-ip
+title: Suspicious External Egress IP
+description: Detects application log lines that indicate egress, callback, or beacon traffic to an external IP.
+source:
+  - app
+  - web
+logsource:
+  category: application
+kind: event
+severity: high
+level: high
+score: 84
+signal: 异常外联 IP
+confidence: 0.88
+fields:
+  - message
+  - raw
+requires_external_dst_ip: true
+requires_egress_hint: true
+keywords:
+  - egress
+  - outbound
+  - connect
+  - callback
+  - beacon
+  - destination
+critical_regex:
+  - "\\bbeacon\\b"
+detection:
+  selection:
+    dst_ip: external
+    message|contains:
+      - egress
+      - callback
+      - beacon
+  condition: selection

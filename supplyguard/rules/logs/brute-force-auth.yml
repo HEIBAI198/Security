@@ -1,0 +1,33 @@
+id: runtime.brute-force
+title: Brute Force Or Authentication Probing
+description: Detects repeated authentication failures by source IP or account in a short window.
+source:
+  - auth
+  - web
+logsource:
+  category: authentication
+kind: window
+severity: high
+level: high
+score: 84
+signal: 暴力破解
+confidence: 0.72
+auth_failure: true
+threshold: 6
+critical_threshold: 20
+window_minutes: 10
+group_by:
+  - src_ip
+  - user
+login_paths:
+  - /login
+  - /auth
+  - /signin
+  - /session
+  - /token
+detection:
+  selection:
+    event.action:
+      - login_failed
+      - authentication_failure
+  condition: selection | count() by src_ip,user >= 6 in 10m

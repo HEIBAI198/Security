@@ -1,0 +1,23 @@
+id: multimodal-postinstall-egress
+title: 截图或语音中出现安装脚本外联
+status: experimental
+description: ASR/OCR 文本同时出现安装脚本阶段与外联下载行为，常见于依赖混淆或构建阶段投毒。
+references:
+  - https://sigmahq.io/sigma-specification/
+  - https://github.com/SigmaHQ/sigma
+  - https://wazuh.com/platform/overview/
+tags:
+  - attack.supply_chain
+  - attack.execution
+  - multimodal.ocr
+  - sigma-style
+  - wazuh.severity.critical
+severity: critical
+score: 96
+match:
+  keywords:
+    - postinstall
+    - curl
+  entity_types:
+    - ip
+recommendation: 立即隔离相关依赖包和构建产物，固定私有源解析，封禁外联目标，并使用可信 runner 重新构建。
