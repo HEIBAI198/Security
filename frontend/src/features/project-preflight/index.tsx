@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
   AlertTriangle,
@@ -49,7 +49,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -203,10 +202,10 @@ export function ProjectPreflightPage() {
           <Badge variant='outline' className='rounded-md border-cyan-200 bg-cyan-50 text-cyan-700'>
             Step 2 · Preflight Report
           </Badge>
-          <h1 className='text-2xl font-semibold tracking-normal sm:text-3xl'>
+          <h1 className='text-page-title'>
             资产预检报告
           </h1>
-          <p className='max-w-3xl text-sm leading-6 text-muted-foreground'>
+          <p className='max-w-3xl text-body'>
             这一步回答：项目有哪些可用于供应链溯源的材料，哪些材料已经具备，下一步应该优先检查什么。
           </p>
         </div>
@@ -226,8 +225,8 @@ export function ProjectPreflightPage() {
                 </Badge>
               </div>
               <div>
-                <h2 className='text-2xl font-semibold tracking-normal'>{record.projectName}</h2>
-                <p className='mt-1 truncate text-sm text-muted-foreground'>{source}</p>
+                <h2 className='text-section-title'>{record.projectName}</h2>
+                <p className='mt-2 meta-chip max-w-full truncate' title={source}>{source}</p>
               </div>
               <div className='grid gap-2 sm:grid-cols-3'>
                 {readiness.map((item) => (
@@ -236,7 +235,7 @@ export function ProjectPreflightPage() {
                       <item.icon className={cn('size-4', item.ok ? 'text-emerald-600' : 'text-orange-600')} />
                       {item.label}
                     </div>
-                    <div className='mt-1 text-xs text-muted-foreground'>{item.description}</div>
+                    <div className='mt-1 text-subtle'>{item.description}</div>
                   </div>
                 ))}
               </div>
@@ -245,8 +244,8 @@ export function ProjectPreflightPage() {
             <ReadinessRing score={completeness.score} passed={completeness.passed} total={completeness.total} />
 
             <div className='rounded-md border bg-background p-4'>
-              <div className='text-sm font-medium'>建议下一步</div>
-              <p className='mt-2 text-sm leading-6 text-muted-foreground'>
+              <div className='text-card-title'>建议下一步</div>
+              <p className='mt-2 text-body'>
                 先生成 SBOM 与 VEX，确认组件风险；随后检查 CI/CD、产物可信和运行日志是否能互相印证。
               </p>
               <Button className='mt-4 w-full' onClick={() => void runTraceScan()} disabled={scanning}>
@@ -271,7 +270,6 @@ export function ProjectPreflightPage() {
                 <Code2 className='size-4 text-emerald-600' />
                 语言构成图
               </CardTitle>
-              <CardDescription>判断后续扫描需要覆盖的生态和规则</CardDescription>
             </CardHeader>
             <CardContent>
               <LanguageBarChart record={record} />
@@ -284,7 +282,6 @@ export function ProjectPreflightPage() {
                 <Layers3 className='size-4 text-cyan-600' />
                 扫描漏斗
               </CardTitle>
-              <CardDescription>从项目文件收敛到可用于溯源的关键入口</CardDescription>
             </CardHeader>
             <CardContent>
               <ScanFunnel items={funnelItems} />
@@ -297,7 +294,6 @@ export function ProjectPreflightPage() {
                 <ShieldCheck className='size-4 text-emerald-600' />
                 预检判断
               </CardTitle>
-              <CardDescription>已具备、仍缺少、建议动作</CardDescription>
             </CardHeader>
             <CardContent className='space-y-3'>
               <JudgementItem
@@ -326,7 +322,6 @@ export function ProjectPreflightPage() {
                 <ShieldCheck className='size-4 text-cyan-600' />
                 材料覆盖矩阵
               </CardTitle>
-              <CardDescription>展示材料是否已发现、是否可用于溯源、还存在哪些缺口</CardDescription>
             </CardHeader>
             <CardContent>
               <CoverageMatrix rows={coverageRows} />
@@ -339,7 +334,6 @@ export function ProjectPreflightPage() {
                 <FileCode2 className='size-4 text-cyan-600' />
                 关键文件与作用清单
               </CardTitle>
-              <CardDescription>说明每个入口文件会支撑哪类溯源判断</CardDescription>
             </CardHeader>
             <CardContent>
               <KeyFilePurposeList files={keyFiles} />
@@ -807,3 +801,4 @@ function sourceTypeLabel(type: ProjectImportRecord['sourceType']) {
 function formatNumber(value: number) {
   return new Intl.NumberFormat('zh-CN').format(value)
 }
+

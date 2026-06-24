@@ -26,6 +26,7 @@ storage/gnn_datasets/
 storage/graph_models/
 storage/eval/
 storage/*.log
+storage/
 datasets/
 .tmp-shadcn-admin/
 frontend/node_modules/
@@ -38,3 +39,4 @@ tools/docx-gen/node_modules/
 sysml_docgen.egg-info/
 /package-lock.json
 CLAUDE.md
+import-precheck-fix-notes*.md

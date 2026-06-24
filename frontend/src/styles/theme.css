@@ -32,6 +32,18 @@
   --sidebar-accent-foreground: var(--accent-foreground);
   --sidebar-border: var(--border);
   --sidebar-ring: var(--ring);
+  --type-page-title: #0f172a;
+  --type-page-meta: #475569;
+  --type-section-title: #1e293b;
+  --type-card-title: #1f2937;
+  --type-risk-title: #0f172a;
+  --type-value: #1e293b;
+  --type-body: #334155;
+  --type-label: #64748b;
+  --type-subtle: #64748b;
+  --meta-chip-background: rgb(248 250 252 / 0.92);
+  --meta-chip-border: rgb(148 163 184 / 0.28);
+  --meta-chip-text: #475569;
 }
 
 .dark {
@@ -58,6 +70,18 @@
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
+  --type-page-title: #f8fafc;
+  --type-page-meta: #9fb0c7;
+  --type-section-title: #f1f5f9;
+  --type-card-title: #e5e7eb;
+  --type-risk-title: #f8fafc;
+  --type-value: #e2e8f0;
+  --type-body: #cbd5e1;
+  --type-label: #94a3b8;
+  --type-subtle: #7f8ea3;
+  --meta-chip-background: rgb(15 23 42 / 0.65);
+  --meta-chip-border: rgb(148 163 184 / 0.16);
+  --meta-chip-text: #b9c7d9;
 }
 
 @theme inline {

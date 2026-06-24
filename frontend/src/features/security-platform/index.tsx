@@ -1,4 +1,5 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useRef } from 'react'
 import {
   Area,
   AreaChart,
@@ -11,7 +12,14 @@ import {
   YAxis,
 } from 'recharts'
 import type { ReactNode } from 'react'
-import { useNavigate } from '@tanstack/react-router'
+import {
+  motion,
+  useMotionValue,
+  useMotionValueEvent,
+  useReducedMotion,
+  useSpring,
+  useTransform,
+} from 'motion/react'
 import {
   Background,
   Controls,
@@ -24,30 +32,34 @@ import {
 } from '@xyflow/react'
 import {
   AlertTriangle,
+  Archive,
   Bot,
   Boxes,
   BrainCircuit,
   ChevronDown,
+  ChevronUp,
   CheckCircle2,
   ClipboardList,
   Code2,
   Copy,
-  CornerDownLeft,
   Download,
   EyeOff,
   FileSearch,
   FileText,
   Fingerprint,
+  FolderOpen,
   Images,
   GitBranch,
-  GitCommitHorizontal,
   GitPullRequestArrow,
   KeyRound,
   Loader2,
+  LogOut,
   MessageSquare,
   Music2,
   Network,
   PackageCheck,
+  Pencil,
+  Plus,
   Radar,
   RefreshCw,
   Route,
@@ -60,10 +72,12 @@ import {
   Sparkles,
   TerminalSquare,
   TrendingUp,
+  Trash2,
   Upload,
   User,
   Video,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -91,7 +105,10 @@ import {
   loadMultimodalEvidenceLatest,
   loadRealtimeLogEvents,
   loadRealtimeLogTrend,
+  createSecurityWorkspace,
   loadSecurityWorkspace,
+  loadSecurityWorkspaceById,
+  runWorkspaceScanSuite,
   runCICDAuditScan,
   runArtifactTrustScan,
   runDependencyAuditScan,
@@ -130,14 +147,26 @@ import {
   type SecurityAssistantResponse,
   type SecurityDependency,
   type SecurityFinding,
-  type SecurityGraphRagResult,
-  type SecurityGraphNode,
   type SecurityLogEvent,
   type SecurityPipelineStep,
   type SecuritySeverity,
   type SecurityWorkspace,
   type VexStatus,
 } from '@/lib/security-api'
+import {
+  createConversation,
+  deleteConversation,
+  listConversations,
+  renameConversation,
+  type SecurityConversation,
+} from '@/lib/conversation-api'
+import {
+  importGitProject,
+  importLocalProject,
+  uploadProjectArchive,
+  type ProjectImportRecord,
+} from '@/lib/import-api'
+import { useAuthStore } from '@/stores/auth-store'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -146,7 +175,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -163,6 +191,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -204,6 +240,9 @@ import {
   type InvestigationStepId,
   type PlatformTab,
 } from './investigation-workflow'
+import { MultimodalEvidencePanel } from './multimodal-evidence-panel'
+import { AttackChainGraph } from './attack-chain-graph'
+import { ReportPanel } from './report-panel'
 type KnowledgeGraphNode = NonNullable<
   NonNullable<SecurityWorkspace['graph']>['nodes']
 >[number]
@@ -274,7 +313,30 @@ type ReachabilityViewModel = {
   hasDependencyAudit: boolean
   hasCodeAudit: boolean
 }
+type ReachabilityAnalysisItem = {
+  id: string
+  dependency: SecurityDependency
+  name: string
+  currentVersion: string
+  requestedVersion: string
+  packageManager: string
+  sourceFiles: string[]
+  severity: SecuritySeverity
+  riskScore: number
+  status: ReachabilityStatus
+  evidence: {
+    codeRefs: number
+    entryHits: number
+    runtimeEvidence: number
+    externalAlerts: number
+    attackChainLinks: number
+  }
+  missing: string[]
+  advisories: string[]
+  rawEvidence: string[]
+}
 type EvidenceRecommendationPriority = '高' | '中' | '低'
+type ReachabilityStatus = 'reachable' | 'pending'
 type EvidenceRecommendation = {
   id: string
   title: string
@@ -370,6 +432,111 @@ type WorkspaceTab = {
   pinned?: boolean
 }
 
+type ScanStepStatus = 'pending' | 'running' | 'completed' | 'skipped' | 'failed'
+
+type ScanStepState = {
+  id: PlatformTab | 'preflight'
+  label: string
+  status: ScanStepStatus
+  message: string
+}
+
+const scanStepSeed: ScanStepState[] = [
+  { id: 'code', label: '代码审查', status: 'pending', message: '等待扫描' },
+  { id: 'supply', label: '供应链', status: 'pending', message: '等待扫描' },
+  { id: 'pipeline', label: 'CI/CD 链路', status: 'pending', message: '等待扫描' },
+  { id: 'artifact', label: '产物可信', status: 'pending', message: '等待材料' },
+  { id: 'logs', label: '日志印证', status: 'pending', message: '等待材料' },
+  { id: 'multimodal', label: '多模态证据', status: 'pending', message: '等待材料' },
+  { id: 'graph', label: '图谱与报告', status: 'pending', message: '等待汇总' },
+]
+
+type ScanWorkspaceState = {
+  running: boolean
+  completed: boolean
+  steps: ScanStepState[]
+}
+
+function freshScanState(): ScanWorkspaceState {
+  return {
+    running: false,
+    completed: false,
+    steps: scanStepSeed.map((step) => ({ ...step })),
+  }
+}
+
+function scanStateStorageKey(workspaceId: string) {
+  return `supplyguard.scan-state.${workspaceId}`
+}
+
+function scanProgressPercent(steps: ScanStepState[], running = false) {
+  const finished = steps.filter((step) =>
+    ['completed', 'skipped', 'failed'].includes(step.status)
+  ).length
+  const runningWeight = running && steps.some((step) => step.status === 'running') ? 0.35 : 0
+  return Math.min(100, Math.round(((finished + runningWeight) / Math.max(1, steps.length)) * 100))
+}
+
+function scanStateFromWorkspace(workspace: SecurityWorkspace | null): ScanWorkspaceState {
+  if (!workspace) return freshScanState()
+  if (!isWorkspaceScanned(workspace)) return freshScanState()
+  const errors = new Map(
+    (workspace.scanSuite?.errors ?? []).map((item) => [item.module, item.message])
+  )
+  const steps = scanStepSeed.map((step) => {
+    if (step.id === 'artifact') {
+      return workspace.artifact_trust?.scan_id
+        ? { ...step, status: 'completed' as const, message: '扫描完成' }
+        : { ...step, status: 'skipped' as const, message: '缺少 artifact 与 provenance 材料' }
+    }
+    if (step.id === 'logs') {
+      return workspace.log_audit?.scan_id
+        ? { ...step, status: 'completed' as const, message: '扫描完成' }
+        : { ...step, status: 'skipped' as const, message: '缺少运行期日志文件' }
+    }
+    if (step.id === 'multimodal') {
+      return workspace.multimodal_audit?.summary?.evidence_count
+        ? { ...step, status: 'completed' as const, message: '扫描完成' }
+        : { ...step, status: 'skipped' as const, message: '未上传外部告警证据' }
+    }
+    if (step.id === 'graph') {
+      return errors.size
+        ? { ...step, status: 'failed' as const, message: '汇总时出现错误' }
+        : { ...step, status: 'completed' as const, message: '图谱与报告已更新' }
+    }
+    const moduleKey =
+      step.id === 'code' ? 'code_audit' :
+      step.id === 'supply' ? 'dependency_audit' :
+      step.id === 'pipeline' ? 'cicd_audit' :
+      String(step.id)
+    const error = errors.get(moduleKey) || errors.get(String(step.id))
+    return error
+      ? { ...step, status: 'failed' as const, message: error }
+      : { ...step, status: 'completed' as const, message: '扫描完成' }
+  })
+  return { running: false, completed: true, steps }
+}
+
+function readStoredScanState(workspaceId: string): ScanWorkspaceState | null {
+  try {
+    const raw = window.localStorage.getItem(scanStateStorageKey(workspaceId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as ScanWorkspaceState
+    if (!Array.isArray(parsed.steps)) return null
+    return {
+      running: Boolean(parsed.running),
+      completed: Boolean(parsed.completed),
+      steps: scanStepSeed.map((seed) => parsed.steps.find((step) => step.id === seed.id) ?? seed),
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeStoredScanState(workspaceId: string, state: ScanWorkspaceState) {
+  window.localStorage.setItem(scanStateStorageKey(workspaceId), JSON.stringify(state))
+}
+
 const severityLabels: Record<SecuritySeverity, string> = {
   critical: '严重',
   high: '高危',
@@ -441,6 +608,51 @@ const fallbackAssistant: SecurityAssistantPayload = {
   next_actions: ['先确认供应链风险发现、CI/CD 构建链、产物可信和日志印证数据是否已生成。'],
 }
 
+const actionButtonClass =
+  'border-cyan-400/50 bg-cyan-700 text-white shadow-md shadow-cyan-950/30 transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-200 hover:bg-cyan-500 hover:text-white hover:shadow-lg hover:shadow-cyan-900/30 active:translate-y-0 active:scale-[0.98] disabled:translate-y-0 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none'
+const fileInputClass =
+  'h-11 cursor-pointer text-sm file:mr-4 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-cyan-300/70 file:bg-cyan-600 file:px-4 file:text-sm file:font-semibold file:text-white file:shadow-sm file:shadow-cyan-950/25 file:transition-colors hover:file:bg-cyan-500'
+const moduleSplitGridClass =
+  'grid min-h-0 gap-4 xl:h-[calc(100vh-8.5rem)] xl:grid-cols-[minmax(0,1fr)_420px] xl:items-stretch xl:overflow-hidden'
+const moduleMainColumnClass =
+  'min-h-0 min-w-0 space-y-4 xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:[scrollbar-gutter:stable] xl:[scrollbar-width:thin]'
+const moduleSidebarColumnClass =
+  'min-h-0 min-w-0 space-y-4 xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:[scrollbar-gutter:stable] xl:[scrollbar-width:thin]'
+const moduleCardClass =
+  'rounded-md border-border/80 bg-card/95 shadow-sm shadow-slate-950/10 transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-1 hover:border-cyan-400/35 hover:shadow-lg hover:shadow-cyan-950/15 active:translate-y-0'
+const moduleTabContentClass =
+  'm-0 space-y-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:zoom-in-95 motion-safe:duration-300'
+
+const workbenchMotionEase: [number, number, number, number] = [0.16, 1, 0.3, 1]
+
+function WorkbenchMotionLayer({
+  motionKey,
+  className,
+  children,
+}: {
+  motionKey: string
+  className?: string
+  children: ReactNode
+}) {
+  const reducedMotion = useReducedMotion()
+
+  if (reducedMotion) {
+    return <div className={className}>{children}</div>
+  }
+
+  return (
+    <motion.div
+      key={motionKey}
+      className={className}
+      initial={{ opacity: 0, y: 22, scale: 0.975, filter: 'blur(10px)' }}
+      animate={{ opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' }}
+      transition={{ duration: 0.46, ease: workbenchMotionEase }}
+    >
+      {children}
+    </motion.div>
+  )
+}
+
 const agentPresetRequests: Record<Exclude<AgentTargetPreset, 'manual'>, AgentRunRequest> = {
   '3cx': {
     targetPath: 'cases/3cx-supply-chain/sample-repo',
@@ -506,15 +718,20 @@ function getWorkspaceReport(workspace: Pick<SecurityWorkspace, 'report'>) {
 }
 
 function createWorkspaceTab(module: PlatformTab, overrides: Partial<WorkspaceTab> = {}): WorkspaceTab {
+  const canonicalModule = canonicalWorkspaceTab(module)
   return {
-    id: module,
-    module,
-    title: workspaceTabTitles[module],
-    stepId: workspaceTabStepIds[module],
-    closable: module !== 'overview',
-    pinned: module === 'overview',
     ...overrides,
+    id: canonicalModule,
+    module: canonicalModule,
+    title: workspaceTabTitles[canonicalModule],
+    stepId: workspaceTabStepIds[canonicalModule],
+    closable: canonicalModule !== 'overview',
+    pinned: canonicalModule === 'overview',
   }
+}
+
+function canonicalWorkspaceTab(module: PlatformTab): PlatformTab {
+  return module === 'code' ? 'supply' : module
 }
 
 function defaultWorkspaceTabs(initialTab: PlatformTab = 'overview') {
@@ -523,39 +740,50 @@ function defaultWorkspaceTabs(initialTab: PlatformTab = 'overview') {
   return tabs
 }
 
+const agentModuleTabs: PlatformTab[] = [
+  'supply',
+  'pipeline',
+  'artifact',
+  'logs',
+  'multimodal',
+  'graph',
+  'report',
+]
+
 function getWorkspaceId(workspace: SecurityWorkspace | null) {
   return workspace?.workspaceId || workspace?.workspace?.workspaceId || 'latest'
 }
 
-function workspaceTabsStorageKey(workspace: SecurityWorkspace | null) {
-  return `supplyguard.workspace-tabs.${getWorkspaceId(workspace)}`
+function getImportSummary(workspace: SecurityWorkspace | null) {
+  return workspace?.import?.summary
 }
 
-function readStoredWorkspaceTabs(key: string) {
-  if (typeof window === 'undefined') return null
-  try {
-    const raw = window.localStorage.getItem(key)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as {
-      openTabs?: WorkspaceTab[]
-      activeTabId?: WorkspaceTab['id']
-    }
-    const sanitizedTabs = (parsed.openTabs ?? [])
-      .filter((tab) => isPlatformTab(tab.module))
-      .map((tab) => createWorkspaceTab(tab.module, {
-        id: tab.id,
-        title: tab.title || workspaceTabTitles[tab.module],
-        description: tab.description,
-        closable: tab.module !== 'overview',
-        pinned: tab.module === 'overview',
-      }))
-    return {
-      openTabs: ensureOverviewTab(sanitizedTabs),
-      activeTabId: parsed.activeTabId,
-    }
-  } catch {
-    return null
+function isWorkspaceScanned(workspace: SecurityWorkspace | null) {
+  const status = workspace?.scanSuite?.status
+  return status === 'completed' || status === 'partial' || status === 'failed'
+}
+
+function conversationSummaryFromWorkspace(workspace: SecurityWorkspace): SecurityConversation['summary'] {
+  const preflight = getImportSummary(workspace)
+  const fileStats = preflight?.fileStats
+  const scanned = isWorkspaceScanned(workspace)
+  return {
+    scanStatus: workspace.scanSuite?.status ?? (scanned ? 'completed' : 'preflight'),
+    riskScore: scanned ? workspace.summary.risk_score : null,
+    riskLevel: scanned ? workspace.summary.risk_level : 'preflight',
+    attackPaths: scanned ? workspace.summary.attack_paths : null,
+    dependencies: workspace.summary.dependencies,
+    findings: workspace.summary.open_findings,
+    preflightFiles: fileStats?.total ?? 0,
+    preflightScannable: fileStats?.scannable ?? 0,
+    dependencyFiles: preflight?.dependencyFiles?.length ?? workspace.summary.dependencies,
+    ciFiles: preflight?.ciFiles?.length ?? workspace.summary.build_steps,
+    primaryLanguage: preflight?.languages?.[0]?.name ?? '',
   }
+}
+
+function workspaceTabsStorageKey(workspace: SecurityWorkspace | null) {
+  return `supplyguard.workspace-tabs.${getWorkspaceId(workspace)}`
 }
 
 function ensureOverviewTab(tabs: WorkspaceTab[]) {
@@ -566,7 +794,7 @@ function ensureOverviewTab(tabs: WorkspaceTab[]) {
 }
 
 export function SecurityPlatform() {
-  const navigate = useNavigate()
+  const { auth } = useAuthStore()
   const [workspace, setWorkspace] = useState<SecurityWorkspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -574,28 +802,87 @@ export function SecurityPlatform() {
   const [assistantAnswer, setAssistantAnswer] =
     useState<SecurityAssistantResponse | null>(null)
   const [assistantBusy, setAssistantBusy] = useState(false)
+  const [conversations, setConversations] = useState<SecurityConversation[]>([])
+  const [activeConversationId, setActiveConversationId] = useState('')
+  const [draftConversation, setDraftConversation] = useState(false)
   const initialTab = tabFromHash(window.location.hash)
   const [openTabs, setOpenTabs] = useState<WorkspaceTab[]>(() =>
     defaultWorkspaceTabs(initialTab)
   )
   const [activeTabId, setActiveTabId] = useState<WorkspaceTab['id']>(initialTab)
   const [restoredTabsKey, setRestoredTabsKey] = useState('')
+  const [scanStateByWorkspace, setScanStateByWorkspace] = useState<Record<string, ScanWorkspaceState>>({})
+  const activeWorkspaceRef = useRef('')
+  const contentScrollRef = useRef<HTMLDivElement>(null)
+  const [moduleViewKey, setModuleViewKey] = useState(0)
 
-  async function loadWorkspace(showToast = false) {
+  const activeWorkspaceKey = workspace ? getWorkspaceId(workspace) : ''
+  const activeScanState = activeWorkspaceKey
+    ? scanStateByWorkspace[activeWorkspaceKey] ?? scanStateFromWorkspace(workspace)
+    : freshScanState()
+  const analysisStarted = activeScanState.completed
+  const scanRunning = activeScanState.running
+  const scanSteps = activeScanState.steps
+  const activeWorkspaceTab =
+    openTabs.find((tab) => tab.id === activeTabId) ?? createWorkspaceTab('overview')
+
+  useEffect(() => {
+    activeWorkspaceRef.current = activeWorkspaceKey
+  }, [activeWorkspaceKey])
+
+  useLayoutEffect(() => {
+    const scrollToTop = () => {
+      contentScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+      document.documentElement.scrollTop = 0
+      document.body.scrollTop = 0
+    }
+    scrollToTop()
+    const firstFrame = window.requestAnimationFrame(() => {
+      scrollToTop()
+      const secondFrame = window.requestAnimationFrame(scrollToTop)
+      window.setTimeout(scrollToTop, 80)
+      window.setTimeout(() => window.cancelAnimationFrame(secondFrame), 120)
+    })
+    return () => window.cancelAnimationFrame(firstFrame)
+  }, [activeWorkspaceTab.id, activeWorkspaceKey])
+
+  function setWorkspaceScanState(
+    workspaceId: string,
+    updater: ScanWorkspaceState | ((current: ScanWorkspaceState) => ScanWorkspaceState)
+  ) {
+    setScanStateByWorkspace((states) => {
+      const current = states[workspaceId] ?? readStoredScanState(workspaceId) ?? freshScanState()
+      const next = typeof updater === 'function' ? updater(current) : updater
+      writeStoredScanState(workspaceId, next)
+      return { ...states, [workspaceId]: next }
+    })
+  }
+
+  function applyAssistant(nextWorkspace: SecurityWorkspace) {
+    const assistant = getAssistantPayload(nextWorkspace)
+    setAssistantAnswer({
+      question: assistant.default_question,
+      answer: assistant.answer,
+      retrieval: assistant.retrieval,
+      next_actions: assistant.next_actions,
+      model: 'demo-rag-security-analyst',
+    })
+  }
+
+  async function loadWorkspace(workspaceId?: string, showToast = false) {
     setRefreshing(true)
     try {
-      const payload = await loadSecurityWorkspace()
-      const assistant = getAssistantPayload(payload)
+      const payload = workspaceId
+        ? await loadSecurityWorkspaceById(workspaceId)
+        : await loadSecurityWorkspace()
       setWorkspace(payload)
-      if (!assistantAnswer) {
-        setAssistantAnswer({
-          question: assistant.default_question,
-          answer: assistant.answer,
-          retrieval: assistant.retrieval,
-          next_actions: assistant.next_actions,
-          model: 'demo-rag-security-analyst',
-        })
-      }
+      applyAssistant(payload)
+      const nextWorkspaceId = getWorkspaceId(payload)
+      setWorkspaceScanState(
+        nextWorkspaceId,
+        readStoredScanState(nextWorkspaceId) ?? scanStateFromWorkspace(payload)
+      )
       if (showToast) toast.success('安全态势已刷新')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '加载安全态势失败')
@@ -605,8 +892,34 @@ export function SecurityPlatform() {
     }
   }
 
+  async function loadConversationList(preferredConversationId?: string) {
+    setLoading(true)
+    try {
+      const payload = await listConversations()
+      setConversations(payload.conversations)
+      const selected =
+        payload.conversations.find((item) => item.conversationId === preferredConversationId) ??
+        payload.conversations[0]
+      if (selected?.workspaceId) {
+        setActiveConversationId(selected.conversationId)
+        setDraftConversation(false)
+        await loadWorkspace(selected.workspaceId)
+      } else {
+        setActiveConversationId('')
+        setDraftConversation(false)
+        setWorkspace(null)
+        setAssistantAnswer(null)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '加载历史对话失败')
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }
+
   useEffect(() => {
-    void loadWorkspace()
+    void loadConversationList()
   }, [])
 
   useEffect(() => {
@@ -621,25 +934,9 @@ export function SecurityPlatform() {
     const storageKey = workspaceTabsStorageKey(workspace)
     if (restoredTabsKey === storageKey) return
 
-    const hashTab = tabFromHash(window.location.hash)
-    const stored = readStoredWorkspaceTabs(storageKey)
-    if (stored) {
-      const nextTabs = ensureOverviewTab([
-        ...stored.openTabs,
-        createWorkspaceTab(hashTab),
-      ])
-      setOpenTabs(nextTabs)
-      setActiveTabId(
-        window.location.hash
-          ? hashTab
-          : nextTabs.some((tab) => tab.id === stored.activeTabId)
-            ? stored.activeTabId || 'overview'
-            : 'overview'
-      )
-    } else {
-      setOpenTabs(defaultWorkspaceTabs(hashTab))
-      setActiveTabId(hashTab)
-    }
+    const hashTab = canonicalWorkspaceTab(tabFromHash(window.location.hash))
+    setOpenTabs(defaultWorkspaceTabs(hashTab))
+    setActiveTabId(hashTab)
     setRestoredTabsKey(storageKey)
   }, [workspace, restoredTabsKey])
 
@@ -647,12 +944,15 @@ export function SecurityPlatform() {
     if (!workspace || !restoredTabsKey) return
     window.localStorage.setItem(
       restoredTabsKey,
-      JSON.stringify({ openTabs, activeTabId })
+      JSON.stringify({ openTabs: [createWorkspaceTab('overview')], activeTabId: 'overview' })
     )
   }, [workspace, restoredTabsKey, openTabs, activeTabId])
 
   function openWorkspaceTab(target: PlatformTab | WorkspaceTab) {
-    const nextTab = typeof target === 'string' ? createWorkspaceTab(target) : target
+    const nextTab = typeof target === 'string'
+      ? createWorkspaceTab(target)
+      : createWorkspaceTab(canonicalWorkspaceTab(target.module), target)
+    setModuleViewKey((current) => current + 1)
     setOpenTabs((currentTabs) => {
       if (currentTabs.some((tab) => tab.id === nextTab.id)) return currentTabs
       return ensureOverviewTab([...currentTabs, nextTab])
@@ -676,22 +976,6 @@ export function SecurityPlatform() {
     })
   }
 
-  function openWorkflowTarget(target: string) {
-    if (target === 'project-import-select') {
-      void navigate({ to: '/project-import' })
-      return
-    }
-    if (target === 'project-preflight') {
-      void navigate({ to: '/project-preflight' })
-      return
-    }
-    if (target === 'project-import') {
-      void navigate({ to: '/project-import' })
-      return
-    }
-    if (isPlatformTab(target)) openWorkspaceTab(target)
-  }
-
   async function submitQuestion() {
     const value = question.trim()
     if (!value) return
@@ -706,6 +990,213 @@ export function SecurityPlatform() {
     }
   }
 
+  async function selectConversation(conversation: SecurityConversation) {
+    setActiveConversationId(conversation.conversationId)
+    setDraftConversation(false)
+    setOpenTabs(defaultWorkspaceTabs('overview'))
+    setActiveTabId('overview')
+    await loadWorkspace(conversation.workspaceId)
+  }
+
+  function startDraftConversation() {
+    setActiveConversationId('')
+    setDraftConversation(true)
+    setWorkspace(null)
+    setAssistantAnswer(null)
+    setOpenTabs(defaultWorkspaceTabs('overview'))
+    setActiveTabId('overview')
+    window.history.replaceState(null, '', '#overview')
+  }
+
+  function signOut() {
+    auth.reset()
+    window.location.href = '/login'
+  }
+
+  async function removeConversation(conversationId: string) {
+    try {
+      await deleteConversation(conversationId)
+      const remaining = conversations.filter((item) => item.conversationId !== conversationId)
+      setConversations(remaining)
+      toast.success('历史对话已删除')
+      if (activeConversationId === conversationId) {
+        const next = remaining[0]
+        if (next) await selectConversation(next)
+        else startDraftConversation()
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '删除历史对话失败')
+    }
+  }
+
+  async function updateConversationTitle(conversationId: string, title: string) {
+    try {
+      const updated = await renameConversation(conversationId, title)
+      setConversations((items) =>
+        items.map((item) => (item.conversationId === conversationId ? updated : item))
+      )
+      toast.success('对话标题已更新')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '重命名失败')
+    }
+  }
+
+  async function bindImportToConversation(record: ProjectImportRecord) {
+    const nextWorkspace = await createSecurityWorkspace({
+      importId: record.importId,
+      name: record.projectName,
+    })
+    const nextConversation = await createConversation({
+      workspaceId: nextWorkspace.workspaceId || nextWorkspace.workspace?.workspaceId || '',
+      importId: record.importId,
+      title: record.projectName,
+    })
+    setWorkspace(nextWorkspace)
+    applyAssistant(nextWorkspace)
+    setDraftConversation(false)
+    setActiveConversationId(nextConversation.conversationId)
+    setConversations((items) => [
+      nextConversation,
+      ...items.filter((item) => item.conversationId !== nextConversation.conversationId),
+    ])
+    setOpenTabs(defaultWorkspaceTabs('overview'))
+    setActiveTabId('overview')
+    setWorkspaceScanState(getWorkspaceId(nextWorkspace), freshScanState())
+    toast.success('项目已导入，对话已创建')
+  }
+
+  async function startFullAnalysis() {
+    if (!workspace) return
+    const workspaceId = workspace.workspaceId || workspace.workspace?.workspaceId
+    const importId = workspace.workspace?.importId || workspace.import?.importId
+    if (!workspaceId || !importId) {
+      toast.error('当前对话缺少 workspaceId 或 importId，请重新导入项目')
+      return
+    }
+    const activeWorkspaceId = workspaceId
+    const activeImportId = importId
+    const runningEntry = Object.entries(scanStateByWorkspace).find(
+      ([id, state]) => id !== activeWorkspaceId && state.running
+    )
+    if (runningEntry) {
+      const runningConversation = conversations.find((item) => item.workspaceId === runningEntry[0])
+      toast.warning(`${runningConversation?.title || '另一个项目'}还未完成扫描，请等待它结束后再启动新的扫描`)
+      return
+    }
+
+    setWorkspaceScanState(activeWorkspaceId, {
+      running: true,
+      completed: false,
+      steps: scanStepSeed.map((step) => ({ ...step })),
+    })
+    const errors: Array<{ module: string; message: string }> = []
+
+    const updateStep = (id: ScanStepState['id'], status: ScanStepStatus, message: string) => {
+      setWorkspaceScanState(activeWorkspaceId, (state) =>
+        ({
+          ...state,
+          steps: state.steps.map((step) =>
+            step.id === id ? { ...step, status, message } : step
+          ),
+        })
+      )
+    }
+
+    async function refreshCurrentWorkspace() {
+      const nextWorkspace = await loadSecurityWorkspaceById(activeWorkspaceId)
+      if (activeWorkspaceRef.current === activeWorkspaceId) {
+        setWorkspace(nextWorkspace)
+        applyAssistant(nextWorkspace)
+      }
+      return nextWorkspace
+    }
+
+    async function runStep(
+      id: ScanStepState['id'],
+      label: string,
+      task: () => Promise<unknown>
+    ) {
+      updateStep(id, 'running', '正在扫描')
+      try {
+        await task()
+        await refreshCurrentWorkspace()
+        updateStep(id, 'completed', '扫描完成')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `${label} 扫描失败`
+        errors.push({ module: label, message })
+        updateStep(id, 'failed', message)
+      }
+    }
+
+    await runStep('code', '代码审查', () =>
+      runCodeAuditScan({ workspaceId: activeWorkspaceId, importId: activeImportId, timeoutSeconds: 180, includeCheckov: false })
+    )
+    await runStep('supply', '供应链', () =>
+      runDependencyAuditScan({
+        workspaceId: activeWorkspaceId,
+        importId: activeImportId,
+        includeOsv: true,
+        includeCdxgen: false,
+        includeCyclonedxPy: false,
+      })
+    )
+    await runStep('pipeline', 'CI/CD 链路', () =>
+      runCICDAuditScan({ workspaceId: activeWorkspaceId, importId: activeImportId })
+    )
+
+    updateStep('artifact', 'skipped', '缺少 artifact 与 provenance 材料')
+    updateStep('logs', 'skipped', '缺少运行期日志文件')
+    updateStep('multimodal', 'skipped', '未上传外部告警证据')
+    updateStep('graph', 'running', '正在汇总证据')
+
+    try {
+      const nextWorkspace = await runWorkspaceScanSuite(activeWorkspaceId, {
+        importId: activeImportId,
+        includeCodeAudit: false,
+        includeDependencyAudit: false,
+        includeCicdAudit: false,
+        includeArtifactTrust: false,
+        includeLogAudit: false,
+      })
+      const scanSuiteErrors = nextWorkspace.scanSuite?.errors ?? []
+      errors.push(...scanSuiteErrors.map((item) => ({
+        module: item.module,
+        message: item.message,
+      })))
+      if (activeWorkspaceRef.current === activeWorkspaceId) {
+        setWorkspace(nextWorkspace)
+        applyAssistant(nextWorkspace)
+      }
+      setConversations((items) =>
+        items.map((item) =>
+          item.workspaceId === activeWorkspaceId
+            ? {
+                ...item,
+                summary: conversationSummaryFromWorkspace(nextWorkspace),
+                updatedAt: new Date().toISOString(),
+              }
+            : item
+        )
+      )
+      updateStep('graph', scanSuiteErrors.length ? 'failed' : 'completed', scanSuiteErrors.length ? '汇总时出现错误' : '图谱与报告已更新')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '图谱与报告汇总失败'
+      errors.push({ module: '图谱与报告', message })
+      updateStep('graph', 'failed', message)
+    } finally {
+      setWorkspaceScanState(activeWorkspaceId, (state) => ({
+        ...state,
+        running: false,
+        completed: true,
+      }))
+      if (errors.length) {
+        toast.warning(`扫描完成，${errors.length} 个模块需要处理`)
+      } else {
+        toast.success('完整扫描已完成，模块入口已解锁')
+      }
+    }
+  }
+
   if (loading) {
     return (
       <div className='flex min-h-svh items-center justify-center gap-3 text-muted-foreground'>
@@ -715,47 +1206,42 @@ export function SecurityPlatform() {
     )
   }
 
-  if (!workspace) {
-    return (
-      <Main>
-        <Alert variant='destructive'>
-          <AlertTriangle />
-          <AlertTitle>安全态势加载失败</AlertTitle>
-          <AlertDescription>
-            请确认后端服务已启动，并检查 /api/security/workspace。
-          </AlertDescription>
-        </Alert>
-      </Main>
-    )
-  }
-
-  const activeWorkspaceTab =
-    openTabs.find((tab) => tab.id === activeTabId) ?? createWorkspaceTab('overview')
-  const activeStepId =
-    activeWorkspaceTab.module === 'overview'
-      ? currentInvestigationStepId(workspace)
-      : activeWorkspaceTab.stepId
+  const activeConversation = conversations.find(
+    (item) => item.conversationId === activeConversationId
+  )
 
   return (
     <div className='security-platform min-h-svh bg-background'>
-      <Header fixed>
+      <Header fixed className='border-b bg-background/95 backdrop-blur'>
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
           <div className='min-w-0'>
-            <div className='truncate text-sm font-semibold'>
-              大模型与安全知识图谱供应链攻击检测平台
-            </div>
+            <div className='truncate text-sm font-semibold'>APT 溯源助手</div>
             <div className='truncate text-xs text-muted-foreground'>
-              {workspace.workspace.repository} · {workspace.workspace.commit}
+              {workspace
+                ? `${workspace.workspace.repository} · ${workspace.workspace.commit}`
+                : draftConversation
+                  ? '新建对话 · 等待导入项目'
+                  : '历史对话 · 选择或新建项目分析'}
             </div>
           </div>
           <div className='flex shrink-0 items-center gap-2'>
             <GlobalSearch />
             <ThemeSwitch />
+            <Button variant='ghost' size='sm' onClick={signOut}>
+              <LogOut className='size-4' />
+              退出登录
+            </Button>
             <Button
               variant='outline'
               size='sm'
-              onClick={() => void loadWorkspace(true)}
-              disabled={refreshing}
+              onClick={() => {
+                if (activeConversation?.workspaceId) {
+                  void loadWorkspace(activeConversation.workspaceId, true)
+                } else {
+                  void loadConversationList(activeConversationId)
+                }
+              }}
+              disabled={refreshing || (!workspace && !activeConversation)}
             >
               {refreshing ? (
                 <Loader2 className='animate-spin' />
@@ -768,63 +1254,77 @@ export function SecurityPlatform() {
         </div>
       </Header>
 
-      <Main fluid className='space-y-4'>
-        <Tabs
-          value={activeWorkspaceTab.module}
-          onValueChange={(value) => {
-            if (isPlatformTab(value)) openWorkspaceTab(value)
-          }}
-          className='space-y-4'
-        >
-          <InvestigationDotStepper
-            workspace={workspace}
-            activeStepId={activeStepId}
-            onJump={openWorkflowTarget}
+      <Main fluid className='p-0'>
+        <div className='grid h-[calc(100svh-4rem)] min-h-0 lg:grid-cols-[292px_minmax(0,1fr)]'>
+          <AgentProjectSidebar
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            draftActive={draftConversation}
+            scanStateByWorkspace={scanStateByWorkspace}
+            onNewConversation={startDraftConversation}
+            onSelect={(conversation) => void selectConversation(conversation)}
+            onDelete={(conversationId) => void removeConversation(conversationId)}
+            onRename={(conversationId, title) => void updateConversationTitle(conversationId, title)}
           />
 
-          <WorkspaceTabs
-            tabs={openTabs}
-            activeTabId={activeWorkspaceTab.id}
-            onSelect={(tab) => openWorkspaceTab(tab)}
-            onClose={closeWorkspaceTab}
-          />
-
-          <TabsContent value='overview' className='space-y-4'>
-            <OverviewPanel workspace={workspace} />
-          </TabsContent>
-
-          <TabsContent value='code' className='space-y-4'>
-            <ModuleQuestion
-              title='本页在回答什么问题？'
-              question='这些风险是否真的能从代码路径触达，从而作为供应链风险的佐证？'
-              terms={['可达性', 'SARIF', '基线']}
+          <Tabs
+            value={activeWorkspaceTab.module}
+            onValueChange={(value) => {
+              if (isPlatformTab(value)) openWorkspaceTab(value)
+            }}
+            className='flex min-h-0 min-w-0 flex-col border-l bg-background'
+          >
+            <WorkspaceTabs
+              tabs={openTabs}
+              activeTabId={activeWorkspaceTab.id}
+              onSelect={(tab) => openWorkspaceTab(tab)}
+              onClose={closeWorkspaceTab}
             />
-            <CodeAuditPanel
+
+            <div ref={contentScrollRef} className='min-h-0 flex-1 overflow-y-scroll overscroll-contain p-4 [scrollbar-gutter:stable] sm:p-5'>
+              <TabsContent value='overview' className='m-0'>
+                <WorkbenchMotionLayer motionKey={`overview-${moduleViewKey}-${activeWorkspaceKey || 'empty'}`}>
+                  {workspace ? (
+                    <AgentConversationHome
+                      workspace={workspace}
+                      analysisStarted={analysisStarted}
+                      scanRunning={scanRunning}
+                      scanSteps={scanSteps}
+                      question={question}
+                      setQuestion={setQuestion}
+                      answer={assistantAnswer}
+                      busy={assistantBusy}
+                      onSubmit={() => void submitQuestion()}
+                      onStartAnalysis={() => void startFullAnalysis()}
+                      onOpenModule={(module) => openWorkspaceTab(module)}
+                    />
+                  ) : (
+                    <AgentConversationEmpty
+                      draftActive={draftConversation}
+                      onNewConversation={startDraftConversation}
+                      onImported={(record) => void bindImportToConversation(record)}
+                    />
+                  )}
+                </WorkbenchMotionLayer>
+              </TabsContent>
+
+              {workspace ? (
+                <>
+          <TabsContent value='supply' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`supply-${moduleViewKey}`}>
+            <SupplyReachabilityPanel
               workspace={workspace}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
-              importId={workspace.code_audit?.target?.importId}
-              onScanned={(audit) => {
-                setWorkspace({ ...workspace, code_audit: audit })
-                toast.success(`可达性佐证完成，发现 ${audit.summary.total} 项风险`)
-              }}
-            />
-          </TabsContent>
-
-          <TabsContent value='supply' className='space-y-4'>
-            <ModuleQuestion
-              title='本页在回答什么问题？'
-              question='是否存在异常依赖、漏洞组件、依赖混淆或安装脚本风险？'
-              terms={['SBOM', 'VEX', '依赖混淆']}
-            />
-            <SupplyChainPanel
-              audit={workspace.dependency_audit}
-              workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
-              dependencies={workspace.dependencies ?? []}
-              findings={workspace.findings ?? []}
               importId={workspace.dependency_audit?.target?.importId ?? workspace.code_audit?.target?.importId}
-              onScanned={(audit) => {
-                setWorkspace({
-                  ...workspace,
+              onCodeScanned={(audit) => {
+                setWorkspace((current) => current ? { ...current, code_audit: audit } : { ...workspace, code_audit: audit })
+                toast.success(`可达性研判完成，发现 ${audit.summary.total} 项风险`)
+              }}
+              onDependencyScanned={(audit) => {
+                setWorkspace((current) => {
+                  const base = current ?? workspace
+                  return {
+                  ...base,
                   dependency_audit: audit,
                   dependencies: audit.dependencies,
                   findings: [
@@ -840,24 +1340,28 @@ export function SecurityPlatform() {
                       owner: 'appsec',
                       status: finding.recommendation,
                     })),
-                    ...(workspace.findings ?? []).filter(
+                    ...(base.findings ?? []).filter(
                       (finding) =>
                         !finding.module.includes('供应链') &&
                         !finding.module.includes('供应链')
                     ),
                   ],
                   summary: {
-                    ...workspace.summary,
+                    ...base.summary,
                     dependencies: audit.summary.total_dependencies,
-                    risk_score: Math.max(workspace.summary.risk_score, audit.summary.risk_score),
+                    risk_score: Math.max(base.summary.risk_score, audit.summary.risk_score),
                   },
+                }
                 })
                 toast.success(`依赖扫描完成，生成 ${audit.summary.vex?.statement_count ?? 0} 条 VEX statement`)
               }}
+              animationKey={moduleViewKey}
             />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='pipeline' className='space-y-4'>
+          <TabsContent value='pipeline' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`pipeline-${moduleViewKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='风险是否进入了 CI/CD 构建流程，并影响 workflow、runner 或发布链路？'
@@ -896,14 +1400,11 @@ export function SecurityPlatform() {
                 toast.success(`CI/CD 扫描完成，发现 ${audit.summary.finding_count} 项风险`)
               }}
             />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='artifact' className='space-y-4'>
-            <ModuleQuestion
-              title='本页在回答什么问题？'
-              question='最终产物是否来自可信仓库、commit、workflow、builder 和 runner？'
-              terms={['artifact digest', 'SLSA provenance', '可信门禁']}
-            />
+          <TabsContent value='artifact' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`artifact-${moduleViewKey}`}>
             <ArtifactTrustPanel
               result={workspace.artifact_trust}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
@@ -914,9 +1415,11 @@ export function SecurityPlatform() {
                 toast.success(`产物可信验证完成，评分 ${artifactTrustScore(result)} / 100`)
               }}
             />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='logs' className='space-y-4'>
+          <TabsContent value='logs' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`logs-${moduleViewKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='运行期是否出现与前面供应链风险一致的异常外联、敏感接口访问或探测行为？'
@@ -935,9 +1438,11 @@ export function SecurityPlatform() {
                 toast.success(`日志扫描完成，发现 ${audit.summary.finding_count} 项运行期风险`)
               }}
             />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='multimodal' className='space-y-4'>
+          <TabsContent value='multimodal' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`multimodal-${moduleViewKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='外部告警截图、语音或视频帧中是否包含可关联到依赖、IP、接口或服务的证据？'
@@ -953,18 +1458,17 @@ export function SecurityPlatform() {
                 toast.success(`多模态证据已接入 ${result.summary.evidence_count} 条`)
               }}
             />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='graph' className='space-y-4'>
-            <ModuleQuestion
-              title='本页在回答什么问题？'
-              question='这些证据能否串成一条可信的供应链攻击路径？'
-              terms={['攻击路径', '路径可信度', '证据缺口']}
-            />
-            <KnowledgeGraph workspace={workspace} />
+          <TabsContent value='graph' className={cn(moduleTabContentClass, 'h-[calc(100vh-8.5rem)]')}>
+            <WorkbenchMotionLayer motionKey={`graph-${moduleViewKey}`}>
+            <AttackChainGraph workspace={workspace} />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='copilot' className='space-y-4'>
+          <TabsContent value='copilot' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`copilot-${moduleViewKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='Agent 能否自动执行调查、解释判断依据、指出证据缺口并给出处置优先级？'
@@ -989,23 +1493,953 @@ export function SecurityPlatform() {
                 })
               }}
             />
+            </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='report' className='space-y-4'>
+          <TabsContent value='report' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`report-${moduleViewKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='如何把结论、证据链、攻击路径和处置建议交付给评委或安全团队？'
               terms={['Markdown', '证据包', '防御性声明']}
             />
-            <ReportPanel workspace={workspace} />
+            <ReportPanel workspace={workspace} animationKey={moduleViewKey} />
+            </WorkbenchMotionLayer>
           </TabsContent>
+                </>
+              ) : null}
+            </div>
         </Tabs>
+        </div>
       </Main>
     </div>
   )
 }
 
-function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
+function AgentProjectSidebar({
+  conversations,
+  activeConversationId,
+  draftActive,
+  scanStateByWorkspace,
+  onNewConversation,
+  onSelect,
+  onDelete,
+  onRename,
+}: {
+  conversations: SecurityConversation[]
+  activeConversationId: string
+  draftActive: boolean
+  scanStateByWorkspace: Record<string, ScanWorkspaceState>
+  onNewConversation: () => void
+  onSelect: (conversation: SecurityConversation) => void
+  onDelete: (conversationId: string) => void
+  onRename: (conversationId: string, title: string) => void
+}) {
+  return (
+    <aside className='flex min-h-[calc(100svh-4rem)] flex-col border-r bg-muted/20'>
+      <div className='border-b p-4'>
+        <Button className={cn('group relative w-full justify-start gap-2 overflow-hidden', actionButtonClass)} onClick={onNewConversation}>
+          <Plus className='size-4 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-90' />
+          <span className="transition-opacity duration-500 group-hover:opacity-0">新建对话</span>
+          <i className="absolute right-2 top-1 bottom-1 rounded-sm z-10 grid place-items-center transition-all duration-500 bg-white/10 w-1/5 group-hover:w-[calc(100%-0.5rem)]">
+            <Plus className='size-3.5' />
+          </i>
+        </Button>
+      </div>
+
+      <div className='flex-1 space-y-3 overflow-y-scroll overscroll-contain p-3 [scrollbar-gutter:stable]'>
+        <div className='px-1 text-xs font-medium text-muted-foreground'>历史对话</div>
+
+        {draftActive ? (
+          <Card className='rounded-md border-primary/30 bg-background shadow-sm'>
+            <CardContent className='space-y-2 p-4'>
+              <div className='text-sm font-semibold'>新建溯源对话</div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {conversations.length ? (
+          conversations.map((conversation) => (
+            <ConversationHistoryCard
+              key={conversation.conversationId}
+              conversation={conversation}
+              active={conversation.conversationId === activeConversationId}
+              scanState={scanStateByWorkspace[conversation.workspaceId]}
+              onSelect={() => onSelect(conversation)}
+              onDelete={() => onDelete(conversation.conversationId)}
+              onRename={(title) => onRename(conversation.conversationId, title)}
+            />
+          ))
+        ) : !draftActive ? (
+          <div className='rounded-md border border-dashed bg-background/60 p-4 text-sm text-muted-foreground'>
+            暂无历史对话。新建对话后导入项目开始分析。
+          </div>
+        ) : null}
+      </div>
+
+    </aside>
+  )
+}
+
+function scanStateFromConversation(conversation: SecurityConversation): ScanWorkspaceState {
+  const scanned =
+    ['completed', 'partial', 'failed'].includes(conversation.summary.scanStatus || '') ||
+    conversation.summary.riskScore !== null && conversation.summary.riskScore !== undefined
+  if (!scanned) return freshScanState()
+  return {
+    running: false,
+    completed: true,
+    steps: scanStepSeed.map((step) => {
+      if (['artifact', 'logs', 'multimodal'].includes(String(step.id))) {
+        return { ...step, status: 'skipped', message: '待补材料' }
+      }
+      return { ...step, status: 'completed', message: '扫描完成' }
+    }),
+  }
+}
+
+function ConversationProgressRing({ state }: { state: ScanWorkspaceState }) {
+  const percent = scanProgressPercent(state.steps, state.running)
+  const displayPercent = state.running ? Math.max(10, percent) : percent
+  const tone = state.running
+    ? 'text-cyan-400'
+    : state.completed
+      ? 'text-emerald-400'
+      : 'text-muted-foreground/45'
+  const dotTone = state.running
+    ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.55)]'
+    : state.completed
+      ? 'bg-emerald-400'
+      : 'bg-muted-foreground/30'
+
+  return (
+    <div
+      className={cn('relative grid size-9 shrink-0 place-items-center rounded-full', tone)}
+      aria-label={`扫描进度约 ${percent}%`}
+      title={`扫描进度约 ${percent}%`}
+    >
+      <div
+        className={cn(
+          'absolute inset-0 rounded-full transition-all duration-500',
+          state.running && 'animate-spin'
+        )}
+        style={{
+          background: `conic-gradient(currentColor ${displayPercent * 3.6}deg, hsl(var(--muted)) 0deg)`,
+        }}
+      >
+        {state.running ? (
+          <span className='absolute left-1/2 top-0 size-1.5 -translate-x-1/2 rounded-full bg-current' />
+        ) : null}
+      </div>
+      <div className='absolute inset-[4px] rounded-full bg-background' />
+      <span className={cn('relative size-1.5 rounded-full transition-colors duration-300', dotTone)} />
+    </div>
+  )
+}
+
+function ConversationHistoryCard({
+  conversation,
+  active,
+  scanState,
+  onSelect,
+  onDelete,
+  onRename,
+}: {
+  conversation: SecurityConversation
+  active: boolean
+  scanState?: ScanWorkspaceState
+  onSelect: () => void
+  onDelete: () => void
+  onRename: (title: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(conversation.title)
+  const reducedMotion = useReducedMotion()
+  const restoredScanState = scanState ?? scanStateFromConversation(conversation)
+  const scanned = restoredScanState.completed
+
+  useEffect(() => setTitle(conversation.title), [conversation.title])
+
+  return (
+    <motion.div
+      layout={!reducedMotion}
+      initial={false}
+      animate={reducedMotion ? undefined : { y: active ? -3 : 0, scale: active ? 1.018 : 1 }}
+      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.75 }}
+    >
+      <Card
+        className={cn(
+          'group relative overflow-hidden rounded-md transition-all duration-500',
+          'before:absolute before:inset-0 before:rounded-md before:bg-background/40 before:opacity-100 before:transition-opacity before:duration-700 before:z-10 before:pointer-events-none',
+          'hover:before:opacity-0 hover:-translate-y-1 hover:shadow-lg hover:shadow-cyan-950/20',
+          active
+            ? 'border-cyan-400/50 bg-background shadow-lg shadow-cyan-950/25 ring-1 ring-cyan-400/15'
+            : 'border-border/70 bg-background/50 grayscale-[30%] hover:grayscale-0 hover:border-cyan-400/35 hover:bg-background'
+        )}
+      >
+      <CardContent className={cn('space-y-3 p-3 transition-[padding] duration-300', active && 'p-4')}>
+        <button type='button' className='w-full text-left' onClick={onSelect}>
+          <div className='flex items-start justify-between gap-2'>
+            <div className='min-w-0'>
+              {active && editing ? (
+                <Input
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  onBlur={() => {
+                    setEditing(false)
+                    if (title.trim() && title.trim() !== conversation.title) onRename(title.trim())
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.currentTarget.blur()
+                    }
+                  }}
+                  className='h-8'
+                  autoFocus
+                />
+              ) : (
+                <div className={cn('truncate font-semibold', active ? 'text-base' : 'text-sm')}>
+                  {conversation.title}
+                </div>
+              )}
+              <div className='mt-1 truncate text-xs text-muted-foreground'>
+                {conversation.sourcePath || conversation.projectName || '项目路径未记录'}
+              </div>
+            </div>
+            <ConversationProgressRing state={restoredScanState} />
+          </div>
+        </button>
+
+        {active ? (
+          <motion.div
+            className='space-y-3'
+            initial={reducedMotion ? false : { opacity: 0, y: -8, filter: 'blur(6px)' }}
+            animate={reducedMotion ? undefined : { opacity: 1, y: 0, filter: 'blur(0px)' }}
+            transition={{ duration: 0.34, ease: workbenchMotionEase }}
+          >
+            <div className='grid grid-cols-2 gap-2 text-xs'>
+              <div className='rounded-md bg-muted/70 p-2'>
+                <div className='text-muted-foreground'>{scanned ? '风险评分' : '预检文件'}</div>
+                <div className='mt-1 font-semibold text-foreground'>
+                  {scanned
+                    ? conversation.summary.riskScore
+                    : compactNumber(conversation.summary.preflightFiles ?? 0)}
+                </div>
+              </div>
+              <div className='rounded-md bg-muted/70 p-2'>
+                <div className='text-muted-foreground'>{scanned ? '攻击路径' : '依赖/CI'}</div>
+                <div className='mt-1 font-semibold text-foreground'>
+                  {scanned
+                    ? conversation.summary.attackPaths
+                    : `${conversation.summary.dependencyFiles ?? 0}/${conversation.summary.ciFiles ?? 0}`}
+                </div>
+              </div>
+            </div>
+            <div className='flex items-center justify-between gap-2'>
+              <Button
+                type='button'
+                variant='ghost'
+                size='sm'
+                className='h-8 px-2 text-muted-foreground'
+                onClick={() => setEditing(true)}
+              >
+                <Pencil className='size-3.5' />
+                重命名
+              </Button>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon'
+                className='size-8 text-muted-foreground hover:text-destructive'
+                title='永久删除对话'
+                onClick={onDelete}
+              >
+                <Trash2 className='size-4' />
+              </Button>
+            </div>
+          </motion.div>
+        ) : null}
+      </CardContent>
+    </Card>
+    </motion.div>
+  )
+}
+
+function AgentConversationEmpty({
+  draftActive,
+  onNewConversation,
+  onImported,
+}: {
+  draftActive: boolean
+  onNewConversation: () => void
+  onImported: (record: ProjectImportRecord) => void
+}) {
+  return (
+    <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-4xl items-center justify-center'>
+      <div className='w-full space-y-5'>
+        <div className='space-y-3 text-center'>
+          <Badge variant='outline' className='rounded-md'>
+            APT 溯源对话
+          </Badge>
+          <h1 className='text-page-title'>
+            新建一个项目分析对话
+          </h1>
+        </div>
+
+        {!draftActive ? (
+          <Card className='rounded-md'>
+            <CardContent className='flex flex-col items-center gap-3 p-8'>
+              <Button size='lg' className={actionButtonClass} onClick={onNewConversation}>
+                <Plus className='size-4' />
+                新建对话
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <EmbeddedProjectImportPanel onImported={onImported} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function EmbeddedProjectImportPanel({
+  onImported,
+}: {
+  onImported: (record: ProjectImportRecord) => void
+}) {
+  const [busy, setBusy] = useState<'upload' | 'git' | 'local' | null>(null)
+  const [archive, setArchive] = useState<File | null>(null)
+  const [gitUrl, setGitUrl] = useState('')
+  const [gitRef, setGitRef] = useState('')
+  const [localPath, setLocalPath] = useState('')
+  const [projectName, setProjectName] = useState('')
+
+  async function runImport(kind: 'upload' | 'git' | 'local') {
+    setBusy(kind)
+    try {
+      let record: ProjectImportRecord
+      if (kind === 'upload') {
+        if (!archive) {
+          toast.error('请选择 zip、tar.gz 或 tgz 项目压缩包')
+          return
+        }
+        record = await uploadProjectArchive(archive)
+      } else if (kind === 'git') {
+        if (!gitUrl.trim()) {
+          toast.error('请输入 GitHub 或 Git 仓库链接')
+          return
+        }
+        record = await importGitProject({
+          url: gitUrl.trim(),
+          ref: gitRef.trim() || undefined,
+          projectName: projectName.trim() || undefined,
+        })
+      } else {
+        if (!localPath.trim()) {
+          toast.error('请输入后端可访问的本地项目路径')
+          return
+        }
+        record = await importLocalProject({
+          path: localPath.trim(),
+          projectName: projectName.trim() || undefined,
+        })
+      }
+      onImported(record)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '项目导入失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const disabled = busy !== null
+
+  return (
+    <Card className='rounded-md shadow-sm'>
+      <CardHeader>
+        <CardTitle>导入项目</CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-4'>
+        <div className='space-y-2'>
+          <Label htmlFor='embedded-project-name'>项目名称</Label>
+          <Input
+            id='embedded-project-name'
+            value={projectName}
+            onChange={(event) => setProjectName(event.target.value)}
+          />
+        </div>
+
+        <div className='grid gap-3 lg:grid-cols-3'>
+          <div className='rounded-md border bg-background/70 p-3'>
+            <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
+              <Archive className='size-4 text-primary' />
+              zip / 压缩包
+            </div>
+            <Input
+              type='file'
+              accept='.zip,.tar,.tar.gz,.tgz,application/zip,application/gzip'
+              className={fileInputClass}
+              onChange={(event) => setArchive(event.target.files?.[0] ?? null)}
+            />
+            <Button
+              className={cn('mt-3 w-full', actionButtonClass)}
+              disabled={disabled}
+              onClick={() => void runImport('upload')}
+            >
+              {busy === 'upload' ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+              上传导入
+            </Button>
+          </div>
+
+          <div className='rounded-md border bg-background/70 p-3'>
+            <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
+              <FolderOpen className='size-4 text-primary' />
+              本地路径
+            </div>
+            <Input
+              value={localPath}
+              onChange={(event) => setLocalPath(event.target.value)}
+              placeholder='C:/Users/.../project'
+            />
+            <Button
+              className={cn('mt-3 w-full', actionButtonClass)}
+              disabled={disabled}
+              onClick={() => void runImport('local')}
+            >
+              {busy === 'local' ? <Loader2 className='size-4 animate-spin' /> : <FolderOpen className='size-4' />}
+              导入路径
+            </Button>
+          </div>
+
+          <div className='rounded-md border bg-background/70 p-3'>
+            <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
+              <GitBranch className='size-4 text-primary' />
+              GitHub 链接
+            </div>
+            <div className='grid gap-2'>
+              <Input
+                value={gitUrl}
+                onChange={(event) => setGitUrl(event.target.value)}
+                placeholder='https://github.com/org/repo.git'
+              />
+              <Input
+                value={gitRef}
+                onChange={(event) => setGitRef(event.target.value)}
+                placeholder='分支 / Tag，可选'
+              />
+            </div>
+            <Button
+              className={cn('mt-3 w-full', actionButtonClass)}
+              disabled={disabled}
+              onClick={() => void runImport('git')}
+            >
+              {busy === 'git' ? <Loader2 className='size-4 animate-spin' /> : <GitBranch className='size-4' />}
+              拉取导入
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function AgentConversationHome({
+  workspace,
+  analysisStarted,
+  scanRunning,
+  scanSteps,
+  question,
+  setQuestion,
+  answer,
+  busy,
+  onSubmit,
+  onStartAnalysis,
+  onOpenModule,
+}: {
+  workspace: SecurityWorkspace
+  analysisStarted: boolean
+  scanRunning: boolean
+  scanSteps: ScanStepState[]
+  question: string
+  setQuestion: (value: string) => void
+  answer: SecurityAssistantResponse | null
+  busy: boolean
+  onSubmit: () => void
+  onStartAnalysis: () => void
+  onOpenModule: (module: PlatformTab) => void
+}) {
+  const assistant = getAssistantPayload(workspace)
+  const visibleModules = agentModuleTabs.filter((module) => module !== 'copilot')
+
+  return (
+    <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-5xl flex-col'>
+      <div className='flex-1 space-y-5 pb-40'>
+        <CopilotMessage
+          role='assistant'
+          title='预检结果'
+          icon={<Bot className='size-4 text-primary' />}
+        >
+          <PreflightConversationCard workspace={workspace} />
+        </CopilotMessage>
+
+        <CopilotMessage
+          role='assistant'
+          title='分析助手'
+          icon={<BrainCircuit className='size-4 text-primary' />}
+        >
+          <CopilotMarkdown text={answer?.answer || assistant.answer} />
+          <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
+          <ModuleLaunchGrid
+            modules={visibleModules}
+            analysisStarted={analysisStarted}
+            scanRunning={scanRunning}
+            scanSteps={scanSteps}
+            onStart={onStartAnalysis}
+            onOpenModule={onOpenModule}
+          />
+        </CopilotMessage>
+
+        {busy ? (
+          <div className='flex items-center gap-3 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground'>
+            <Loader2 className='size-4 animate-spin text-primary' />
+            正在整理当前项目的证据与处置建议...
+          </div>
+        ) : null}
+      </div>
+
+      <div className='fixed inset-x-4 bottom-4 z-40 mx-auto max-w-5xl lg:left-[calc(292px+1.25rem)] lg:right-5'>
+        <div className='rounded-md border bg-background/95 p-2 shadow-xl shadow-background/50 backdrop-blur supports-[backdrop-filter]:bg-background/85'>
+          <Textarea
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                onSubmit()
+              }
+            }}
+            placeholder='询问风险原因、攻击链路、修复优先级或误报可能性'
+            className='min-h-16 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0'
+          />
+          <div className='flex items-center justify-end gap-3 border-t px-2 pt-2'>
+            <Button onClick={onSubmit} disabled={busy || !question.trim()} className={cn('rounded-md', actionButtonClass)}>
+              {busy ? <Loader2 className='size-4 animate-spin' /> : <Send className='size-4' />}
+              发送
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PreflightConversationCard({ workspace }: { workspace: SecurityWorkspace }) {
+  const preflight = getImportSummary(workspace)
+  const fileStats = preflight?.fileStats
+  const languages = preflight?.languages ?? []
+  const dependencyFiles = preflight?.dependencyFiles ?? []
+  const ciFiles = preflight?.ciFiles ?? []
+  const warnings = preflight?.warnings ?? []
+  const metrics = [
+    ['项目', preflight?.projectName || workspace.workspace.name],
+    ['文件总数', compactNumber(fileStats?.total ?? 0)],
+    ['可扫描文件', compactNumber(fileStats?.scannable ?? 0)],
+    ['依赖清单', `${dependencyFiles.length} 个`],
+    ['CI 配置', `${ciFiles.length} 个`],
+    ['主要语言', languages[0]?.name || '未识别'],
+  ]
+
+  return (
+    <div className='space-y-4'>
+      <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
+        {metrics.map(([label, value]) => (
+          <div key={label} className='rounded-md border bg-background/70 p-3'>
+            <div className='text-xs text-muted-foreground'>{label}</div>
+            <div className='mt-1 truncate text-sm font-semibold'>{value}</div>
+          </div>
+        ))}
+      </div>
+      {languages.length ? (
+        <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
+          {languages.slice(0, 3).map((language) => (
+            <div key={language.name} className='rounded-md border bg-background/70 p-3'>
+              <div className='flex items-center justify-between gap-3 text-sm'>
+                <span className='font-medium'>{language.name}</span>
+                <span className='text-muted-foreground'>{Math.round(language.percent)}%</span>
+              </div>
+              <div className='mt-2 h-1.5 overflow-hidden rounded-full bg-muted'>
+                <div className='h-full rounded-full bg-primary' style={{ width: `${language.percent}%` }} />
+              </div>
+              <div className='mt-1 text-xs text-muted-foreground'>{language.files} 个文件</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className='grid gap-2 lg:grid-cols-2'>
+        <div className='rounded-md border bg-background/70 p-3'>
+          <div className='text-xs font-medium text-muted-foreground'>依赖清单</div>
+          <div className='mt-2 space-y-1 text-xs'>
+            {dependencyFiles.slice(0, 4).map((file) => (
+              <div key={file} className='truncate rounded bg-muted/50 px-2 py-1 font-mono'>
+                {file}
+              </div>
+            ))}
+            {!dependencyFiles.length ? <div className='text-muted-foreground'>未发现依赖清单</div> : null}
+          </div>
+        </div>
+        <div className='rounded-md border bg-background/70 p-3'>
+          <div className='text-xs font-medium text-muted-foreground'>CI/CD 配置</div>
+          <div className='mt-2 space-y-1 text-xs'>
+            {ciFiles.slice(0, 4).map((file) => (
+              <div key={file} className='truncate rounded bg-muted/50 px-2 py-1 font-mono'>
+                {file}
+              </div>
+            ))}
+            {!ciFiles.length ? <div className='text-muted-foreground'>未发现 CI/CD 配置</div> : null}
+          </div>
+        </div>
+      </div>
+      {warnings.length ? (
+        <div className='rounded-md border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100'>
+          {warnings.slice(0, 2).join('；')}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+const evidenceModuleCards: Partial<Record<PlatformTab, {
+  title?: string
+  missing?: string[]
+  icon: LucideIcon
+}>> = {
+  code: {
+    title: '供应链可达性研判',
+    icon: Route,
+  },
+  supply: {
+    title: '供应链可达性研判',
+    icon: Route,
+  },
+  pipeline: {
+    icon: GitBranch,
+  },
+  artifact: {
+    missing: ['缺 artifact', '缺 provenance'],
+    icon: ShieldCheck,
+  },
+  logs: {
+    missing: ['缺运行日志'],
+    icon: FileText,
+  },
+  multimodal: {
+    missing: ['缺外部告警'],
+    icon: Siren,
+  },
+  graph: {
+    icon: Network,
+  },
+  report: {
+    icon: ClipboardList,
+  },
+}
+
+const evidenceModuleTones = {
+  completed: {
+    line: 'bg-emerald-300/80',
+    glow: 'bg-emerald-400',
+    icon: 'text-emerald-200',
+    iconWrap: 'border-emerald-400/20 bg-emerald-400/10',
+    badge: 'border-[rgba(16,185,129,0.35)] bg-[rgba(16,185,129,0.12)] text-[#6ee7b7]',
+    chip: 'border-emerald-400/20 bg-emerald-400/10 text-emerald-100/80',
+  },
+  pending: {
+    line: 'bg-amber-300/80',
+    glow: 'bg-amber-400',
+    icon: 'text-amber-200',
+    iconWrap: 'border-amber-400/20 bg-amber-400/10',
+    badge: 'border-[rgba(245,158,11,0.35)] bg-[rgba(245,158,11,0.12)] text-[#fbbf24]',
+    chip: 'border-amber-400/25 bg-amber-400/10 text-amber-100/90',
+  },
+  failed: {
+    line: 'bg-red-300/80',
+    glow: 'bg-red-400',
+    icon: 'text-red-200',
+    iconWrap: 'border-red-400/20 bg-red-400/10',
+    badge: 'border-red-400/35 bg-red-500/10 text-red-200',
+    chip: 'border-red-400/25 bg-red-500/10 text-red-100/90',
+  },
+}
+
+function ModuleLaunchGrid({
+  modules,
+  analysisStarted,
+  scanRunning,
+  scanSteps,
+  onStart,
+  onOpenModule,
+}: {
+  modules: PlatformTab[]
+  analysisStarted: boolean
+  scanRunning: boolean
+  scanSteps: ScanStepState[]
+  onStart: () => void
+  onOpenModule: (module: PlatformTab) => void
+}) {
+  const reducedMotion = useReducedMotion()
+  const stepByModule = new Map<ScanStepState['id'], ScanStepState>(
+    scanSteps.map((step) => [step.id, step])
+  )
+  const statusSummary = modules.reduce(
+    (summary, module) => {
+      const step = moduleLaunchStep(module, stepByModule)
+      if (analysisStarted && !scanRunning && step?.status === 'skipped') summary.pending += 1
+      else if (analysisStarted && !scanRunning && step?.status === 'completed') summary.completed += 1
+      return summary
+    },
+    { completed: 0, pending: 0 }
+  )
+
+  return (
+    <div className='mt-4 space-y-3'>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <div className='text-section-title'>模块详情</div>
+        {analysisStarted && !scanRunning ? (
+          <div className='flex items-center gap-2'>
+            <span className='inline-flex h-[26px] items-center whitespace-nowrap rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2.5 text-[13px] font-bold leading-none text-emerald-200'>
+              {statusSummary.completed} 已完成
+            </span>
+            <span className='inline-flex h-[26px] items-center whitespace-nowrap rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 text-[13px] font-bold leading-none text-amber-200'>
+              {statusSummary.pending} 待补充
+            </span>
+          </div>
+        ) : (
+          <Button size='sm' className={actionButtonClass} onClick={onStart} disabled={scanRunning}>
+            {scanRunning ? <Loader2 className='size-4 animate-spin' /> : <Radar className='size-4' />}
+            {scanRunning ? '扫描中' : '运行扫描'}
+          </Button>
+        )}
+      </div>
+      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3'>
+        {modules.map((module, index) => {
+          const step = moduleLaunchStep(module, stepByModule)
+          const isReady = analysisStarted && !scanRunning
+          const isSkipped = step?.status === 'skipped'
+          const isFailed = step?.status === 'failed'
+          const isCompleted = isReady && step?.status === 'completed'
+          const cardMeta = evidenceModuleCards[module]
+          const Icon = cardMeta?.icon ?? ShieldCheck
+          const moduleTitle = cardMeta?.title ?? workspaceTabTitles[module]
+          const allowTitleWrap = ['code', 'supply', 'pipeline', 'multimodal'].includes(module)
+          const tone = isReady && isSkipped ? evidenceModuleTones.pending : isFailed ? evidenceModuleTones.failed : evidenceModuleTones.completed
+          const statusLabel = isReady
+            ? isSkipped
+              ? '待补充'
+              : isFailed
+                ? '异常'
+                : '已完成'
+            : scanRunning && step?.status === 'running'
+              ? '扫描中'
+              : '等待'
+          const missingChips = isReady && isSkipped ? cardMeta?.missing ?? [] : []
+
+          return (
+            <motion.div
+              key={module}
+              initial={reducedMotion ? false : { opacity: 0, y: 10, scale: 0.98 }}
+              animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 380, damping: 28, mass: 0.72, delay: index * 0.035 }}
+            >
+              <Button
+                type='button'
+                variant='outline'
+                className={cn(
+                  'group relative h-[132px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-slate-400/15 bg-slate-950/70 px-5 py-4 text-left shadow-[0_8px_8px_rgba(2,6,23,0.22)] backdrop-blur transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300/30 hover:bg-slate-900/80 hover:shadow-[0_8px_8px_rgba(2,6,23,0.3)] active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
+                  isCompleted && 'hover:border-emerald-300/35',
+                  isReady && isSkipped && 'hover:border-amber-300/35',
+                  isFailed && 'hover:border-red-300/35'
+                )}
+                disabled={scanRunning}
+                onClick={() => onOpenModule(module)}
+              >
+                <span className={cn('absolute inset-y-0 left-0 w-[3px]', tone.line)} />
+                <span className={cn('absolute -right-8 -top-10 size-24 rounded-full blur-2xl opacity-20 transition-opacity duration-200 group-hover:opacity-30', tone.glow)} />
+                <span className='flex h-full min-w-0 flex-1 flex-col'>
+                  <span className='grid min-w-0 grid-cols-[44px_minmax(0,1fr)_auto] items-start gap-3'>
+                    <span className={cn('grid size-11 shrink-0 place-items-center rounded-md border', tone.iconWrap)}>
+                      <Icon className={cn('size-5', tone.icon)} />
+                    </span>
+                    <span className={cn('min-w-0 pt-1 !text-[18px] !font-extrabold leading-[1.15] text-slate-50 [word-break:keep-all]', allowTitleWrap ? 'line-clamp-2 whitespace-normal' : 'truncate whitespace-nowrap')} title={moduleTitle}>
+                      {moduleTitle}
+                    </span>
+                    <span className={cn('inline-flex h-7 shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-3 text-[13px] font-extrabold leading-none', tone.badge)}>
+                      {statusLabel}
+                    </span>
+                  </span>
+                  {missingChips.length ? (
+                    <span className='mt-auto flex flex-wrap gap-2 pl-14'>
+                      {missingChips.map((chip) => (
+                        <span key={chip} className={cn('inline-flex h-6 items-center whitespace-nowrap rounded-full border px-2.5 text-xs font-semibold leading-none', tone.chip)}>
+                          {chip}
+                        </span>
+                      ))}
+                    </span>
+                  ) : null}
+                </span>
+              </Button>
+            </motion.div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function moduleLaunchStep(
+  module: PlatformTab,
+  stepByModule: Map<ScanStepState['id'], ScanStepState>
+): ScanStepState | undefined {
+  if (module === 'supply') {
+    const code = stepByModule.get('code')
+    const supply = stepByModule.get('supply')
+    if (code?.status === 'running' || supply?.status === 'running') return code?.status === 'running' ? code : supply
+    if (code?.status === 'failed' || supply?.status === 'failed') return code?.status === 'failed' ? code : supply
+    if (code?.status === 'completed' && supply?.status === 'completed') return { ...(supply ?? code), status: 'completed' }
+    return supply ?? code
+  }
+  return stepByModule.get(module === 'report' ? 'graph' : module)
+}
+
+function ScanProgressPanel({
+  steps,
+  running,
+  completed,
+}: {
+  steps: ScanStepState[]
+  running: boolean
+  completed: boolean
+}) {
+  const reducedMotion = useReducedMotion()
+  const finished = steps.filter((step) =>
+    ['completed', 'skipped', 'failed'].includes(step.status)
+  ).length
+  const runningWeight = running && steps.some((step) => step.status === 'running') ? 0.35 : 0
+  const percent = Math.min(
+    100,
+    Math.round(((finished + runningWeight) / Math.max(1, steps.length)) * 100)
+  )
+  const failedSteps = steps.filter((step) => step.status === 'failed')
+  const skippedSteps = steps.filter((step) => step.status === 'skipped')
+
+  return (
+    <motion.div
+      className='mt-4 space-y-3 overflow-hidden rounded-md border bg-background/70 p-4 shadow-sm shadow-cyan-950/10'
+      initial={reducedMotion ? false : { opacity: 0, y: 18, scale: 0.985 }}
+      animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.42, ease: workbenchMotionEase }}
+    >
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <div>
+          <div className='text-section-title'>扫描进度</div>
+          <div className='mt-1 text-page-meta'>
+            {running ? '各模块正在按顺序扫描当前导入项目' : completed ? '扫描流程已结束' : '等待开始扫描'}
+          </div>
+        </div>
+        <Badge variant='outline' className='rounded-md'>
+          {percent}%
+        </Badge>
+      </div>
+      <div className='relative h-2 overflow-hidden rounded-full bg-muted'>
+        <motion.div
+          className='h-full rounded-full bg-primary shadow-[0_0_18px_rgba(34,211,238,0.45)]'
+          initial={reducedMotion ? false : { width: 0 }}
+          animate={{ width: `${percent}%` }}
+          transition={{ duration: running ? 0.75 : 1.1, ease: workbenchMotionEase }}
+        />
+        {running ? (
+          <div className='absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-60 motion-safe:animate-pulse' />
+        ) : null}
+      </div>
+      <div className='grid gap-2 sm:grid-cols-2 xl:grid-cols-4'>
+        {steps.map((step, index) => {
+          const showMessage = ['skipped', 'failed', 'running'].includes(step.status)
+          return (
+            <motion.div
+              key={step.id}
+              className='rounded-md border bg-card p-3 transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-400/30 hover:shadow-md hover:shadow-cyan-950/10'
+              initial={reducedMotion ? false : { opacity: 0, y: 12, scale: 0.96 }}
+              animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
+              transition={{ type: 'spring', stiffness: 360, damping: 27, mass: 0.75, delay: index * 0.04 }}
+            >
+              <div className='flex items-center justify-between gap-2'>
+                <span className='truncate text-sm font-medium'>{step.label}</span>
+                <ScanStatusBadge status={step.status} />
+              </div>
+              {showMessage ? (
+                <div className='mt-2 line-clamp-2 text-subtle'>
+                  {step.message}
+                </div>
+              ) : null}
+            </motion.div>
+          )
+        })}
+      </div>
+      {failedSteps.length || skippedSteps.length ? (
+        <div className='rounded-md border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100'>
+          {failedSteps.length ? (
+            <div className='font-medium'>扫描完成，但有 {failedSteps.length} 个模块失败。</div>
+          ) : null}
+          {skippedSteps.length ? (
+            <div className='mt-1'>有 {skippedSteps.length} 个模块缺少材料，已标记为待补充。</div>
+          ) : null}
+          {failedSteps.length ? (
+            <div className='mt-2 space-y-1'>
+              {failedSteps.map((step) => (
+                <div key={step.id} className='line-clamp-2 text-xs'>
+                  {step.label}：{step.message}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </motion.div>
+  )
+}
+
+function ScanStatusBadge({ status, solid = false }: { status: ScanStepStatus; solid?: boolean }) {
+  const label = {
+    pending: '等待',
+    running: '扫描中',
+    completed: '完成',
+    skipped: '待补',
+    failed: '失败',
+  }[status]
+  const classes = solid
+    ? {
+        pending: 'border-white/30 bg-white/10 text-white',
+        running: 'border-white/30 bg-white/10 text-white',
+        completed: 'border-white/35 bg-white/20 text-white',
+        skipped: 'border-slate-950/20 bg-slate-950/10 text-slate-950',
+        failed: 'border-white/35 bg-white/20 text-white',
+      }[status]
+    : {
+    pending: 'text-muted-foreground',
+    running: 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/30 dark:text-cyan-200',
+    completed: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200',
+    skipped: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200',
+    failed: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200',
+  }[status]
+  return (
+    <Badge variant='outline' className={cn('rounded-md', classes)}>
+      {status === 'running' ? <Loader2 className='mr-1 size-3 animate-spin' /> : null}
+      {label}
+    </Badge>
+  )
+}
+
+export function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
   const assistant = getAssistantPayload(workspace)
   const modules = workspace.modules ?? []
   const findings = workspace.findings ?? []
@@ -1018,10 +2452,10 @@ function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
             <Badge variant='outline' className='rounded-md border-cyan-200 bg-cyan-50 text-cyan-700'>
               APT 溯源 · SBOM · CI/CD · 产物可信 · 日志印证
             </Badge>
-            <h1 className='text-2xl font-semibold tracking-normal sm:text-3xl'>
+            <h1 className='text-page-title'>
               {workspace.workspace.name} APT 供应链攻击溯源总览
             </h1>
-            <p className='max-w-3xl text-sm leading-6 text-muted-foreground'>
+            <p className='max-w-3xl text-body'>
               围绕污染入口、被污染环节、受影响资产和攻击路径组织多源证据，支撑供应链攻击检测与溯源研判。
             </p>
           </div>
@@ -1060,17 +2494,14 @@ function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
 
         <Card className='rounded-md'>
           <CardHeader className='pb-3'>
-            <CardTitle className='flex items-center gap-2 text-base'>
+          <CardTitle className='flex items-center gap-2 text-section-title'>
               <Siren className='size-4 text-red-600' />
               溯源结论与处置优先级
             </CardTitle>
-            <CardDescription>
-              先定位污染环节和受影响资产，再给出优先处置动作
-            </CardDescription>
           </CardHeader>
           <CardContent className='space-y-4'>
             <RiskDial score={workspace.summary.risk_score} level={workspace.summary.risk_level} />
-            <p className='text-sm leading-6 text-muted-foreground'>
+            <p className='text-body'>
               {assistant.answer}
             </p>
             <div className='space-y-2'>
@@ -1092,7 +2523,6 @@ function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
               <Radar className='size-4 text-cyan-600' />
               攻击链时间线与证据演进
             </CardTitle>
-            <CardDescription>按组件异常、构建链、产物可信和运行期日志观察证据变化</CardDescription>
           </CardHeader>
           <CardContent>
             <RiskTrendChart workspace={workspace} />
@@ -1104,7 +2534,6 @@ function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
               <ClipboardList className='size-4 text-emerald-600' />
               供应链溯源能力覆盖
             </CardTitle>
-            <CardDescription>面向组件、构建、产物、日志和图谱的检测能力与当前状态</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             {modules.map((module) => (
@@ -1119,7 +2548,7 @@ function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
   )
 }
 
-function InvestigationDotStepper({
+export function InvestigationDotStepper({
   workspace,
   activeStepId,
   onJump,
@@ -1230,24 +2659,49 @@ function WorkspaceTabs({
   onSelect: (tab: WorkspaceTab) => void
   onClose: (tabId: WorkspaceTab['id']) => void
 }) {
+  const reducedMotion = useReducedMotion()
+
   return (
-    <ScrollArea orientation='horizontal'>
-      <div className='flex w-max items-center gap-1 rounded-md border bg-muted/40 p-1'>
+    <div className='border-b bg-muted/30 shadow-sm shadow-slate-950/10'>
+      <ScrollArea orientation='horizontal'>
+      <div className='flex w-max min-w-full items-end gap-1.5 px-3 pt-2'>
         {tabs.map((tab) => {
           const active = tab.id === activeTabId
           return (
             <div
               key={tab.id}
               className={cn(
-                'flex h-9 items-center gap-1 rounded-md border border-transparent px-2 text-sm transition',
+                'relative flex h-11 items-center gap-1 overflow-hidden rounded-t-md border border-b-0 px-3 text-sm transition-[border-color,color,background-color,box-shadow,transform] duration-300',
                 active
-                  ? 'border-border bg-background shadow-sm'
-                  : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                  ? 'border-cyan-400/35 bg-background text-foreground shadow-lg shadow-cyan-950/20'
+                  : 'border-transparent bg-transparent text-muted-foreground hover:-translate-y-0.5 hover:bg-background/65 hover:text-foreground'
               )}
             >
+              {active ? (
+                reducedMotion ? (
+                  <span className='absolute inset-0 rounded-t-md bg-background' />
+                ) : (
+                  <motion.span
+                    layoutId='workspace-active-tab-surface'
+                    className='absolute inset-0 rounded-t-md bg-background'
+                    transition={{ type: 'spring', stiffness: 460, damping: 34, mass: 0.7 }}
+                  />
+                )
+              ) : null}
+              {active ? (
+                reducedMotion ? (
+                  <span className='absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-cyan-400' />
+                ) : (
+                  <motion.span
+                    layoutId='workspace-active-tab-rail'
+                    className='absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-cyan-400 shadow-[0_0_18px_rgba(34,211,238,0.8)]'
+                    transition={{ type: 'spring', stiffness: 500, damping: 36, mass: 0.7 }}
+                  />
+                )
+              ) : null}
               <button
                 type='button'
-                className='max-w-44 truncate font-medium'
+                className='relative z-10 max-w-48 truncate font-medium'
                 title={tab.description ?? tab.title}
                 onClick={() => onSelect(tab)}
               >
@@ -1256,7 +2710,7 @@ function WorkspaceTabs({
               {tab.closable ? (
                 <button
                   type='button'
-                  className='grid size-5 place-items-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground'
+                  className='relative z-10 grid size-6 place-items-center rounded-sm text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-90'
                   title={`关闭 ${tab.title}`}
                   onClick={() => onClose(tab.id)}
                 >
@@ -1267,7 +2721,8 @@ function WorkspaceTabs({
           )
         })}
       </div>
-    </ScrollArea>
+      </ScrollArea>
+    </div>
   )
 }
 
@@ -1295,7 +2750,7 @@ function getInvestigationStepState(
   return 'pending'
 }
 
-function currentInvestigationStepId(workspace: SecurityWorkspace): InvestigationStepId {
+export function currentInvestigationStepId(workspace: SecurityWorkspace): InvestigationStepId {
   const guidanceStepMap: Record<string, InvestigationStepId> = {
     case: 'case',
     preflight: 'preflight',
@@ -1333,29 +2788,10 @@ function ModuleQuestion({
   question: string
   terms: string[]
 }) {
-  return (
-    <Alert className='rounded-md'>
-      <ShieldCheck className='size-4' />
-      <AlertTitle>{title}</AlertTitle>
-      <AlertDescription>
-        <div className='mt-1 flex flex-wrap items-center gap-2'>
-          <span>{question}</span>
-          {terms.map((term) => (
-            <UiTooltip key={term}>
-              <UiTooltipTrigger asChild>
-                <Badge variant='outline' className='cursor-help rounded-md'>
-                  {term}
-                </Badge>
-              </UiTooltipTrigger>
-              <UiTooltipContent>
-                <p className='max-w-64 text-xs'>{termHelpText(term)}</p>
-              </UiTooltipContent>
-            </UiTooltip>
-          ))}
-        </div>
-      </AlertDescription>
-    </Alert>
-  )
+  void title
+  void question
+  terms.forEach(termHelpText)
+  return null
 }
 
 function termHelpText(term: string) {
@@ -1370,14 +2806,139 @@ function termHelpText(term: string) {
   return help[term] || '这个概念会帮助你理解本页证据如何支撑供应链溯源结论。'
 }
 
+function useAnimatedNumber(
+  target: number,
+  options: {
+    stiffness?: number
+    damping?: number
+    delayMs?: number
+    durationMs?: number
+    respectReducedMotion?: boolean
+    resetKey?: string | number
+  } = {}
+) {
+  const prefersReducedMotion = useReducedMotion()
+  const reducedMotion = options.respectReducedMotion !== false && prefersReducedMotion
+  const motionValue = useMotionValue(reducedMotion ? target : 0)
+  const delayMs = options.delayMs ?? 360
+  const durationMs = options.durationMs ?? 2400
+  const resetKey = options.resetKey
+  const spring = useSpring(motionValue, {
+    stiffness: options.stiffness ?? 95,
+    damping: options.damping ?? 22,
+    mass: 0.8,
+  })
+  const [value, setValue] = useState(reducedMotion ? target : 0)
+
+  useLayoutEffect(() => {
+    if (reducedMotion) {
+      motionValue.jump(target)
+      setValue(target)
+      return
+    }
+    motionValue.jump(0)
+    setValue(0)
+    let frameId = 0
+    const timeoutId = window.setTimeout(() => {
+      const startedAt = performance.now()
+      const animateFrame = (now: number) => {
+        const elapsed = Math.max(0, now - startedAt)
+        const rawProgress = Math.min(1, elapsed / durationMs)
+        const easedProgress = 1 - Math.pow(1 - rawProgress, 3)
+        const nextValue = target * easedProgress
+        motionValue.set(nextValue)
+        setValue(Math.round(nextValue))
+        if (rawProgress < 1) {
+          frameId = window.requestAnimationFrame(animateFrame)
+        } else {
+          motionValue.set(target)
+          setValue(Math.round(target))
+        }
+      }
+      frameId = window.requestAnimationFrame(animateFrame)
+    }, delayMs)
+    return () => {
+      window.clearTimeout(timeoutId)
+      if (frameId) window.cancelAnimationFrame(frameId)
+    }
+  }, [motionValue, reducedMotion, target, delayMs, durationMs, resetKey])
+
+  useMotionValueEvent(spring, 'change', (latest) => {
+    setValue(Math.round(latest))
+  })
+
+  return { value, spring }
+}
+
 function RiskDial({ score, level }: { score: number; level: string }) {
+  const reducedMotion = useReducedMotion()
+  const { value: displayScore, spring } = useAnimatedNumber(score, {
+    stiffness: 34,
+    damping: 13,
+    delayMs: 520,
+    durationMs: 3200,
+    respectReducedMotion: false,
+  })
+  const progress = useTransform(spring, [0, 100], [0, 1])
+  const orbitRotation = useTransform(spring, (latest) => Math.max(0, Math.min(100, latest)) * 3.6)
+  const circumference = 2 * Math.PI * 44
+  const dashOffset = useTransform(progress, (value) => circumference * (1 - Math.max(0, Math.min(1, value))))
+  const glowOpacity = useTransform(progress, [0, 0.75, 1], [0.08, 0.25, 0.38])
+  const glowScale = useTransform(progress, [0, 1], [0.9, 1.06])
+  const ringColor =
+    score >= 90
+      ? '#dc2626'
+      : score >= 75
+        ? '#f97316'
+        : score >= 60
+          ? '#f59e0b'
+          : '#10b981'
+
   return (
-    <div className='flex items-center gap-3 rounded-md border bg-background p-3'>
-      <div
-        className='grid size-20 place-items-center rounded-full border-8 border-red-500/75 bg-red-50 text-xl font-bold text-red-700 dark:bg-red-950/30 dark:text-red-300'
-        aria-label={`risk score ${score}`}
-      >
-        {score}
+    <div className='flex items-center gap-4 rounded-md border bg-background p-3'>
+      <div className='relative grid size-24 place-items-center' aria-label={`综合风险评分 ${score}`}>
+        <motion.div
+          className='absolute inset-2 rounded-full blur-lg'
+          style={{ backgroundColor: ringColor, opacity: glowOpacity, scale: reducedMotion ? 1 : glowScale }}
+        />
+        <svg className='relative size-24 -rotate-90' viewBox='0 0 100 100' role='img'>
+          <circle
+            cx='50'
+            cy='50'
+            r='44'
+            fill='none'
+            stroke='hsl(var(--muted))'
+            strokeWidth='10'
+          />
+          <motion.circle
+            cx='50'
+            cy='50'
+            r='44'
+            fill='none'
+            stroke={ringColor}
+            strokeWidth='10'
+            strokeLinecap='round'
+            strokeDasharray={circumference}
+            style={{ strokeDashoffset: dashOffset }}
+          />
+        </svg>
+        <motion.div
+          className='absolute inset-0'
+          style={{ rotate: reducedMotion ? score * 3.6 : orbitRotation }}
+        >
+          <span
+            className='absolute left-1/2 top-[6px] size-3 -translate-x-1/2 rounded-full border-2 border-background shadow-sm'
+            style={{ backgroundColor: ringColor }}
+          />
+        </motion.div>
+        <motion.span
+          className='absolute grid size-16 place-items-center rounded-full bg-background text-2xl font-bold text-red-700 ring-1 ring-border dark:text-red-300'
+          initial={reducedMotion ? false : { scale: 0.88 }}
+          animate={reducedMotion ? undefined : { scale: [0.88, 1.08, 1] }}
+          transition={{ duration: 0.75, ease: [0.16, 1, 0.3, 1] }}
+        >
+          {displayScore}
+        </motion.span>
       </div>
       <div>
         <div className='text-xs uppercase text-muted-foreground'>综合风险评分</div>
@@ -1412,9 +2973,9 @@ function MetricCard({
     <Card className='rounded-md'>
       <CardContent className='flex items-center justify-between gap-3 p-4'>
         <div className='min-w-0'>
-          <div className='text-xs text-muted-foreground'>{label}</div>
-          <div className='mt-1 text-2xl font-semibold'>{value}</div>
-          <div className='mt-1 truncate text-xs text-muted-foreground'>{detail}</div>
+          <div className='text-label'>{label}</div>
+          <div className='mt-1 text-metric text-foreground'>{value}</div>
+          <div className='mt-2 truncate text-subtle'>{detail}</div>
         </div>
         <div className={cn('grid size-10 shrink-0 place-items-center rounded-md', toneClass)}>
           <Icon className='size-5' />
@@ -1450,7 +3011,7 @@ function ModuleRow({ module }: { module: SecurityWorkspace['modules'][number] })
           {module.signals} signals
         </Badge>
       </div>
-      <div className='text-xs leading-5 text-muted-foreground'>{module.description}</div>
+      <div className='text-body'>{module.description}</div>
       <RiskBar value={module.score} />
     </div>
   )
@@ -1460,11 +3021,10 @@ function FindingsPanel({ findings }: { findings: SecurityFinding[] }) {
   return (
     <Card className='rounded-md'>
       <CardHeader>
-        <CardTitle className='flex items-center gap-2 text-base'>
+        <CardTitle className='flex items-center gap-2 text-section-title'>
           <ShieldAlert className='size-4 text-red-600' />
           优先处置风险
         </CardTitle>
-        <CardDescription>按证据强度、影响范围和可利用性排序</CardDescription>
       </CardHeader>
       <CardContent>
         <div className='grid gap-3 lg:grid-cols-2'>
@@ -1503,15 +3063,999 @@ function FindingItem({ finding }: { finding: SecurityFinding }) {
   )
 }
 
-function CodeAuditPanel({
+function SupplyReachabilityPanel({
   workspace,
   workspaceId,
   importId,
+  onCodeScanned,
+  onDependencyScanned,
+}: {
+  workspace: SecurityWorkspace
+  workspaceId?: string
+  importId?: string
+  onCodeScanned: (audit: CodeAuditResult) => void
+  onDependencyScanned: (audit: DependencyAuditResult) => void
+  animationKey: number
+}) {
+  const dependencies = useMemo(
+    () => [...(workspace.dependencies ?? [])].sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0)),
+    [workspace.dependencies]
+  )
+  const riskDependencies = useMemo(
+    () =>
+      dependencies.filter(
+        (dependency) =>
+          dependency.risk >= 50 ||
+          (dependency.signals?.length ?? 0) > 0 ||
+          (dependency.vulnerabilities?.length ?? 0) > 0 ||
+          dominantVexStatus(dependency) === 'affected'
+      ),
+    [dependencies]
+  )
+  const reachability = buildReachabilityViewModel(workspace)
+  const reachabilityItems = useMemo(
+    () => buildReachabilityItems(riskDependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
+    [riskDependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
+  )
+  const [reachabilityFilter, setReachabilityFilter] = useState<ReachabilityStatus | 'all'>('all')
+  const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
+  const [showAllRiskRows, setShowAllRiskRows] = useState(false)
+  const [selectedDependencyId, setSelectedDependencyId] = useState('')
+  const [activeEvidence, setActiveEvidence] = useState('dependency')
+  const [scanning, setScanning] = useState(false)
+  useEffect(() => {
+    if (!reachabilityItems.length) return
+    if (!selectedDependencyId || !reachabilityItems.some((item) => item.id === selectedDependencyId)) {
+      setSelectedDependencyId(reachabilityItems[0].id)
+    }
+  }, [reachabilityItems, selectedDependencyId])
+  const selectedItem =
+    reachabilityItems.find((item) => item.id === selectedDependencyId) ??
+    reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
+    reachabilityItems[0]
+  const baseRows = reachabilityItems
+  const reachabilityOptions = reachabilityStatusOrder
+  const severityOptions = severityOrder
+  const filteredRows = useMemo(
+    () =>
+      baseRows.filter((item) => {
+        const itemReachability = normalizeReachabilityStatus(item.status)
+        const itemSeverity = normalizeSeverity(item.severity)
+        const matchesReachability = reachabilityFilter === 'all' || itemReachability === reachabilityFilter
+        const matchesSeverity = severityFilter === 'all' || itemSeverity === severityFilter
+
+        return matchesReachability && matchesSeverity
+      }),
+    [baseRows, reachabilityFilter, severityFilter]
+  )
+  const hasMoreRiskRows = filteredRows.length > 12
+  const visibleRows = showAllRiskRows || !hasMoreRiskRows ? filteredRows : filteredRows.slice(0, 12)
+  useEffect(() => {
+    setShowAllRiskRows(false)
+  }, [reachabilityFilter, severityFilter])
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+
+    const countBy = <T,>(rows: ReachabilityAnalysisItem[], keyFor: (row: ReachabilityAnalysisItem) => T) =>
+      rows.reduce<Record<string, number>>((counts, row) => {
+        const key = String(keyFor(row))
+        counts[key] = (counts[key] ?? 0) + 1
+        return counts
+      }, {})
+
+    console.debug('[ReachabilityFilter]', {
+      reachabilityFilter,
+      severityFilter,
+      baseRowsCount: baseRows.length,
+      filteredRowsCount: filteredRows.length,
+      baseStatuses: countBy(baseRows, (row) => normalizeReachabilityStatus(row.status)),
+      filteredStatuses: countBy(filteredRows, (row) => normalizeReachabilityStatus(row.status)),
+      baseSeverities: countBy(baseRows, (row) => normalizeSeverity(row.severity)),
+      filteredSeverities: countBy(filteredRows, (row) => normalizeSeverity(row.severity)),
+    })
+  }, [baseRows, filteredRows, reachabilityFilter, severityFilter])
+  const pathSteps = [
+    { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
+    { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'entry', label: '入口命中', value: selectedItem?.evidence.entryHits ?? 0, tone: (selectedItem?.evidence.entryHits ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'execution', label: '执行证据', value: selectedItem?.evidence.runtimeEvidence ?? 0, tone: (selectedItem?.evidence.runtimeEvidence ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'graph', label: '攻击链关联', value: selectedItem?.evidence.attackChainLinks ?? 0, tone: (selectedItem?.evidence.attackChainLinks ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+  ]
+  const matrixRows = buildUnifiedEvidenceRows(reachabilityItems)
+  const gapLabels = selectedItem?.missing ?? []
+
+  async function rerunReachability() {
+    setScanning(true)
+    try {
+      const [codeAudit, dependencyAudit] = await Promise.all([
+        runCodeAuditScan({ workspaceId, importId, timeoutSeconds: 180, includeCheckov: false }),
+        runDependencyAuditScan({
+          workspaceId,
+          importId,
+          includeOsv: true,
+          includeCdxgen: false,
+          includeCyclonedxPy: false,
+          mode: 'auto',
+        }),
+      ])
+      onCodeScanned(codeAudit)
+      onDependencyScanned(dependencyAudit)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '重新研判失败')
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  return (
+    <div className='space-y-4'>
+      <section className='rounded-md border border-slate-400/15 bg-slate-950/70 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+        <div className='flex flex-wrap items-start justify-between gap-4'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-3'>
+              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+                <Route className='size-5' />
+              </span>
+              <h2 className='text-page-title text-page-title-on-dark'>供应链可达性研判</h2>
+            </div>
+            <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='meta-chip-dark'>{selectedItem ? `${selectedItem.name}@${selectedItem.currentVersion || '-'}` : '-'}</span>
+              <span className='meta-chip-dark'>{selectedItem?.packageManager || 'npm'}</span>
+              {selectedItem?.sourceFiles.slice(0, 2).map((source) => <span key={source} className='meta-chip-dark' title={source}>{compactWorkflowPath(source)}</span>)}
+            </div>
+          </div>
+          <div className='flex flex-wrap gap-2'>
+            <Button size='sm' className={actionButtonClass} onClick={() => void rerunReachability()} disabled={scanning}>
+              {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+              重新研判
+            </Button>
+            <Button size='sm' variant='outline' onClick={() => jumpToPlatformTab('logs')}>
+              <Upload className='size-4' />
+              上传证据
+            </Button>
+            <Button size='sm' variant='outline' onClick={() => downloadReport(getWorkspaceReport(workspace))}>
+              <Download className='size-4' />
+              导出报告
+            </Button>
+          </div>
+        </div>
+        <DependencySelectorRail
+          items={reachabilityItems}
+          selectedId={selectedItem?.id ?? ''}
+          onSelect={setSelectedDependencyId}
+        />
+      </section>
+
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
+        <RiskScoreWorkbenchCard
+          score={selectedItem?.riskScore ?? 0}
+          severity={selectedItem?.severity ?? 'low'}
+          entryHits={selectedItem?.evidence.entryHits ?? 0}
+          codeHits={selectedItem?.evidence.codeRefs ?? 0}
+          runtimeHits={selectedItem?.evidence.runtimeEvidence ?? 0}
+          graphHits={selectedItem?.evidence.attackChainLinks ?? 0}
+          gapCount={gapLabels.length || reachability.gapCount}
+          selectedKey={selectedItem?.id ?? 'empty'}
+        />
+        <ReachabilityFlowWorkbench
+          steps={pathSteps}
+          activeEvidence={activeEvidence}
+          onActiveEvidence={setActiveEvidence}
+          selectedItem={selectedItem}
+          rows={matrixRows}
+          selectedId={selectedItem?.id ?? ''}
+          onSelectDependency={setSelectedDependencyId}
+        />
+        <DependencyDetailWorkbench
+          item={selectedItem}
+        />
+      </div>
+
+      <div className='space-y-4'>
+        <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+          <CardHeader className='pb-3'>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <CardTitle className='text-section-title text-slate-100'>高风险依赖</CardTitle>
+              <div className='flex flex-wrap items-center justify-end gap-3'>
+                <div className='flex flex-wrap gap-1.5'>
+                {(['all', ...reachabilityOptions] as const).map((value) => (
+                  <button
+                    key={value}
+                    type='button'
+                    className={cn(
+                      'inline-flex h-7 items-center whitespace-nowrap rounded-full border px-2.5 text-[13px] font-bold transition-colors',
+                      reachabilityFilter === value
+                        ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
+                        : 'border-slate-400/15 bg-slate-900/50 text-slate-300 hover:border-slate-300/30 hover:text-slate-100'
+                    )}
+                    onClick={() => setReachabilityFilter(value)}
+                  >
+                    {value === 'all' ? '全部' : reachabilityStatusLabel(value)}
+                  </button>
+                ))}
+                </div>
+                <Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}>
+                  <SelectTrigger size='sm' className='h-7 min-w-[112px] border-slate-400/15 bg-slate-900/50 text-slate-100'>
+                    <SelectValue placeholder='全部等级' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>全部等级</SelectItem>
+                    {severityOptions.map((severity) => <SelectItem key={severity} value={severity}>{severityLabel(severity)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className='overflow-x-auto rounded-md border border-slate-400/10'>
+              <Table>
+                <TableHeader>
+                  <TableRow className='border-slate-400/10 hover:bg-transparent'>
+                    <TableHead>依赖名</TableHead>
+                    <TableHead>当前版本</TableHead>
+                    <TableHead>请求版本</TableHead>
+                    <TableHead>来源</TableHead>
+                    <TableHead>可达性</TableHead>
+                    <TableHead>风险</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleRows.length ? visibleRows.map((item) => {
+                    const selected = item.id === selectedItem?.id
+                    return (
+                      <TableRow
+                        key={item.id}
+                        className={cn('cursor-pointer border-slate-400/10 transition-colors hover:bg-slate-900/60', selected && 'bg-cyan-400/10')}
+                        onClick={() => setSelectedDependencyId(item.id)}
+                      >
+                        <TableCell className='font-medium text-slate-100'>{item.name}</TableCell>
+                        <TableCell className='text-slate-300'>{item.currentVersion || '-'}</TableCell>
+                        <TableCell className='text-slate-400'>{item.requestedVersion || '-'}</TableCell>
+                        <TableCell className='max-w-[180px] truncate text-slate-400' title={item.sourceFiles.join(' / ')}>
+                          {item.sourceFiles[0] || '-'}
+                        </TableCell>
+                        <TableCell>
+                          <ReachabilityStatePill state={item.status} />
+                        </TableCell>
+                        <TableCell>
+                          <SeverityPill severity={item.severity} />
+                        </TableCell>
+                      </TableRow>
+                    )
+                  }) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className='h-24 text-center text-sm text-slate-500'>
+                        无匹配依赖
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+            {hasMoreRiskRows ? (
+              <div className='mt-3 flex justify-center'>
+                <Button variant='ghost' size='sm' onClick={() => setShowAllRiskRows((current) => !current)}>
+                  {showAllRiskRows ? '收起' : `展开全部 ${filteredRows.length} 条`}
+                </Button>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+type ReachabilityWorkbenchStep = {
+  id: string
+  label: string
+  value: string | number
+  tone: 'hit' | 'risk' | 'gap'
+}
+
+function DependencySelectorRail({
+  items,
+  selectedId,
+  onSelect,
+}: {
+  items: ReachabilityAnalysisItem[]
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
+  if (!items.length) return null
+
+  return (
+    <div className='mt-4 overflow-x-auto pb-1 [scrollbar-width:thin]'>
+      <div className='flex min-w-max gap-2'>
+        {items.slice(0, 10).map((item) => {
+          const selected = item.id === selectedId
+          return (
+            <button
+              key={item.id}
+              type='button'
+              onClick={() => onSelect(item.id)}
+              className={cn(
+                'relative min-w-44 rounded-md border px-3 py-2 text-left transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5',
+                selected
+                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_10px_26px_rgba(8,145,178,0.12)]'
+                  : 'border-slate-400/15 bg-slate-900/55 hover:border-slate-300/30'
+              )}
+            >
+              {selected ? <motion.span layoutId='dependency-rail-active' className='absolute inset-x-3 bottom-0 h-px bg-cyan-300/70' /> : null}
+              <div className='truncate text-sm font-semibold text-slate-100'>{item.name}@{item.currentVersion || '-'}</div>
+              <div className='mt-2 flex items-center gap-1.5'>
+                <SeverityPill severity={item.severity} />
+                <ReachabilityStatePill state={item.status} />
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function RiskScoreWorkbenchCard({
+  score,
+  severity,
+  entryHits,
+  codeHits,
+  runtimeHits,
+  graphHits,
+  gapCount,
+  selectedKey,
+}: {
+  score: number
+  severity: SecuritySeverity
+  entryHits: number
+  codeHits: number
+  runtimeHits: number
+  graphHits: number
+  gapCount: number
+  selectedKey: string
+}) {
+  const reducedMotion = useReducedMotion()
+  const normalized = Math.max(0, Math.min(100, Math.round(score || 0)))
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  const { value: displayScore, spring } = useAnimatedNumber(normalized, {
+    stiffness: 40,
+    damping: 15,
+    delayMs: 120,
+    durationMs: 1800,
+    respectReducedMotion: false,
+    resetKey: selectedKey,
+  })
+  const dashOffset = useTransform(spring, (latest) => circumference * (1 - Math.max(0, Math.min(100, latest)) / 100))
+  const tone = riskGaugeTone(severity)
+  const evidenceBar = [
+    { label: '代码', value: codeHits },
+    { label: '入口', value: entryHits },
+    { label: '执行', value: runtimeHits },
+    { label: '关联', value: graphHits },
+  ]
+  const evidenceTotal = Math.max(1, evidenceBar.reduce((sum, item) => sum + item.value, 0))
+
+  return (
+    <Card className='group h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25'>
+      <CardContent className='relative flex h-full flex-col p-4'>
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-label text-slate-300'>风险评分</div>
+          <SeverityPill severity={severity} />
+        </div>
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
+            <motion.div
+              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-slate-800' strokeWidth='8' />
+              <motion.circle
+                cx='56'
+                cy='56'
+                r={radius}
+                className={cn('fill-none', tone.stroke)}
+                strokeWidth='8'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                style={{ strokeDashoffset: dashOffset }}
+              />
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className={cn('text-metric text-5xl', tone.text)}>{displayScore}</div>
+                <div className='mt-1 text-label'>风险评分</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className='grid grid-cols-3 gap-2'>
+          {[
+            ['命中入口', entryHits, 'text-cyan-200'],
+            ['引用证据', codeHits, 'text-cyan-200'],
+            ['证据缺口', gapCount, 'text-amber-200'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2 text-center'>
+              <div className='text-label'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-slate-900/45 p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {evidenceBar.map((item, index) => (
+              <span
+                key={item.label}
+                className={cn(
+                  'transition-all duration-300',
+                  item.value > 0 ? (index === 2 ? 'bg-amber-300/70' : 'bg-cyan-300/70') : 'bg-slate-700/70'
+                )}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / evidenceTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
+            {evidenceBar.map((item) => (
+              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ReachabilityFlowWorkbench({
+  steps,
+  activeEvidence,
+  onActiveEvidence,
+  selectedItem,
+  rows,
+  selectedId,
+  onSelectDependency,
+}: {
+  steps: ReachabilityWorkbenchStep[]
+  activeEvidence: string
+  onActiveEvidence: (id: string) => void
+  selectedItem?: ReachabilityAnalysisItem
+  rows: ReachabilityMatrixRow[]
+  selectedId: string
+  onSelectDependency: (id: string) => void
+}) {
+  const reducedMotion = useReducedMotion()
+  const activeIndex = Math.max(0, steps.findIndex((step) => step.id === activeEvidence))
+  const activeStep = steps[activeIndex] ?? steps[0]
+
+  return (
+    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardHeader className='pb-2'>
+        <div className='flex items-center justify-between gap-3'>
+          <CardTitle className='text-section-title'>可达路径图</CardTitle>
+          <span className='meta-chip'>{selectedItem?.name || '-'}</span>
+        </div>
+      </CardHeader>
+      <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
+        <div className='relative flex flex-1 items-center justify-between gap-3 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-4 py-6'>
+          <div className='absolute left-10 right-10 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
+          <div
+            className='absolute left-10 top-1/2 h-px -translate-y-1/2 bg-cyan-300/50 transition-all duration-300'
+            style={{ width: `calc((100% - 5rem) * ${Math.max(0, activeIndex) / Math.max(1, steps.length - 1)})` }}
+          />
+          <motion.div
+            className='absolute left-10 top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/75 to-transparent'
+            animate={reducedMotion ? undefined : { x: ['0%', '520%'] }}
+            transition={{ duration: 3.6, repeat: Infinity, ease: 'linear' }}
+          />
+          {steps.map((step, index) => (
+            <motion.button
+              key={step.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, delay: index * 0.04 }}
+              type='button'
+              title={`${step.label}: ${step.value}`}
+              onClick={() => onActiveEvidence(step.id)}
+              className={cn(
+                'group relative z-10 flex min-w-0 flex-1 flex-col items-center gap-2.5 rounded-md border px-2 py-4 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5',
+                activeEvidence === step.id
+                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_0_26px_rgba(34,211,238,0.16)]'
+                  : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
+              )}
+            >
+              <span className={cn('grid size-11 place-items-center rounded-full border text-sm font-semibold tabular-nums', reachabilityNodeTone(step.tone))}>
+                {typeof step.value === 'number' ? step.value : step.value.slice(0, 2)}
+              </span>
+              <span className='text-center text-xs font-medium leading-4 text-slate-200'>{step.label}</span>
+            </motion.button>
+          ))}
+        </div>
+        {activeStep ? (
+          <motion.div
+            key={`${selectedItem?.id}-${activeStep.id}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22 }}
+            className='rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'
+          >
+            <div className='flex items-center justify-between gap-3'>
+              <div className='text-xs font-medium text-slate-300'>{activeStep.label}</div>
+              <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', reachabilityNodeTone(activeStep.tone))}>
+                {activeStep.value}
+              </span>
+            </div>
+          </motion.div>
+        ) : null}
+        <PathEvidenceCoverage
+          rows={rows}
+          activeEvidence={activeEvidence}
+          selectedId={selectedId}
+          onActiveEvidence={onActiveEvidence}
+          onSelectDependency={onSelectDependency}
+          activeLabel={activeStep?.label ?? '证据'}
+        />
+      </CardContent>
+    </Card>
+  )
+}
+
+function DependencyDetailWorkbench({
+  item,
+}: {
+  item?: ReachabilityAnalysisItem
+}) {
+  return (
+    <motion.div
+      className='h-full min-w-0'
+      key={item?.id ?? 'empty-detail'}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.24 }}
+    >
+    <Card className='h-full min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='min-w-0 truncate text-base text-slate-100'>
+          {item ? `${item.name}@${item.currentVersion || '-'}` : '依赖详情'}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='min-w-0 space-y-3 overflow-hidden'>
+        <div className='flex flex-wrap gap-2'>
+          <ReachabilityStatePill state={item?.status ?? 'pending'} />
+          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
+            风险 {item?.riskScore ?? 0}
+          </span>
+        </div>
+        <div className='grid gap-2 text-sm'>
+          <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
+          <DetailRow label='来源' value={<DependencySourceValue sources={item?.sourceFiles ?? []} />} />
+          <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} />
+          <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} />
+          <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} />
+        </div>
+        {(item?.advisories.length ?? 0) > 0 ? (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' size='sm' className='w-full justify-between'>
+                风险编号
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
+              {item?.advisories.slice(0, 6).map((id) => (
+                <span key={id} title={id} className='max-w-full truncate rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
+                  {id}
+                </span>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+        {(item?.rawEvidence.length ?? 0) > 0 ? (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' size='sm' className='w-full justify-between'>
+                原始证据
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-2 min-w-0 space-y-1.5 overflow-hidden'>
+              {item?.rawEvidence.slice(0, 4).map((evidence) => (
+                <div key={evidence} className='code-evidence block min-w-0 truncate px-2 py-1.5' title={evidence}>
+                  {evidence}
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+        <div className='rounded-md border border-amber-300/20 bg-amber-400/10 p-3'>
+          <div className='text-xs text-amber-100/80'>缺失项</div>
+          <div className='mt-2 flex flex-wrap gap-1.5'>
+            {(item?.missing.length ? item.missing : ['-']).map((gap) => (
+              <span key={gap} className='rounded-full border border-amber-300/25 px-2 py-0.5 text-xs text-amber-100'>
+                {gap}
+              </span>
+            ))}
+          </div>
+        </div>
+        {item?.missing.includes('运行日志') ? (
+          <Button variant='outline' className='w-full' onClick={() => jumpToPlatformTab('logs')}>
+            <Upload className='size-4' />
+            上传日志
+          </Button>
+        ) : null}
+      </CardContent>
+    </Card>
+    </motion.div>
+  )
+}
+
+function PathEvidenceCoverage({
+  rows,
+  activeEvidence,
+  selectedId,
+  onActiveEvidence,
+  onSelectDependency,
+  activeLabel,
+}: {
+  rows: ReachabilityMatrixRow[]
+  activeEvidence: string
+  selectedId: string
+  onActiveEvidence: (id: string) => void
+  onSelectDependency: (id: string) => void
+  activeLabel: string
+}) {
+  const columns = [
+    ['dependency', '依赖'],
+    ['code', '代码'],
+    ['entry', '入口'],
+    ['execution', '执行'],
+    ['external', '外部'],
+    ['graph', '关联'],
+  ]
+  const visibleRows = rows.slice(0, 5)
+  const activeColumnIndex = Math.max(0, columns.findIndex(([id]) => id === activeEvidence))
+
+  return (
+    <motion.div
+      key={`coverage-${selectedId}-${activeEvidence}`}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className='rounded-md border border-slate-400/10 bg-slate-950/45 p-3'
+    >
+      <div className='mb-3 flex items-center justify-between gap-3'>
+        <div className='text-xs font-medium text-slate-300'>{activeLabel}</div>
+        <div className='grid grid-cols-6 gap-1.5'>
+          {columns.map(([id, label]) => (
+            <button
+              key={id}
+              type='button'
+              onClick={() => onActiveEvidence(id)}
+              className={cn(
+                'rounded-full border px-2 py-0.5 text-[11px] transition-[border-color,background-color,color,transform] hover:-translate-y-0.5',
+                activeEvidence === id
+                  ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
+                  : 'border-slate-400/15 bg-slate-900/50 text-slate-500 hover:border-slate-300/25 hover:text-slate-300'
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className='space-y-1.5'>
+        {visibleRows.map((row) => (
+          <button
+            key={row.id}
+            type='button'
+            onClick={() => onSelectDependency(row.id)}
+            className={cn(
+              'grid w-full grid-cols-[minmax(0,1fr)_160px] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/35 px-2.5 py-2 text-left transition-[border-color,background-color] hover:border-slate-300/25 hover:bg-slate-900/55',
+              row.id === selectedId && 'border-cyan-300/35 bg-cyan-400/10'
+            )}
+          >
+            <div className='truncate text-xs font-medium text-slate-300' title={row.signal}>
+              {row.signal}
+            </div>
+            <div className='grid grid-cols-6 gap-2'>
+              {row.cells.map((cell, index) => (
+                <span
+                  key={`${row.id}-${index}`}
+                  className='grid place-items-center'
+                >
+                  <span
+                    title={cell.detail || cell.label}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onActiveEvidence(columns[index]?.[0] ?? 'dependency')
+                      onSelectDependency(row.id)
+                    }}
+                    className={cn(
+                      'size-2.5 rounded-full ring-4 transition-[box-shadow,transform]',
+                      coverageDotClass(cell.status),
+                      activeColumnIndex === index && 'scale-125 shadow-[0_0_14px_rgba(34,211,238,0.24)]'
+                    )}
+                  />
+                </span>
+              ))}
+            </div>
+          </button>
+        ))}
+      </div>
+    </motion.div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  const isTextValue = typeof value === 'string' || typeof value === 'number'
+  return (
+    <div className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/50 px-3 py-2'>
+      <span className='whitespace-nowrap text-label text-slate-400'>{label}</span>
+      <div className='min-w-0 overflow-hidden text-right font-medium text-slate-200' title={isTextValue ? String(value) : undefined}>
+        {isTextValue ? <span className='block truncate'>{value}</span> : value}
+      </div>
+    </div>
+  )
+}
+
+function DependencySourceValue({ sources }: { sources: string[] }) {
+  if (!sources.length) return <span>-</span>
+
+  const fullValue = sources.join(' / ')
+  const visibleSources = sources.slice(0, 2).map(compactDependencySource)
+  const displayValue = `${visibleSources.join(' · ')}${sources.length > 2 ? ` +${sources.length - 2}` : ''}`
+
+  return <PathValue value={fullValue} display={displayValue} />
+}
+
+function PathValue({ value, display = truncateMiddle(value, 48) }: { value: string; display?: string }) {
+  return (
+    <span className='code-evidence max-w-full min-w-0 px-2 py-1 text-right' title={value}>
+      <span className='truncate'>{display}</span>
+    </span>
+  )
+}
+
+function compactDependencySource(source: string) {
+  const [location, ...kindParts] = source.split(';')
+  const sourceSegments = location.trim().split(' / ').filter(Boolean)
+  const path = sourceSegments[sourceSegments.length - 1] ?? location.trim()
+  const kind = kindParts.join(';').trim()
+  return [compactWorkflowPath(path), kind].filter(Boolean).join(' · ')
+}
+
+function SeverityPill({ severity }: { severity: SecuritySeverity }) {
+  const classes = {
+    critical: 'border-red-400/35 bg-red-500/10 text-red-200',
+    high: 'border-orange-400/35 bg-orange-500/10 text-orange-200',
+    medium: 'border-amber-400/35 bg-amber-500/10 text-amber-200',
+    low: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200',
+  }[severity]
+  return (
+    <span className={cn('inline-flex h-[26px] min-w-[44px] shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-[10px] text-[13px] font-bold leading-none', classes)}>
+      {severityLabel(severity)}
+    </span>
+  )
+}
+
+const reachabilityStatusOrder: ReachabilityStatus[] = ['reachable', 'pending']
+const severityOrder: SecuritySeverity[] = ['critical', 'high', 'medium', 'low']
+
+function normalizeReachabilityStatus(raw: unknown): ReachabilityStatus {
+  const value = String(raw ?? '').trim().toLowerCase()
+  if (['reachable', 'confirmed', '已可达'].includes(value)) return 'reachable'
+  return 'pending'
+}
+
+function normalizeSeverity(raw: unknown): SecuritySeverity {
+  const value = String(raw ?? '').trim().toLowerCase()
+  if (['critical', 'serious', '严重'].includes(value)) return 'critical'
+  if (['high', '高危'].includes(value)) return 'high'
+  if (['medium', '中危'].includes(value)) return 'medium'
+  return 'low'
+}
+
+function reachabilityStatusLabel(state: ReachabilityStatus) {
+  if (state === 'reachable') return '已可达'
+  return '待研判'
+}
+
+function reachabilityStatusClass(state: ReachabilityStatus) {
+  if (state === 'reachable') return 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
+  return 'border-amber-400/35 bg-amber-500/10 text-amber-200'
+}
+
+function ReachabilityStatePill({ state }: { state: ReachabilityStatus }) {
+  return (
+    <span className={cn('inline-flex h-[26px] min-w-[44px] shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-2.5 text-[13px] font-bold leading-none', reachabilityStatusClass(state))}>
+      {reachabilityStatusLabel(state)}
+    </span>
+  )
+}
+
+function reachabilityNodeTone(tone: 'hit' | 'risk' | 'gap') {
+  if (tone === 'risk') return 'border-red-300/35 bg-red-500/10 text-red-100 shadow-[0_0_18px_rgba(248,113,113,0.14)]'
+  if (tone === 'gap') return 'border-amber-300/35 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.12)]'
+  return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.12)]'
+}
+
+function coverageDotClass(status: ReachabilityMatrixCell['status']) {
+  if (status === 'hit') return 'bg-emerald-300 ring-emerald-400/10'
+  if (status === 'risk') return 'bg-red-300 ring-red-400/10'
+  if (status === 'gap') return 'bg-amber-300 ring-amber-400/10'
+  return 'bg-slate-600 ring-slate-500/10'
+}
+
+function riskGaugeTone(severity: SecuritySeverity) {
+  if (severity === 'critical') {
+    return {
+      glow: 'bg-red-500/10',
+      pulse: 'bg-red-500/15',
+      stroke: 'stroke-red-400',
+      text: 'text-red-100',
+    }
+  }
+  if (severity === 'high') {
+    return {
+      glow: 'bg-orange-500/10',
+      pulse: 'bg-orange-500/15',
+      stroke: 'stroke-orange-400',
+      text: 'text-orange-100',
+    }
+  }
+  if (severity === 'medium') {
+    return {
+      glow: 'bg-amber-500/10',
+      pulse: 'bg-amber-500/15',
+      stroke: 'stroke-amber-400',
+      text: 'text-amber-100',
+    }
+  }
+  return {
+    glow: 'bg-emerald-500/10',
+    pulse: 'bg-emerald-500/15',
+    stroke: 'stroke-emerald-400',
+    text: 'text-emerald-100',
+  }
+}
+
+function dependencyReachabilityState(dependency: SecurityDependency): ReachabilityStatus {
+  const reachability = dependency.reachability
+  const rawStatus =
+    (reachability as Record<string, unknown> | undefined)?.status ??
+    (reachability as Record<string, unknown> | undefined)?.reachabilityStatus ??
+    (reachability as Record<string, unknown> | undefined)?.triageStatus
+  if (rawStatus) return normalizeReachabilityStatus(rawStatus)
+  const codeEvidence =
+    Boolean(reachability?.imported) ||
+    Boolean(reachability?.called) ||
+    Boolean(reachability?.attack_surface) ||
+    (reachability?.code_evidence?.length ?? 0) > 0 ||
+    (reachability?.call_evidence?.length ?? 0) > 0 ||
+    (reachability?.attack_surface_evidence?.length ?? 0) > 0
+  return codeEvidence ? 'reachable' : 'pending'
+}
+
+function dependencyEvidenceCounts(dependency: SecurityDependency, codeFindings: CodeAuditFinding[]) {
+  const reachability = dependency.reachability
+  const tokens = dependencySearchTokens(dependency)
+  const matchedCodeFindings = codeFindings.filter((finding) => {
+    const text = `${finding.title} ${finding.risk_file} ${finding.evidence} ${finding.category}`.toLowerCase()
+    return tokens.some((token) => text.includes(token))
+  })
+  return {
+    code: (reachability?.code_evidence?.length ?? 0) + (reachability?.call_evidence?.length ?? 0) + matchedCodeFindings.length,
+    entry: Number(Boolean(reachability?.attack_surface)) + (reachability?.attack_surface_evidence?.length ?? 0),
+    execution: Number(Boolean(reachability?.called)) + (reachability?.call_evidence?.length ?? 0),
+    runtime: Number(Boolean(reachability?.runtime_trace)) + (reachability?.runtime_evidence?.length ?? 0),
+  }
+}
+
+function dependencySources(dependency: SecurityDependency) {
+  return Array.from(new Set([
+    dependency.source_file,
+    dependency.manifest_type,
+  ].filter(Boolean) as string[]))
+}
+
+function buildReachabilityItems(
+  dependencies: SecurityDependency[],
+  codeFindings: CodeAuditFinding[],
+  model: ReachabilityViewModel,
+  externalEvidenceCount: number
+): ReachabilityAnalysisItem[] {
+  const graphHits = model.graphHits
+  return dependencies.map((dependency) => {
+    const counts = dependencyEvidenceCounts(dependency, codeFindings)
+    const status = dependencyReachabilityState(dependency)
+    const missing = [
+      counts.code <= 0 ? '代码引用' : '',
+      counts.entry <= 0 ? '入口证据' : '',
+      counts.execution + counts.runtime <= 0 ? '运行日志' : '',
+    ].filter(Boolean)
+    const rawEvidence = [
+      ...(dependency.reachability?.code_evidence ?? []),
+      ...(dependency.reachability?.call_evidence ?? []),
+      ...(dependency.reachability?.attack_surface_evidence ?? []),
+      ...(dependency.reachability?.runtime_evidence ?? []),
+      ...codeFindings
+        .filter((finding) => {
+          const text = `${finding.title} ${finding.risk_file} ${finding.evidence} ${finding.category}`.toLowerCase()
+          return dependencySearchTokens(dependency).some((token) => text.includes(token))
+        })
+        .map((finding) => `${finding.risk_file}:${finding.line} ${finding.category}`),
+    ].filter(Boolean).map(formatReachabilityEvidence)
+
+    return {
+      id: dependencyKey(dependency),
+      dependency,
+      name: dependency.name,
+      currentVersion: dependency.version || '',
+      requestedVersion: dependency.requested_version || '',
+      packageManager: dependency.ecosystem || 'npm',
+      sourceFiles: dependencySources(dependency),
+      severity: dependencySeverity(dependency.risk),
+      riskScore: dependency.risk ?? 0,
+      status,
+      evidence: {
+        codeRefs: counts.code,
+        entryHits: counts.entry,
+        runtimeEvidence: counts.execution + counts.runtime,
+        externalAlerts: externalEvidenceCount,
+        attackChainLinks: status === 'reachable' ? graphHits : 0,
+      },
+      missing,
+      advisories: dependency.vulnerabilities?.map((item) => item.id).filter(Boolean) ?? [],
+      rawEvidence,
+    }
+  })
+}
+
+function formatReachabilityEvidence(evidence: unknown): string {
+  if (typeof evidence === 'string') return evidence
+  if (evidence && typeof evidence === 'object') {
+    const record = evidence as Record<string, unknown>
+    const file = [record.file, record.path, record.source, record.event].find((value) => typeof value === 'string')
+    const line = typeof record.line === 'number' || typeof record.line === 'string' ? `:${record.line}` : ''
+    const text = [record.symbol, record.function, record.evidence, record.detail, record.message]
+      .find((value) => typeof value === 'string')
+    return [file ? `${file}${line}` : '', text].filter(Boolean).join(' ')
+  }
+  return String(evidence)
+}
+
+function buildUnifiedEvidenceRows(items: ReachabilityAnalysisItem[]): ReachabilityMatrixRow[] {
+  const rows = items.slice(0, 12).map((item) => {
+    return {
+      id: item.id,
+      signal: item.name,
+      cells: [
+        matrixCell(true, '命中', '-', item.sourceFiles.join(' / ')),
+        matrixCell(item.evidence.codeRefs > 0, String(item.evidence.codeRefs || 0), '-', '代码引用'),
+        matrixCell(item.evidence.entryHits > 0, String(item.evidence.entryHits || 0), '-', '入口路径'),
+        matrixCell(item.evidence.runtimeEvidence > 0, String(item.evidence.runtimeEvidence || 0), '-', '执行证据'),
+        item.evidence.externalAlerts > 0 ? matrixCell(true, String(item.evidence.externalAlerts), '-', '外部告警') : { label: '-', status: 'na' as const, detail: '外部证据' },
+        matrixCell(item.evidence.attackChainLinks > 0, item.evidence.attackChainLinks > 0 ? String(item.evidence.attackChainLinks) : '-', '-', '攻击链关联'),
+      ],
+    }
+  })
+  if (rows.length) return rows
+  return []
+}
+
+export function CodeAuditPanel({
+  workspace,
+  workspaceId,
+  importId,
+  animationKey,
   onScanned,
 }: {
   workspace: SecurityWorkspace
   workspaceId?: string
   importId?: string
+  animationKey: number
   onScanned: (audit: CodeAuditResult) => void
 }) {
   const audit = workspace.code_audit
@@ -1650,21 +4194,14 @@ function CodeAuditPanel({
 
   return (
     <div className='space-y-4'>
-      <Card className='rounded-md'>
+      <Card className={cn(moduleCardClass, 'overflow-hidden')}>
         <CardHeader>
           <div className='flex flex-wrap items-start justify-between gap-3'>
             <div>
-              <CardTitle className='flex items-center gap-2 text-base'>
+              <CardTitle className='flex items-center gap-2 text-2xl font-semibold tracking-normal'>
                 <Code2 className='size-4 text-cyan-600' />
-                可达性验证：供应链风险是否能触达代码路径
+                可达性验证
               </CardTitle>
-              <CardDescription>
-                可疑依赖、脚本或漏洞组件是否能通过代码、构建或运行入口被真实触发。
-              </CardDescription>
-              <div className='mt-2 text-xs text-muted-foreground'>
-                扫描目标：{audit?.target?.projectName || audit?.target_path || '最近导入项目或当前工作区'}
-                {audit?.target?.importId ? ` · ${audit.target.importId}` : ''}
-              </div>
             </div>
             <div className='flex flex-wrap gap-2'>
               <Button variant='outline' onClick={() => void establishBaseline()} disabled={!audit || mutating}>
@@ -1679,7 +4216,7 @@ function CodeAuditPanel({
                 <IconGithub />
                 Code Scanning
               </Button>
-              <Button onClick={() => void startScan()} disabled={scanning}>
+              <Button className={actionButtonClass} onClick={() => void startScan()} disabled={scanning}>
                 {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
                 验证当前风险可达性
               </Button>
@@ -1687,7 +4224,11 @@ function CodeAuditPanel({
           </div>
         </CardHeader>
         <CardContent>
-          <ReachabilityVerdictDashboard model={reachability} />
+          <ReachabilityVerdictDashboard
+            key={`reachability-dashboard-${animationKey}`}
+            model={reachability}
+            animationKey={animationKey}
+          />
         </CardContent>
       </Card>
 
@@ -1710,7 +4251,7 @@ function CodeAuditPanel({
         onRefresh={() => void refreshGithubUploadStatus()}
       />
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_440px]'>
         <div className='space-y-4'>
           <ReachabilityPathGraph
             model={reachability}
@@ -1727,9 +4268,6 @@ function CodeAuditPanel({
                     <ShieldAlert className='size-4 text-red-600' />
                     代码扫描佐证
                   </CardTitle>
-                  <CardDescription>
-                    Semgrep、Gitleaks、Bandit、Checkov 作为可达性判断的辅助证据，不再抢占主线。
-                  </CardDescription>
                 </div>
                 <Badge variant='outline' className='rounded-md'>
                   {total} 项扫描发现
@@ -1761,7 +4299,7 @@ function CodeAuditPanel({
           </Card>
         </div>
 
-        <div className='space-y-4 xl:sticky xl:top-20 xl:self-start'>
+        <div className='space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100svh-2rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain xl:[scrollbar-gutter:stable]'>
           <ReachabilityGapPanel
             model={reachability}
             scanning={scanning}
@@ -1773,7 +4311,6 @@ function CodeAuditPanel({
                 <TrendingUp className='size-4 text-cyan-600' />
                 扫描状态
               </CardTitle>
-              <CardDescription>引擎状态、趋势和基线状态</CardDescription>
             </CardHeader>
             <CardContent className='space-y-4'>
             <div className='grid grid-cols-2 gap-3'>
@@ -1792,26 +4329,32 @@ function CodeAuditPanel({
   )
 }
 
-function ReachabilityVerdictDashboard({ model }: { model: ReachabilityViewModel }) {
+function ReachabilityVerdictDashboard({
+  model,
+  animationKey,
+}: {
+  model: ReachabilityViewModel
+  animationKey: number
+}) {
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(360px,0.8fr)]'>
-      <div className='rounded-md border bg-gradient-to-br from-cyan-50/70 via-background to-background p-4 dark:from-cyan-950/20'>
-        <div className='flex flex-wrap items-start justify-between gap-3'>
-          <div className='min-w-0'>
+    <div className='grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,0.65fr)]'>
+      <div className='flex min-h-[520px] items-center rounded-md border bg-gradient-to-br from-cyan-50/70 via-background to-background p-7 dark:from-cyan-950/20 sm:p-8 xl:min-h-[560px]'>
+        <div className='grid w-full items-center gap-8 xl:grid-cols-[minmax(420px,1.05fr)_minmax(500px,0.95fr)]'>
+          <div className='min-w-0 space-y-6'>
             <div className='flex flex-wrap items-center gap-2'>
               <Badge variant='outline' className={cn('rounded-md', reachabilityVerdictClass(model.verdict))}>
                 {model.verdictLabel}
               </Badge>
-              <Badge variant='outline' className='rounded-md'>
-                风险分 {model.targetRisk}
-              </Badge>
             </div>
-            <h3 className='mt-3 truncate text-2xl font-semibold'>{model.targetName}</h3>
-            <p className='mt-1 text-sm leading-6 text-muted-foreground'>
-              {model.verdictDescription}
-            </p>
+            <h3 className='mt-3 break-words text-3xl font-semibold tracking-normal sm:text-4xl'>
+              {model.targetName}
+            </h3>
+            <div className='grid items-center gap-7 sm:grid-cols-[176px_minmax(0,1fr)]'>
+              <ReachabilityRiskDial score={model.targetRisk} verdict={model.verdict} animationKey={animationKey} />
+              <ReachabilitySignalBars model={model} animationKey={animationKey} />
+            </div>
           </div>
-          <div className='grid grid-cols-2 gap-2 sm:grid-cols-3'>
+          <div className='grid grid-cols-2 gap-4 sm:grid-cols-3'>
             <ReachabilityMiniMetric label='引用命中' value={model.importHits} tone='cyan' />
             <ReachabilityMiniMetric label='入口命中' value={model.entryHits} tone='orange' />
             <ReachabilityMiniMetric label='执行证据' value={model.executionHits} tone='red' />
@@ -1837,6 +4380,137 @@ function ReachabilityVerdictDashboard({ model }: { model: ReachabilityViewModel 
   )
 }
 
+function ReachabilityRiskDial({
+  score,
+  verdict,
+  animationKey,
+}: {
+  score: number
+  verdict: ReachabilityVerdict
+  animationKey: number
+}) {
+  const reducedMotion = useReducedMotion()
+  const normalized = Math.max(0, Math.min(100, Math.round(score || 0)))
+  const circumference = 2 * Math.PI * 45
+  const { value: displayScore, spring } = useAnimatedNumber(normalized, {
+    stiffness: 34,
+    damping: 13,
+    delayMs: 520,
+    durationMs: 3200,
+    respectReducedMotion: false,
+    resetKey: animationKey,
+  })
+  const progress = useTransform(spring, [0, 100], [0, 1])
+  const dashOffset = useTransform(progress, (value) => circumference * (1 - Math.max(0, Math.min(1, value))))
+  const pulseOpacity = useTransform(progress, [0, 0.7, 1], [0.06, 0.18, 0.3])
+  const pulseScale = useTransform(progress, [0, 1], [0.92, 1.04])
+  const strokeClass =
+    verdict === 'confirmed'
+      ? 'stroke-red-500'
+      : verdict === 'suspected'
+        ? 'stroke-orange-500'
+        : verdict === 'not_reachable'
+          ? 'stroke-cyan-500'
+          : 'stroke-slate-400'
+
+  return (
+    <div className='relative size-40 shrink-0 sm:size-44'>
+      <motion.div
+        className={cn(
+          'absolute inset-3 rounded-full blur-lg',
+          verdict === 'confirmed'
+            ? 'bg-red-500'
+            : verdict === 'suspected'
+              ? 'bg-orange-500'
+              : verdict === 'not_reachable'
+                ? 'bg-cyan-500'
+                : 'bg-slate-400'
+        )}
+        style={{ opacity: reducedMotion ? 0.18 : pulseOpacity, scale: reducedMotion ? 1 : pulseScale }}
+      />
+      <svg viewBox='0 0 112 112' className='size-full -rotate-90'>
+        <circle
+          cx='56'
+          cy='56'
+          r='45'
+          className='fill-none stroke-muted'
+          strokeWidth='12'
+        />
+        <motion.circle
+          cx='56'
+          cy='56'
+          r='45'
+          className={cn('fill-none', strokeClass)}
+          strokeWidth='12'
+          strokeLinecap='round'
+          strokeDasharray={circumference}
+          style={{ strokeDashoffset: dashOffset }}
+        />
+      </svg>
+      <div className='absolute inset-0 grid place-items-center'>
+        <div className='text-center'>
+          <div className='text-4xl font-semibold leading-none sm:text-5xl'>{displayScore}</div>
+          <div className='mt-2 text-sm text-muted-foreground'>风险分</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ReachabilitySignalBars({ model, animationKey }: { model: ReachabilityViewModel; animationKey: number }) {
+  const signals = [
+    { label: '代码', value: model.importHits + model.entryHits, tone: 'bg-cyan-500' },
+    { label: '执行', value: model.executionHits + model.runtimeHits, tone: 'bg-red-500' },
+    { label: '图谱', value: model.graphHits, tone: 'bg-emerald-500' },
+    { label: '缺口', value: model.gapCount, tone: 'bg-amber-500' },
+  ]
+  const maxValue = Math.max(1, ...signals.map((signal) => signal.value))
+
+  return (
+    <div className='space-y-4'>
+      {signals.map((signal) => (
+        <ReachabilitySignalBar key={signal.label} signal={signal} maxValue={maxValue} animationKey={animationKey} />
+      ))}
+    </div>
+  )
+}
+
+function ReachabilitySignalBar({
+  signal,
+  maxValue,
+  animationKey,
+}: {
+  signal: { label: string; value: number; tone: string }
+  maxValue: number
+  animationKey: number
+}) {
+  const { value: displayValue, spring } = useAnimatedNumber(signal.value, {
+    stiffness: 42,
+    damping: 15,
+    delayMs: 700,
+    durationMs: 3000,
+    respectReducedMotion: false,
+    resetKey: `${animationKey}-${signal.label}`,
+  })
+  const width = useTransform(spring, (latest) => {
+    if (signal.value <= 0) return '0%'
+    return `${Math.max(8, (Math.max(0, latest) / Math.max(1, maxValue)) * 100)}%`
+  })
+
+  return (
+    <div className='grid grid-cols-[56px_minmax(0,1fr)_40px] items-center gap-4 text-base'>
+      <div className='text-muted-foreground'>{signal.label}</div>
+      <div className='h-3 overflow-hidden rounded-full bg-muted'>
+        <motion.div
+          className={cn('h-full rounded-full', signal.tone)}
+          style={{ width }}
+        />
+      </div>
+      <div className='text-right text-lg font-semibold'>{displayValue}</div>
+    </div>
+  )
+}
+
 function ReachabilityMiniMetric({
   label,
   value,
@@ -1854,9 +4528,9 @@ function ReachabilityMiniMetric({
     emerald: 'text-emerald-600',
   }[tone]
   return (
-    <div className='min-w-[106px] rounded-md border bg-background/80 px-3 py-2'>
-      <div className='text-xs text-muted-foreground'>{label}</div>
-      <div className={cn('mt-1 text-xl font-semibold', toneClass)}>{value}</div>
+    <div className='flex min-h-28 flex-col justify-center rounded-md border bg-background/80 px-5 py-4'>
+      <div className='text-sm text-muted-foreground'>{label}</div>
+      <div className={cn('mt-2 text-3xl font-semibold', toneClass)}>{value}</div>
     </div>
   )
 }
@@ -1872,18 +4546,15 @@ function ReachabilityPathGraph({
 }) {
   if (!model.hasCodeAudit) {
     return (
-      <Card className='rounded-md'>
+      <Card className={moduleCardClass}>
         <CardContent className='flex min-h-[260px] flex-col items-center justify-center gap-3 p-8 text-center'>
           <div className='flex size-12 items-center justify-center rounded-md border bg-cyan-50 text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-300'>
             <Route className='size-6' />
           </div>
           <div>
             <h3 className='text-lg font-semibold'>还没有代码扫描结果</h3>
-            <p className='mt-1 max-w-xl text-sm leading-6 text-muted-foreground'>
-              点击按钮后，系统会用 Semgrep、Gitleaks、Bandit 和 Checkov 提取代码引用、脚本入口和配置证据，再判断供应链风险是否可触达。
-            </p>
           </div>
-          <Button onClick={onScan} disabled={scanning}>
+          <Button className={actionButtonClass} onClick={onScan} disabled={scanning}>
             {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
             验证当前风险可达性
           </Button>
@@ -1899,33 +4570,30 @@ function ReachabilityPathGraph({
           <Route className='size-4 text-cyan-600' />
           风险触达路径图
         </CardTitle>
-        <CardDescription>从可疑依赖一路看到代码引用、构建入口、运行印证和攻击链关联</CardDescription>
       </CardHeader>
       <CardContent>
         <div className='overflow-x-auto pb-2'>
-          <div className='grid min-w-[980px] gap-3' style={{ gridTemplateColumns: `repeat(${model.pathNodes.length}, minmax(180px, 1fr))` }}>
+          <div className='grid min-w-[1560px] gap-3' style={{ gridTemplateColumns: `repeat(${model.pathNodes.length}, minmax(260px, 1fr))` }}>
             {model.pathNodes.map((node, index) => (
               <div key={node.id} className='relative'>
                 {index < model.pathNodes.length - 1 ? (
                   <div className='absolute left-[calc(100%-10px)] top-10 hidden h-0.5 w-5 bg-cyan-300 lg:block' />
                 ) : null}
-                <div className={cn('h-full rounded-md border bg-background p-3 shadow-sm', reachabilityNodeClass(node.status))}>
+                <div className={cn('flex h-full min-h-[124px] flex-col rounded-md border bg-background p-3 shadow-sm', reachabilityNodeClass(node.status))}>
                   <div className='flex items-start justify-between gap-2'>
-                    <div className='flex items-center gap-2'>
+                    <div className='flex min-w-0 items-center gap-2'>
                       <div className='flex size-9 items-center justify-center rounded-md border bg-background'>
                         {node.icon}
                       </div>
-                      <div>
-                        <div className='text-xs text-muted-foreground'>节点 {index + 1}</div>
-                        <div className='text-sm font-semibold'>{node.title}</div>
+                      <div className='min-w-0'>
+                        <div className='text-base font-semibold leading-6'>{node.title}</div>
                       </div>
                     </div>
                     <Badge variant='outline' className={cn('rounded-md bg-background/80', reachabilityNodeBadgeClass(node.status))}>
                       {reachabilityNodeStatusLabel(node.status)}
                     </Badge>
                   </div>
-                  <p className='mt-3 line-clamp-3 text-xs leading-5 text-muted-foreground'>{node.description}</p>
-                  <div className='mt-3 rounded-md bg-muted/35 px-2 py-1.5 text-xs leading-5'>
+                  <div className='mt-auto rounded-md bg-muted/35 px-2 py-2 text-xs leading-5'>
                     {node.evidence}
                   </div>
                 </div>
@@ -1943,16 +4611,15 @@ function ReachabilityEvidenceMatrix({ model }: { model: ReachabilityViewModel })
   return (
     <Card className='rounded-md'>
       <CardHeader>
-        <CardTitle className='flex items-center gap-2 text-base'>
-          <Fingerprint className='size-4 text-cyan-600' />
+        <CardTitle className='flex items-center gap-2 text-section-title'>
+          <Fingerprint className='size-5 text-cyan-600' />
           证据覆盖矩阵
         </CardTitle>
-        <CardDescription>告诉用户已有证据在哪里、还差什么材料</CardDescription>
       </CardHeader>
       <CardContent>
         <div className='overflow-x-auto rounded-md border'>
           <div className='min-w-[860px]'>
-            <div className='grid border-b bg-muted/35 text-xs font-medium text-muted-foreground' style={{ gridTemplateColumns: `220px repeat(${columns.length}, minmax(96px, 1fr))` }}>
+            <div className='grid border-b bg-muted/35 text-label' style={{ gridTemplateColumns: `220px repeat(${columns.length}, minmax(96px, 1fr))` }}>
               <div className='p-3'>风险信号</div>
               {columns.map((column) => <div key={column} className='border-l p-3 text-center'>{column}</div>)}
             </div>
@@ -1991,7 +4658,6 @@ function ReachabilityGapPanel({
           <AlertTriangle className='size-4 text-amber-600' />
           证据缺口与下一步
         </CardTitle>
-        <CardDescription>下一步不是乱扫，而是补齐最能改变结论的材料</CardDescription>
       </CardHeader>
       <CardContent className='space-y-3'>
         {model.gaps.map((gap) => (
@@ -2000,7 +4666,7 @@ function ReachabilityGapPanel({
           </div>
         ))}
         <div className='grid gap-2'>
-          <Button onClick={onScan} disabled={scanning}>
+          <Button className={actionButtonClass} onClick={onScan} disabled={scanning}>
             {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
             验证当前风险可达性
           </Button>
@@ -2238,6 +4904,12 @@ function AuditMetric({
   value: number
   tone: 'cyan' | 'red' | 'orange' | 'amber' | 'emerald' | 'slate'
 }) {
+  const { value: animatedValue } = useAnimatedNumber(value, {
+    stiffness: 85,
+    damping: 18,
+    durationMs: 620,
+    resetKey: `${label}-${value}`,
+  })
   const toneClass = {
     cyan: 'text-cyan-600',
     red: 'text-red-600',
@@ -2248,10 +4920,15 @@ function AuditMetric({
   }[tone]
 
   return (
-    <div className='rounded-md border p-4'>
+    <motion.div
+      className='rounded-md border border-border/80 bg-card/90 p-4 transition-colors duration-200 hover:border-cyan-400/25 hover:bg-muted/20'
+      initial={{ opacity: 0.88, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: 'easeOut' }}
+    >
       <div className='text-xs text-muted-foreground'>{label}</div>
-      <div className={cn('mt-2 text-2xl font-semibold', toneClass)}>{value}</div>
-    </div>
+      <div className={cn('mt-2 text-2xl font-semibold tabular-nums', toneClass)}>{Math.round(animatedValue)}</div>
+    </motion.div>
   )
 }
 
@@ -2682,7 +5359,7 @@ function CompactAuditTrend({
   )
 }
 
-function SupplyChainPanel({
+export function SupplyChainPanel({
   audit,
   workspaceId,
   dependencies,
@@ -2788,9 +5465,6 @@ function SupplyChainPanel({
                 <PackageCheck className='size-4 text-cyan-600' />
                 SBOM + VEX 可达性分析
               </CardTitle>
-              <CardDescription>
-                结合依赖 CVE、代码 import/调用、服务暴露面和日志痕迹输出 affected / not_affected / under_investigation / fixed
-              </CardDescription>
             </div>
             <div className='flex shrink-0 gap-2'>
               <div className='flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs'>
@@ -2809,7 +5483,7 @@ function SupplyChainPanel({
                 <FileSearch />
                 VEX
               </Button>
-              <Button size='sm' onClick={() => void startDependencyScan()} disabled={scanning}>
+              <Button size='sm' className={actionButtonClass} onClick={() => void startDependencyScan()} disabled={scanning}>
                 {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
                 生成 SBOM 与 VEX
               </Button>
@@ -3000,7 +5674,6 @@ function SupplyChainPanel({
                   </TableCell>
                   <TableCell>
                     <RiskBar value={dependency.risk} />
-                    <DependencyGnnBadge dependency={dependency} />
                   </TableCell>
                 </TableRow>
               )) : (
@@ -3016,13 +5689,12 @@ function SupplyChainPanel({
       </Card>
 
       <Card className='rounded-md'>
-        <CardHeader>
-          <CardTitle className='flex items-center gap-2 text-base'>
-            <Boxes className='size-4 text-orange-600' />
-            选中依赖详情
-          </CardTitle>
-          <CardDescription>点击左侧依赖后，查看风险原因、VEX 判断、证据和处置动作</CardDescription>
-        </CardHeader>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Boxes className='size-4 text-orange-600' />
+          选中依赖详情
+        </CardTitle>
+      </CardHeader>
         <CardContent className='space-y-4'>
           {selectedDependency ? (
             <DependencyVexRecommendation dependency={selectedDependency} />
@@ -3068,28 +5740,6 @@ function DependencyVexBadge({ dependency }: { dependency: SecurityDependency }) 
   )
 }
 
-function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) {
-  if (typeof dependency.gnn_score !== 'number') {
-    return null
-  }
-  const score = Math.round(dependency.gnn_score * 100)
-  const tone =
-    dependency.gnn_label === 'high'
-      ? severityClasses.high
-      : dependency.gnn_label === 'elevated'
-        ? severityClasses.medium
-        : severityClasses.low
-  return (
-    <Badge
-      variant='outline'
-      className={cn('mt-1 w-fit rounded-md text-[10px]', tone)}
-      title={dependency.gnn_reasons?.join('；') || 'Graph risk model score'}
-    >
-      GNN {score}%
-    </Badge>
-  )
-}
-
 function DependencyVexRecommendation({ dependency }: { dependency: SecurityDependency }) {
   const statements = dependency.vex ?? []
   const visibleStatements = statements.slice(0, 3)
@@ -3107,12 +5757,9 @@ function DependencyVexRecommendation({ dependency }: { dependency: SecurityDepen
             {dependency.version} · {versionSourceLabel(dependency.version_source)}
           </div>
         </div>
-        <div className='flex shrink-0 flex-col items-end gap-1'>
-          <Badge variant='outline' className='rounded-md'>
-            风险 {dependency.risk}
-          </Badge>
-          <DependencyGnnBadge dependency={dependency} />
-        </div>
+        <Badge variant='outline' className='rounded-md'>
+          风险 {dependency.risk}
+        </Badge>
       </div>
 
       <div className='mt-3 rounded-md border bg-muted/25 p-3'>
@@ -3121,8 +5768,6 @@ function DependencyVexRecommendation({ dependency }: { dependency: SecurityDepen
       </div>
 
       <DependencyEvidenceSummary dependency={dependency} />
-
-      <DependencyGnnEvidence dependency={dependency} />
 
       <div className='mt-3 grid gap-2 text-xs text-muted-foreground'>
         <div>生态：{dependency.ecosystem || '-'}</div>
@@ -3304,11 +5949,6 @@ function dependencyKey(dependency: SecurityDependency) {
   return `${dependency.ecosystem}-${dependency.name}-${dependency.version}-${dependency.source_file ?? dependency.manifest_type ?? ''}`
 }
 
-function formatPercent(value: number) {
-  const normalized = value > 1 ? value : value * 100
-  return `${Math.round(normalized)}%`
-}
-
 function dependencyPanelStats(
   audit: DependencyAuditResult | null | undefined,
   dependencies: SecurityDependency[],
@@ -3473,11 +6113,70 @@ function PipelinePanel({
 }) {
   const [scanning, setScanning] = useState(false)
   const [mutating, setMutating] = useState(false)
+  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null)
+  const [activeNodeId, setActiveNodeId] = useState('all')
+  const [activeClusterId, setActiveClusterId] = useState('all')
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
+  const [severityFilter, setSeverityFilter] = useState('all')
+  const [workflowFilter, setWorkflowFilter] = useState('all')
   const findings = audit?.findings ?? []
-  const scanners = audit?.scanners ?? []
   const workflows = audit?.workflows ?? []
   const corePipeline = useMemo(() => buildCoreCicdPipeline(pipeline), [pipeline])
   const conclusion = buildCicdConclusion(audit, corePipeline, findings)
+  const buildSteps = useMemo(() => buildOrderedBuildSteps(corePipeline, findings), [corePipeline, findings])
+  const riskClusters = useMemo(() => buildCicdRiskClusters(findings), [findings])
+  const activeStep = buildSteps.find(s => s.index === activeStepIndex) ?? buildSteps[0]
+  const filteredFindings = findings.filter((finding) => {
+    if (activeNodeId !== 'all' && !cicdFindingNodeIds(finding).includes(activeNodeId)) return false
+    if (activeClusterId !== 'all' && cicdRiskType(finding).id !== activeClusterId) return false
+    if (severityFilter !== 'all' && finding.severity !== severityFilter) return false
+    if (workflowFilter !== 'all' && finding.workflow !== workflowFilter) return false
+    return true
+  })
+  const selectedFinding = selectedFindingId ? filteredFindings.find((finding) => finding.fingerprint === selectedFindingId) : undefined
+
+  useEffect(() => {
+    if (selectedFindingId && !filteredFindings.some((finding) => finding.fingerprint === selectedFindingId)) {
+      setSelectedFindingId(filteredFindings[0]?.fingerprint ?? null)
+    }
+  }, [filteredFindings, selectedFindingId])
+
+  useEffect(() => {
+    setActiveNodeId('all')
+    setActiveClusterId('all')
+    setSeverityFilter('all')
+    setWorkflowFilter('all')
+    setSelectedFindingId(findings[0]?.fingerprint ?? null)
+  }, [audit?.scan_id])
+
+  function selectNode(nodeId: string) {
+    setActiveNodeId(nodeId)
+    setActiveClusterId('all')
+    const nextFinding = findings.find((finding) => cicdFindingNodeIds(finding).includes(nodeId))
+    setSelectedFindingId(nextFinding?.fingerprint ?? null)
+  }
+
+  function selectCluster(clusterId: string) {
+    if (clusterId === activeClusterId) {
+      setActiveClusterId('all')
+      return
+    }
+    setActiveClusterId(clusterId)
+    const cluster = riskClusters.find((item) => item.id === clusterId)
+    const nextFinding = cluster?.findings.find((finding) => activeNodeId === 'all' || cicdFindingNodeIds(finding).includes(activeNodeId))
+    setSelectedFindingId(nextFinding?.fingerprint ?? null)
+  }
+
+  function selectFinding(finding: CicdFinding) {
+    setSelectedFindingId((currentId) => currentId === finding.fingerprint ? null : finding.fingerprint)
+  }
+
+  function resetCicdView() {
+    setActiveNodeId('all')
+    setActiveClusterId('all')
+    setSeverityFilter('all')
+    setWorkflowFilter('all')
+  }
 
   async function startCICDScan() {
     setScanning(true)
@@ -3547,186 +6246,854 @@ function PipelinePanel({
 
   return (
     <div className='space-y-4'>
-      <Card className='rounded-md'>
-        <CardHeader>
-          <div className='flex flex-wrap items-start justify-between gap-3'>
-            <div>
-              <CardTitle className='flex items-center gap-2 text-base'>
-                <GitBranch className='size-4 text-orange-600' />
-                GitHub Actions 构建流程扫描
-              </CardTitle>
-              <CardDescription>
-                检测未固定 Action、过宽权限、远程脚本执行和 workflow 明文凭据
-              </CardDescription>
-              <div className='mt-2 text-xs text-muted-foreground'>
-                扫描目标：{audit?.target?.projectName || audit?.target_path || '最近导入项目或当前工作区'}
-              </div>
+      <section className='rounded-md border border-slate-400/15 bg-slate-950/70 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+        <div className='flex flex-wrap items-start justify-between gap-4'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-3'>
+              <span className='grid size-9 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
+                <GitBranch className='size-5' />
+              </span>
+              <h2 className='text-page-title text-page-title-on-dark'>CI/CD 构建链研判</h2>
             </div>
-            <div className='flex shrink-0 gap-2'>
-              <Button variant='outline' size='sm' onClick={() => void establishBaseline()} disabled={!audit || mutating}>
-                <ShieldCheck />
-                建立基线
-              </Button>
-              <Button variant='outline' size='sm' onClick={() => void downloadSarif()} disabled={!audit}>
-                <Download />
-                SARIF
-              </Button>
-              <Button variant='outline' size='sm' onClick={() => void uploadGithubCodeScanning()} disabled={!audit || mutating}>
-                <IconGithub />
-                Code Scanning
-              </Button>
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={() => downloadReport(audit?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}
-              >
-                <Download />
-                导出报告
-              </Button>
-              <Button size='sm' onClick={() => void startCICDScan()} disabled={scanning}>
-                {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
-                检查构建链污染
-              </Button>
+            <div className='mt-2 h-px w-64 bg-gradient-to-r from-orange-300/50 via-cyan-300/20 to-transparent' />
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='meta-chip-dark'>GitHub Actions</span>
+              <span className='meta-chip-dark'>{audit?.summary.workflow_count ?? workflows.length} workflows</span>
+              <span className='meta-chip-dark'>{audit?.summary.total_steps ?? 0} steps</span>
+              <span className='meta-chip-dark max-w-[220px] truncate' title={audit?.target?.projectName || audit?.target_path || 'workflow source'}>{audit?.target?.projectName || compactWorkflowPath(audit?.target_path || 'workflow source')}</span>
             </div>
           </div>
-        </CardHeader>
-        <CardContent className='space-y-4'>
-          {audit ? (
-            <div className='space-y-3'>
-              <div className='rounded-md border bg-muted/25 p-4'>
-                <div className='text-sm font-medium'>本页结论</div>
-                <p className='mt-2 max-w-4xl text-sm leading-6 text-muted-foreground'>{conclusion.summary}</p>
-                <div className='mt-3 grid gap-2 md:grid-cols-3'>
-                  {conclusion.keyRisks.map((risk) => (
-                    <div key={risk} className='rounded-md border bg-background px-3 py-2 text-sm'>
-                      {risk}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>
-                <AuditMetric label='风险总数' value={audit.summary.finding_count} tone='orange' />
-                <AuditMetric label='严重' value={audit.summary.critical ?? 0} tone='red' />
-                <AuditMetric label='高危' value={audit.summary.high ?? 0} tone='orange' />
-                <AuditMetric label='新增' value={audit.summary.new ?? audit.summary.finding_count} tone='orange' />
-                <AuditMetric label='已修复' value={audit.summary.fixed ?? 0} tone='emerald' />
-              </div>
-            </div>
-          ) : (
-            <Alert className='rounded-md'>
-              <TerminalSquare className='size-4' />
-              <AlertTitle>等待 CI/CD 扫描</AlertTitle>
-              <AlertDescription>
-                点击“检查构建链污染”后会解析 .github/workflows/*.yml 和 *.yaml，并输出到具体 job/step 的风险。
-              </AlertDescription>
-            </Alert>
-          )}
-
-        </CardContent>
-      </Card>
-
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
-        <div className='space-y-4'>
-          <Card className='rounded-md'>
-            <CardHeader>
-              <CardTitle className='flex items-center gap-2 text-base'>
-                <GitBranch className='size-4 text-orange-600' />
-                CI/CD 构建链溯源时间线
-              </CardTitle>
-              <CardDescription>串联 commit、workflow、runner、artifact、provenance 和运行期日志，定位污染可能发生的构建环节</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {corePipeline.length ? (
-                <div className='space-y-3'>
-                  {corePipeline.map((step, index) => (
-                    <PipelineTimelineItem
-                      key={`${step.step}-${index}`}
-                      step={step}
-                      index={index}
-                      isLast={index === corePipeline.length - 1}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className='rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground'>
-                  暂无构建链证据。完成扫描后会展示 commit、workflow、runner、artifact 和日志印证链路。
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className='rounded-md'>
-            <CardHeader>
-              <CardTitle className='flex items-center gap-2 text-base'>
-                <ShieldAlert className='size-4 text-red-600' />
-                CI/CD 风险明细
-              </CardTitle>
-              <CardDescription>包含 workflow、job、step、风险原因和修复建议</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {findings.length ? (
-                <div className='space-y-3'>
-                  {findings.map((finding) => (
-                    <CicdFindingCard
-                      key={finding.fingerprint}
-                      finding={finding}
-                      disabled={mutating}
-                      onIgnore={() => void ignoreFinding(finding.fingerprint)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className='rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground'>
-                  {audit ? '未发现匹配的 CI/CD 构建流程风险。' : '扫描后将在这里显示 workflow 风险明细。'}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <div className='flex flex-wrap gap-2'>
+            <Button size='sm' className={actionButtonClass} onClick={() => void startCICDScan()} disabled={scanning}>
+              {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+              重新扫描
+            </Button>
+            <Button size='sm' variant='outline' onClick={() => jumpToPlatformTab('logs')}>
+              <Upload className='size-4' />
+              上传证据
+            </Button>
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => downloadReport(audit?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}
+            >
+              <Download className='size-4' />
+              导出报告
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant='outline' size='sm'>
+                  更多
+                  <ChevronDown className='size-4' />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='end' className='w-56'>
+                <DropdownMenuItem disabled={!audit || mutating} onClick={() => void establishBaseline()}>
+                  <ShieldCheck className='size-4' />
+                  建立基线
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={!audit} onClick={() => void downloadSarif()}>
+                  <Download className='size-4' />
+                  导出 SARIF
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={!audit || mutating} onClick={() => void uploadGithubCodeScanning()}>
+                  <IconGithub className='size-4' />
+                  Code Scanning
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>Workflow</DropdownMenuLabel>
+                {workflows.slice(0, 3).map((workflow) => (
+                  <DropdownMenuLabel key={workflow} className='truncate font-mono text-[11px] font-normal text-muted-foreground' title={workflow}>
+                    {workflow}
+                  </DropdownMenuLabel>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
+        {audit ? (
+          <CicdConclusionStrip conclusion={conclusion} audit={audit} clusters={riskClusters} />
+        ) : null}
+      </section>
 
-        <Card className='rounded-md xl:sticky xl:top-20 xl:self-start'>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <TrendingUp className='size-4 text-cyan-600' />
-              扫描侧栏
-            </CardTitle>
-            <CardDescription>workflow 范围、引擎状态和基线状态</CardDescription>
-          </CardHeader>
-          <CardContent className='space-y-4'>
-            <div className='grid grid-cols-2 gap-3'>
-              <AuditMetric label='Workflow' value={audit?.summary.workflow_count ?? 0} tone='cyan' />
-              <AuditMetric label='Step' value={audit?.summary.total_steps ?? 0} tone='amber' />
-              <AuditMetric label='已忽略' value={audit?.summary.ignored_total ?? audit?.summary.ignored ?? 0} tone='slate' />
-              <AuditMetric label='基线项' value={audit?.summary.baseline_total ?? 0} tone='cyan' />
-            </div>
-            {workflows.length ? (
-              <div className='space-y-2'>
-                <div className='text-sm font-medium'>Workflow 文件</div>
-                <div className='flex flex-wrap gap-2'>
-                  {workflows.map((workflow) => (
-                    <Badge key={workflow} variant='outline' className='rounded-md font-mono'>
-                      {workflow}
-                    </Badge>
-                  ))}
-                </div>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,25fr)_minmax(0,50fr)_minmax(0,25fr)]'>
+        <CicdRiskOverviewCard audit={audit} selectedKey={audit?.scan_id ?? 'empty-cicd'} />
+        <BuildStepFlow
+          steps={buildSteps}
+          activeStepIndex={activeStepIndex}
+          onSelectStep={(index) => {
+            setActiveStepIndex(prev => prev === index ? null : index)
+            setActiveNodeId('all')
+          }}
+        />
+        <BuildStepDetail
+          step={activeStep}
+          audit={audit}
+        />
+      </div>
+
+      <div className='space-y-4'>
+        <CicdRiskClusterPanel
+          clusters={riskClusters}
+          activeClusterId={activeClusterId}
+          onSelectCluster={selectCluster}
+          onReset={resetCicdView}
+        />
+        <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+          <CardHeader className='pb-3'>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <div className='flex flex-wrap items-center gap-2'>
+                <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', activeNodeId === 'all' ? 'border-slate-400/15 bg-slate-900/60 text-slate-300' : cicdNodeTone(selectedNode?.status ?? 'empty'))}>
+                  {activeNodeId === 'all' ? '全部风险' : `当前节点：${selectedNodeLabel}`}
+                </span>
               </div>
-            ) : null}
-            <div className='space-y-2'>
-              <div className='text-sm font-medium'>扫描引擎</div>
-              <ScannerStatusList scanners={scanners} />
+              <div className='flex flex-wrap items-center gap-2'>
+                <Select value={severityFilter} onValueChange={setSeverityFilter}>
+                  <SelectTrigger size='sm' className='w-[120px] rounded-md border-slate-400/15 bg-slate-900/60'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>全部等级</SelectItem>
+                    <SelectItem value='critical'>严重</SelectItem>
+                    <SelectItem value='high'>高危</SelectItem>
+                    <SelectItem value='medium'>中危</SelectItem>
+                    <SelectItem value='low'>低危</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
+                  <SelectTrigger size='sm' className='w-[140px] rounded-md border-slate-400/15 bg-slate-900/60'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>全部 Workflow</SelectItem>
+                    {workflows.map((workflow) => (
+                      <SelectItem key={workflow} value={workflow}>{compactWorkflowPath(workflow)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {(activeNodeId !== 'all' || activeClusterId !== 'all' || severityFilter !== 'all' || workflowFilter !== 'all') ? (
+                  <Button variant='ghost' size='sm' onClick={resetCicdView}>全部</Button>
+                ) : null}
+              </div>
             </div>
-            <div className='space-y-2'>
-              <div className='text-sm font-medium'>风险趋势</div>
-              <CompactAuditTrend trend={[]} gradientId='cicdAuditTrend' />
-            </div>
+          </CardHeader>
+          <CardContent>
+            <CicdFindingList
+              findings={filteredFindings}
+              selectedFinding={selectedFinding}
+              contextNodeLabel={activeNodeId === 'all' ? undefined : selectedNodeLabel}
+              disabled={mutating}
+              onSelect={selectFinding}
+              onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
+            />
           </CardContent>
         </Card>
       </div>
+
     </div>
   )
 }
 
 type CicdFinding = CICDAuditResult['findings'][number]
+
+type BuildChainStep = {
+  index: number
+  title: string
+  mainEntity: string
+  description: string
+  time: string
+  source: string
+  riskLevel: SecuritySeverity | 'normal'
+  status: string
+  stepData: SecurityPipelineStep | null
+  relatedFindings: CicdFinding[]
+  riskCount: number
+}
+
+type CicdRiskCluster = {
+  id: string
+  title: string
+  count: number
+  severity: SecuritySeverity
+  workflowCount: number
+  jobCount: number
+  findings: CicdFinding[]
+}
+
+/* ── Build ordered build chain steps from pipeline ── */
+const BUILD_STEP_ORDER: Record<string, { title: string; index: number }> = {
+  commit:    { title: '代码提交',           index: 1 },
+  workflow:  { title: '工作流定义',         index: 2 },
+  build:     { title: '构建环境',           index: 3 },
+  artifact:  { title: '产物生成',           index: 4 },
+  attestation: { title: '来源证明',         index: 5 },
+  deploy:    { title: '产物发布',           index: 6 },
+  'runtime-correlation': { title: '运行期证据关联', index: 7 },
+}
+
+function buildOrderedBuildSteps(
+  pipeline: SecurityPipelineStep[],
+  findings: CicdFinding[],
+): BuildChainStep[] {
+  // Group pipeline steps by step type, take latest for each unique step
+  const seen = new Map<string, SecurityPipelineStep>()
+  for (const s of pipeline) {
+    if (BUILD_STEP_ORDER[s.step]) {
+      const existing = seen.get(s.step)
+      if (!existing || (s.time || '') > (existing.time || '')) {
+        seen.set(s.step, s)
+      }
+    }
+  }
+
+  // ALWAYS generate all 7 defined steps, even if pipeline data is missing
+  const steps: BuildChainStep[] = []
+  for (const [stepType, def] of Object.entries(BUILD_STEP_ORDER)) {
+    const s = seen.get(stepType)  // may be undefined if step not in pipeline
+    const related = findings.filter(f => {
+      const ids = cicdFindingNodeIds(f)
+      return ids.includes(stepType) || (s ? ids.includes(s.step) : false)
+    })
+    const riskScore = related.reduce((max, f) => Math.max(max, f.score), 0)
+    const riskLevel: SecuritySeverity | 'normal' =
+      riskScore >= 90 ? 'critical' : riskScore >= 75 ? 'high' : riskScore >= 55 ? 'medium' : related.length > 0 ? 'low' : 'normal'
+
+    steps.push({
+      index: def.index,
+      title: def.title,
+      mainEntity: s?.name || s?.step || '—',
+      description: s?.detail || s?.actor || '等待扫描数据',
+      time: s?.time?.slice(0, 16).replace('T', ' ') || '',
+      source: s?.actor || stepType,
+      riskLevel,
+      status: s?.status || 'waiting',
+      stepData: s || null,
+      relatedFindings: related,
+      riskCount: related.length,
+    })
+  }
+
+  return steps.sort((a, b) => a.index - b.index)
+}
+
+function CicdConclusionStrip({
+  conclusion,
+  audit,
+  clusters,
+}: {
+  conclusion: ReturnType<typeof buildCicdConclusion>
+  audit: CICDAuditResult
+  clusters: CicdRiskCluster[]
+}) {
+  const primary = clusters[0]?.title ?? conclusion.keyRisks[0] ?? '未发现高优先级风险'
+  const priorities = clusters.flatMap((cluster) => cluster.findings.slice(0, 2)).map((finding) => finding.step_name || finding.job_name || compactWorkflowPath(finding.workflow))
+  return (
+    <div className='mt-4 grid gap-2 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2.5 md:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(220px,1.35fr)]'>
+      <div className='flex items-center gap-2'>
+        <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2.5 py-1 text-xs font-semibold text-orange-100'>构建链可复现性风险</span>
+      </div>
+      <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>主要风险</div><div className='truncate text-sm font-bold text-slate-100' title={primary}>{primary}</div></div>
+      <div><div className='text-[11px] font-medium text-slate-500'>影响范围</div><div className='text-sm font-semibold text-slate-200'>{audit.workflows?.length || audit.summary.workflow_count || 0} workflows / {audit.summary.total_steps || audit.summary.job_count || 0} steps</div></div>
+      <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>优先处理</div><div className='truncate text-sm font-semibold text-orange-100' title={priorities.join(' / ')}>{priorities.slice(0, 3).join(' / ') || '-'}</div></div>
+    </div>
+  )
+}
+
+function CicdRiskOverviewCard({
+  audit,
+  selectedKey,
+}: {
+  audit?: CICDAuditResult | null
+  selectedKey: string
+}) {
+  const total = audit?.summary.finding_count ?? 0
+  const { value: displayTotal } = useAnimatedNumber(total, {
+    stiffness: 42,
+    damping: 15,
+    durationMs: 1200,
+    resetKey: selectedKey,
+  })
+  const severityData = [
+    { label: '严重', value: audit?.summary.critical ?? 0, color: 'bg-red-400' },
+    { label: '高危', value: audit?.summary.high ?? 0, color: 'bg-orange-400' },
+    { label: '中危', value: audit?.summary.medium ?? 0, color: 'bg-amber-300' },
+    { label: '低危', value: audit?.summary.low ?? 0, color: 'bg-cyan-300' },
+  ]
+  const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
+  return (
+    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardContent className='flex h-full flex-col p-4'>
+        <div className='flex items-center justify-between gap-3'>
+          <div className='flex items-center gap-2 text-section-title text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险总览</div>
+          <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>
+            {severityLabel(audit?.summary.risk_level ?? 'low')}
+          </span>
+        </div>
+        <div className='flex flex-1 flex-col justify-center'>
+          <div className='flex items-end justify-between gap-4'>
+            <div>
+              <div className='text-6xl font-extrabold leading-none text-orange-100 tabular-nums'>{displayTotal}</div>
+              <div className='mt-2 text-sm font-semibold text-slate-300'>风险总数</div>
+            </div>
+            <div className='grid gap-2 text-right text-sm'>
+              <span className='text-slate-400'>新增 <b className='text-orange-100 tabular-nums'>{audit?.summary.new ?? total}</b></span>
+              <span className='text-slate-400'>已修复 <b className='text-emerald-100 tabular-nums'>{audit?.summary.fixed ?? 0}</b></span>
+            </div>
+          </div>
+          <div className='mt-5 h-2.5 overflow-hidden rounded-full bg-slate-800/60'>
+            {severityData.map((item) => {
+              const pct = Math.max(item.value > 0 ? 2 : 0, (item.value / riskTotal) * 100)
+              return (
+                <span
+                  key={item.label}
+                  className={cn('inline-block h-full transition-all duration-500', item.color)}
+                  style={{ width: `${pct}%`, minWidth: item.value > 0 ? '8px' : '0' }}
+                />
+              )
+            })}
+          </div>
+          <div className='mt-4 grid grid-cols-3 gap-2'>
+            {[
+              ['高危', audit?.summary.high ?? 0, 'text-orange-100'],
+              ['中危', audit?.summary.medium ?? 0, 'text-amber-100'],
+              ['低危', audit?.summary.low ?? 0, 'text-cyan-100'],
+            ].map(([label, value, color]) => (
+                <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2.5 text-center'>
+                <div className='text-xs font-medium text-slate-400'>{label}</div>
+                <div className={cn('mt-1 text-2xl font-bold tabular-nums', color)}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── Step Flow Graph: build chain steps only ── */
+function BuildStepFlow({
+  steps,
+  activeStepIndex,
+  onSelectStep,
+}: {
+  steps: BuildChainStep[]
+  activeStepIndex: number | null
+  onSelectStep: (index: number) => void
+}) {
+  const sevColors: Record<string, string> = {
+    critical: 'border-red-500/40 bg-red-950/30 text-red-300',
+    high: 'border-orange-500/40 bg-orange-950/30 text-orange-300',
+    medium: 'border-amber-500/40 bg-amber-950/30 text-amber-300',
+    low: 'border-slate-500/30 bg-slate-900/40 text-slate-300',
+    normal: 'border-slate-500/20 bg-slate-900/30 text-slate-400',
+  }
+
+  return (
+    <Card className='h-full min-h-[390px] surface-raised flex flex-col'>
+      <CardHeader className='pb-2 shrink-0'>
+        <CardTitle className='flex items-center gap-2 text-sm font-bold'><GitBranch className='size-4 text-cyan-400' />构建链路图</CardTitle>
+      </CardHeader>
+      <CardContent className='flex-1 min-h-0 overflow-hidden px-3'>
+        <div className='h-full overflow-x-auto pb-3 snap-x snap-mandatory [scrollbar-width:thin]'>
+          <div className='relative flex items-stretch gap-3 min-w-max py-4 pl-1 pr-4'>
+            {/* Connection line */}
+            <div className='absolute left-10 right-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-slate-700/40 via-slate-600/60 to-slate-700/40' />
+            {/* Active progress line */}
+            {activeStepIndex != null && (
+              <div
+                className='absolute left-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-cyan-500/60 to-orange-400/50 transition-all duration-500'
+                style={{ width: `calc((100% - 5rem) * ${activeStepIndex / Math.max(1, steps.length - 1)})` }}
+              />
+            )}
+
+            {steps.map((step, i) => {
+              const active = activeStepIndex === step.index
+              const s = sevColors[step.riskLevel] || sevColors.normal
+              return (
+                <UiTooltip key={step.index}>
+                  <UiTooltipTrigger asChild>
+                    <motion.button
+                      type='button'
+                      initial={{ opacity: 0, y: 12 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.28, delay: i * 0.05 }}
+                      onClick={() => onSelectStep(step.index)}
+                      className={cn(
+                        'relative z-10 flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border w-[148px] h-[130px] px-3 py-3 transition-all duration-300 snap-start',
+                        'hover:-translate-y-1 hover:shadow-lg active:scale-[0.98]',
+                        active
+                          ? 'border-cyan-400/50 bg-cyan-950/30 shadow-[0_0_20px_rgba(6,182,212,0.12)]'
+                          : `${s} hover:border-white/10`,
+                      )}
+                    >
+                      {/* Step number */}
+                      <span className={cn(
+                        'grid size-8 shrink-0 place-items-center rounded-full text-[11px] font-black tabular-nums',
+                        active ? 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/30' : 'bg-slate-800/60 text-slate-400',
+                      )}>
+                        {step.index}
+                      </span>
+                      {/* Title — always 1 line, truncated */}
+                      <span
+                        className={cn(
+                          'w-full text-center text-[13px] font-bold leading-tight truncate',
+                          active ? 'text-foreground' : 'text-slate-300',
+                        )}
+                        title={step.title}
+                      >
+                        {step.title}
+                      </span>
+                      {/* Risk indicator or placeholder to keep height consistent */}
+                      <span className={cn(
+                        'inline-flex h-5 items-center rounded-full px-2 text-[10px] font-bold shrink-0',
+                        step.riskLevel !== 'normal' ? s : 'text-transparent',
+                      )}>
+                        {step.riskLevel !== 'normal' ? `${step.riskCount} 风险` : ' '}
+                      </span>
+                    </motion.button>
+                  </UiTooltipTrigger>
+                  <UiTooltipContent>
+                    <div className='space-y-1 text-xs max-w-[220px]'>
+                      <div className='font-bold'>{step.title}</div>
+                      <div className='text-muted-foreground break-all'>{step.mainEntity}</div>
+                      {step.description && <div className='text-muted-foreground line-clamp-2'>{step.description}</div>}
+                      <div>{step.time}</div>
+                    </div>
+                  </UiTooltipContent>
+                </UiTooltip>
+              )
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ── Step Detail Card ── */
+function BuildStepDetail({
+  step,
+  audit,
+}: {
+  step?: BuildChainStep
+  audit?: CICDAuditResult | null
+}) {
+  if (!step) {
+    return (
+      <Card className='h-full min-h-[390px] surface-raised flex items-center justify-center'>
+        <p className='text-sm text-muted-foreground'>点击上方步骤查看详情</p>
+      </Card>
+    )
+  }
+
+  const findings = step.relatedFindings
+  const uniqueWorkflows = [...new Set(findings.map(f => f.workflow).filter(Boolean))]
+  const uniqueJobs = [...new Set(findings.map(f => f.job_id || f.job_name).filter(Boolean))]
+
+  return (
+    <motion.div
+      key={step.index}
+      className='h-full'
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22 }}
+    >
+      <Card className='h-full min-h-[390px] surface-raised overflow-y-auto flex flex-col'>
+        <CardHeader className='pb-3 shrink-0'>
+          <div className='flex items-center gap-2.5'>
+            <span className='grid size-8 shrink-0 place-items-center rounded-lg bg-cyan-950/50 text-xs font-black text-cyan-300 ring-1 ring-cyan-500/20'>
+              {step.index}
+            </span>
+            <div className='min-w-0'>
+              <div className='text-[10px] text-muted-foreground uppercase tracking-wider'>构建链步骤</div>
+              <CardTitle className='text-base font-bold truncate' title={step.title}>{step.title}</CardTitle>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className='space-y-3 flex-1'>
+          {/* Status badges */}
+          <div className='flex flex-wrap gap-1.5'>
+            <span className={cn(
+              'rounded-full border px-2 py-0.5 text-[10px] font-bold shrink-0',
+              step.riskLevel === 'critical' ? 'border-red-500/30 bg-red-950/30 text-red-300' :
+              step.riskLevel === 'high' ? 'border-orange-500/30 bg-orange-950/30 text-orange-300' :
+              step.riskLevel === 'medium' ? 'border-amber-500/30 bg-amber-950/30 text-amber-300' :
+              step.riskLevel === 'low' ? 'border-slate-500/30 bg-slate-900/30 text-slate-300' :
+              'border-emerald-500/20 bg-emerald-950/20 text-emerald-300'
+            )}>
+              {step.riskLevel === 'normal' ? '正常' : `${step.riskCount} 风险`}
+            </span>
+            <span className='rounded-full border border-slate-500/20 bg-slate-900/30 px-2 py-0.5 text-[10px] text-slate-300 shrink-0'>
+              {step.status}
+            </span>
+          </div>
+
+          {/* Main entity — truncated with title tooltip */}
+          <div className='rounded-lg surface-inset p-3 space-y-1.5'>
+            <div className='text-[10px] uppercase tracking-wider text-muted-foreground'>主实体</div>
+            <div className='text-sm font-bold truncate' title={step.mainEntity}>{step.mainEntity}</div>
+            {step.description && (
+              <div className='text-xs text-muted-foreground line-clamp-2 break-all' title={step.description}>
+                {step.description}
+              </div>
+            )}
+            <div className='flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap'>
+              <span className='shrink-0'>{step.time}</span>
+              <span className='shrink-0'>·</span>
+              <span className='truncate' title={step.source}>{step.source}</span>
+            </div>
+          </div>
+
+          {/* Evidence summary — equal height cells */}
+          <div className='grid grid-cols-3 gap-2 text-center text-xs'>
+            <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
+              <div className='text-xl font-black text-cyan-400 tabular-nums'>{uniqueWorkflows.length}</div>
+              <div className='mt-0.5 text-[10px] text-muted-foreground'>Workflows</div>
+            </div>
+            <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
+              <div className='text-xl font-black text-orange-400 tabular-nums'>{uniqueJobs.length}</div>
+              <div className='mt-0.5 text-[10px] text-muted-foreground'>Jobs</div>
+            </div>
+            <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
+              <div className='text-xl font-black text-slate-300 tabular-nums'>{findings.length}</div>
+              <div className='mt-0.5 text-[10px] text-muted-foreground'>风险发现</div>
+            </div>
+          </div>
+
+          {/* Finding list — with truncation + tooltip */}
+          {findings.length > 0 && (
+            <div className='space-y-2'>
+              <div className='text-[10px] uppercase tracking-wider text-muted-foreground'>关联风险发现</div>
+              {findings.slice(0, 6).map(f => (
+                <div key={f.id} className='rounded-lg border border-border/40 bg-card/50 p-2.5'>
+                  <div className='flex items-start justify-between gap-2'>
+                    <div className='min-w-0 flex-1'>
+                      <div className='text-xs font-bold truncate' title={cicdFindingTitle(f)}>{cicdFindingTitle(f)}</div>
+                      <div className='mt-1 text-[10px] text-muted-foreground font-mono line-clamp-2 break-all' title={f.evidence || ''}>
+                        {f.evidence || '—'}
+                      </div>
+                      <div className='mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground flex-wrap'>
+                        <span className='truncate max-w-[120px] font-mono' title={`${compactWorkflowPath(f.workflow)}:${f.line}`}>
+                          {compactWorkflowPath(f.workflow)}:{f.line}
+                        </span>
+                        {f.job_name && (
+                          <>
+                            <span>·</span>
+                            <span className='truncate max-w-[100px]' title={f.job_name}>{f.job_name}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <SeverityPill severity={f.severity} />
+                  </div>
+                </div>
+              ))}
+              {findings.length > 6 && <p className='text-xs text-muted-foreground text-center'>+{findings.length - 6} 条</p>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </motion.div>
+  )
+}
+
+function CicdRiskClusterPanel({
+  clusters,
+  activeClusterId,
+  onSelectCluster,
+  onReset,
+}: {
+  clusters: CicdRiskCluster[]
+  activeClusterId: string
+  onSelectCluster: (id: string) => void
+  onReset: () => void
+}) {
+  return (
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+      <CardHeader className='pb-3'>
+        <div className='flex items-center justify-between gap-3'>
+          <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
+          <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
+        </div>
+      </CardHeader>
+      <CardContent className='flex flex-wrap gap-3 pt-0'>
+        {clusters.length ? clusters.map((cluster) => {
+          const selected = cluster.id === activeClusterId
+          const max = Math.max(1, cluster.findings.length)
+          const severityCounts = ['critical', 'high', 'medium', 'low'].map((severity) => cluster.findings.filter((finding) => finding.severity === severity).length)
+          return (
+            <motion.button
+              key={cluster.id}
+              type='button'
+              whileHover={{ y: -2 }}
+              onClick={() => onSelectCluster(cluster.id)}
+              className={cn(
+                'min-h-[124px] min-w-[280px] flex-1 rounded-md border p-3 text-left transition-[border-color,background-color,box-shadow]',
+                selected ? 'border-orange-300/40 bg-orange-400/10 shadow-[0_0_22px_rgba(251,146,60,0.12)]' : 'border-slate-400/10 bg-slate-900/45 hover:border-slate-300/30'
+              )}
+            >
+              <div className='flex items-start justify-between gap-3'>
+                <div className='min-w-0'>
+                  <div className='truncate text-[17px] font-bold leading-5 text-slate-100'>{cluster.title}</div>
+                  <div className='mt-2 flex flex-wrap items-center gap-1.5'>
+                    <SeverityPill severity={cluster.severity} />
+                    <span className='text-xs font-medium text-slate-400'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
+                  </div>
+                </div>
+                <span className='text-3xl font-extrabold leading-none text-orange-100 tabular-nums'>{cluster.count}</span>
+              </div>
+              <div className='mt-3 flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+                {severityCounts.map((count, index) => (
+                  <span
+                    key={index}
+                    className={['bg-red-400', 'bg-orange-400', 'bg-amber-300', 'bg-cyan-300'][index]}
+                    style={{ width: `${(count / max) * 100}%` }}
+                  />
+                ))}
+              </div>
+            </motion.button>
+          )
+        }) : (
+          <div className='w-full rounded-md border border-slate-400/10 bg-slate-900/35 p-4 text-sm text-slate-500'>未发现风险聚类</div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function CicdFindingList({
+  findings,
+  selectedFinding,
+  contextNodeLabel,
+  disabled,
+  onSelect,
+  onIgnore,
+}: {
+  findings: CicdFinding[]
+  selectedFinding?: CicdFinding
+  contextNodeLabel?: string
+  disabled: boolean
+  onSelect: (finding: CicdFinding) => void
+  onIgnore: (finding: CicdFinding) => void
+}) {
+  if (!findings.length) {
+    return <div className='rounded-md border border-slate-400/10 bg-slate-900/35 p-6 text-center text-sm text-slate-500'>无匹配风险</div>
+  }
+
+  return (
+    <div className='space-y-2'>
+      {findings.slice(0, 12).map((finding) => {
+        const selected = finding.fingerprint === selectedFinding?.fingerprint
+        return (
+          <motion.div
+            key={finding.fingerprint}
+            layout
+            className={cn('overflow-hidden rounded-md border transition-colors', selected ? 'border-orange-300/35 bg-orange-400/10' : 'border-slate-400/10 bg-slate-900/35 hover:bg-slate-900/55')}
+          >
+            <button
+              type='button'
+              onClick={() => onSelect(finding)}
+              className='grid w-full grid-cols-[72px_minmax(160px,1fr)_130px_110px_120px_80px] items-center gap-3 px-3 py-2.5 text-left text-xs'
+            >
+              <SeverityPill severity={finding.severity} />
+              <span className='truncate text-sm font-bold text-slate-100' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
+              <span className='truncate font-medium text-slate-300' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
+              <span className='truncate font-medium text-slate-300' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
+              <span className='truncate font-medium text-slate-300' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
+              <span className='flex items-center justify-between gap-1 font-medium text-slate-400'>
+                未修复
+                {selected ? <ChevronUp className='size-4 text-slate-500' /> : <ChevronDown className='size-4 text-slate-500' />}
+              </span>
+            </button>
+            {selected ? (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-3'>
+                <div className='grid gap-3 md:grid-cols-3'>
+                  <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
+                  <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
+                  <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
+                </div>
+                <div className='mt-3 flex items-center justify-between gap-3 text-xs text-slate-400'>
+                  <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                    <span className='rounded-full border border-slate-400/10 bg-slate-950/55 px-2 py-1 font-semibold text-slate-300'>节点：{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
+                    <span className='truncate font-mono' title={`${finding.workflow}:${finding.line}`}>{compactWorkflowPath(finding.workflow)}:{finding.line}</span>
+                    {finding.job_id ? <span className='truncate font-medium text-slate-300' title={finding.job_id}>Job：{finding.job_id}</span> : null}
+                    {finding.step_name ? <span className='truncate font-medium text-slate-300' title={finding.step_name}>Step：{finding.step_name}</span> : null}
+                  </div>
+                  <Button variant='ghost' size='sm' disabled={disabled} onClick={(event) => { event.stopPropagation(); onIgnore(finding) }}>
+                    <EyeOff className='size-4' />
+                    忽略
+                  </Button>
+                </div>
+              </motion.div>
+            ) : null}
+          </motion.div>
+        )
+      })}
+    </div>
+  )
+}
+
+function buildCicdGraphNodes(
+  audit: CICDAuditResult | null | undefined,
+  pipeline: SecurityPipelineStep[],
+  findings: CicdFinding[]
+): CicdGraphNode[] {
+  const nodeDefs: Array<Omit<CicdGraphNode, 'riskCount' | 'findings' | 'status' | 'meta'>> = [
+    { id: 'workflow', label: 'Workflow 文件', icon: GitBranch },
+    { id: 'trigger', label: 'Trigger', icon: GitPullRequestArrow },
+    { id: 'job', label: 'Job', icon: Boxes },
+    { id: 'step', label: 'Step', icon: TerminalSquare },
+    { id: 'action', label: 'Third-party Action', icon: PackageCheck },
+    { id: 'runner', label: 'Runner', icon: ServerCog },
+    { id: 'artifact', label: 'Artifact', icon: Fingerprint },
+    { id: 'provenance', label: 'Provenance', icon: KeyRound },
+    { id: 'logs', label: 'Log Evidence', icon: FileText },
+  ]
+  const pipelineText = pipeline.map((step) => `${step.step} ${step.name} ${step.detail} ${step.actor}`).join('\n')
+  return nodeDefs.map((node) => {
+    let nodeFindings = findings.filter((finding) => cicdFindingNodeIds(finding).includes(node.id))
+    if (node.id === 'runner' && /self-hosted/i.test(pipelineText)) {
+      nodeFindings = nodeFindings.length ? nodeFindings : findings.slice(0, 1)
+    }
+    const riskCount = nodeFindings.length
+    return {
+      ...node,
+      riskCount,
+      findings: nodeFindings,
+      status: cicdNodeStatus(node.id, nodeFindings, audit, pipelineText),
+      meta: {
+        workflow: nodeFindings[0]?.workflow || audit?.workflows?.[0],
+        job: nodeFindings[0]?.job_id || nodeFindings[0]?.job_name || undefined,
+        step: nodeFindings[0]?.step_name || undefined,
+      },
+    }
+  })
+}
+
+function cicdFindingNodeIds(finding: CicdFinding) {
+  const text = `${finding.rule_id} ${finding.reason} ${finding.evidence} ${finding.workflow} ${finding.job_id} ${finding.job_name} ${finding.step_name}`.toLowerCase()
+  const ids = new Set<string>()
+  if (finding.workflow) ids.add('workflow')
+  if (finding.job_id || finding.job_name) ids.add('job')
+  if (finding.step_name || (finding.step_index !== null && finding.step_index !== undefined)) ids.add('step')
+  if (/uses:\s*[^\s]+\/|action|unpinned|mutable|checkout|setup-|upload-artifact|docker:/.test(text)) ids.add('action')
+  if (/runner|self-hosted/.test(text)) ids.add('runner')
+  if (/artifact|provenance|attestation|digest|slsa/.test(text)) ids.add('artifact')
+  if (/provenance|attestation|slsa/.test(text)) ids.add('provenance')
+  if (/log|runtime|evidence/.test(text)) ids.add('logs')
+  if (/pull_request|trigger|schedule|workflow_dispatch|push/.test(text)) ids.add('trigger')
+  return ids.size ? Array.from(ids) : ['workflow']
+}
+
+function cicdPrimaryNodeLabel(finding: CicdFinding) {
+  const ids = cicdFindingNodeIds(finding)
+  return cicdGraphNodeLabel(ids.find((id) => !['workflow', 'job', 'step'].includes(id)) ?? ids[ids.length - 1] ?? 'workflow')
+}
+
+function cicdNodeStatus(
+  nodeId: string,
+  findings: CicdFinding[],
+  audit: CICDAuditResult | null | undefined,
+  pipelineText: string
+): CicdGraphNode['status'] {
+  if (!audit && nodeId !== 'workflow') return 'empty'
+  if (findings.some((finding) => finding.severity === 'critical')) return 'critical'
+  if (findings.some((finding) => finding.severity === 'high')) return 'high'
+  if (findings.length) return 'gap'
+  if (nodeId === 'logs' && !/runtime|log/i.test(pipelineText)) return 'gap'
+  if (nodeId === 'artifact' && !/artifact/i.test(pipelineText)) return 'empty'
+  if (nodeId === 'provenance' && !/attestation|provenance/i.test(pipelineText)) return 'empty'
+  return 'normal'
+}
+
+function buildCicdRiskClusters(findings: CicdFinding[]): CicdRiskCluster[] {
+  const groups = new Map<string, CicdRiskCluster>()
+  findings.forEach((finding) => {
+    const type = cicdRiskType(finding)
+    const existing = groups.get(type.id)
+    if (existing) {
+      existing.findings.push(finding)
+      existing.count += 1
+      existing.severity = maxSeverity(existing.severity, finding.severity)
+      existing.workflowCount = new Set(existing.findings.map((item) => item.workflow)).size
+      existing.jobCount = new Set(existing.findings.map((item) => item.job_id || item.job_name || '-')).size
+      return
+    }
+    groups.set(type.id, {
+      id: type.id,
+      title: type.title,
+      count: 1,
+      severity: finding.severity,
+      workflowCount: 1,
+      jobCount: finding.job_id || finding.job_name ? 1 : 0,
+      findings: [finding],
+    })
+  })
+  return Array.from(groups.values()).sort((a, b) => b.count - a.count || severityWeight(b.severity) - severityWeight(a.severity))
+}
+
+function cicdRiskType(finding: CicdFinding) {
+  const text = `${finding.rule_id} ${finding.title} ${finding.reason} ${finding.evidence}`.toLowerCase()
+  if (/unpinned|mutable|action/.test(text)) return { id: 'unpinned-action', title: 'Action 版本未固定' }
+  if (/permission|write-all|github_token|id-token|contents: write/.test(text)) return { id: 'broad-permission', title: '权限过宽' }
+  if (/artifact|provenance|attestation|digest|slsa/.test(text)) return { id: 'artifact-provenance', title: 'Artifact / Provenance 异常' }
+  if (/secret|credential|token|password|api[_-]?key/.test(text)) return { id: 'secret-exposure', title: '敏感凭据暴露' }
+  if (/curl|wget|remote|pipe|script|expression/.test(text)) return { id: 'remote-script', title: '脚本执行风险' }
+  if (/runner|self-hosted/.test(text)) return { id: 'runner-risk', title: 'Runner 风险' }
+  return { id: 'workflow-risk', title: 'Workflow 配置风险' }
+}
+
+function cicdClusterNodeIds(clusterId: string) {
+  const mapping: Record<string, string[]> = {
+    'unpinned-action': ['workflow', 'step', 'action'],
+    'broad-permission': ['workflow', 'trigger', 'job'],
+    'artifact-provenance': ['artifact', 'provenance'],
+    'secret-exposure': ['workflow', 'job', 'step'],
+    'remote-script': ['step', 'runner'],
+    'runner-risk': ['runner', 'job'],
+    'workflow-risk': ['workflow', 'trigger'],
+  }
+  return mapping[clusterId] ?? []
+}
+
+function maxSeverity(a: SecuritySeverity, b: SecuritySeverity): SecuritySeverity {
+  return severityWeight(a) >= severityWeight(b) ? a : b
+}
+
+function severityWeight(severity: SecuritySeverity) {
+  return { low: 1, medium: 2, high: 3, critical: 4 }[severity] ?? 0
+}
+
+function cicdGraphNodeLabel(nodeId: string) {
+  return {
+    workflow: 'Workflow',
+    trigger: 'Trigger',
+    job: 'Job',
+    step: 'Step',
+    action: 'Action',
+    runner: 'Runner',
+    artifact: 'Artifact',
+    provenance: 'Provenance',
+    logs: 'Log',
+  }[nodeId] ?? nodeId
+}
+
+function cicdNodeTone(status: CicdGraphNode['status']) {
+  if (status === 'critical') return 'border-red-300/35 bg-red-500/10 text-red-100 shadow-[0_0_18px_rgba(248,113,113,0.14)]'
+  if (status === 'high') return 'border-orange-300/35 bg-orange-500/10 text-orange-100 shadow-[0_0_18px_rgba(251,146,60,0.13)]'
+  if (status === 'gap') return 'border-amber-300/35 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.1)]'
+  if (status === 'normal') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.1)]'
+  return 'border-slate-500/30 bg-slate-800/70 text-slate-400'
+}
+
+function cicdNodeStatusLabel(status: CicdGraphNode['status']) {
+  if (status === 'critical') return '严重'
+  if (status === 'high') return '高危'
+  if (status === 'gap') return '缺证据'
+  if (status === 'normal') return '正常'
+  return '未命中'
+}
 
 function buildCoreCicdPipeline(pipeline: SecurityPipelineStep[]) {
   const coreSteps = new Set(['commit', 'workflow', 'build', 'artifact', 'attestation', 'runtime-correlation', 'deploy'])
@@ -3767,192 +7134,28 @@ function buildCicdConclusion(
   }
 }
 
-function PipelineTimelineItem({
-  step,
-  index,
-  isLast,
-}: {
-  step: SecurityPipelineStep
-  index: number
-  isLast: boolean
-}) {
-  const label = pipelineStepLabel(step.step)
-  const summary = pipelineStepSummary(step)
-
-  return (
-    <div className='relative grid gap-3 rounded-md border p-4 md:grid-cols-[44px_minmax(0,1fr)]'>
-      {!isLast ? (
-        <div className='absolute left-[37px] top-14 hidden h-[calc(100%-1rem)] w-px bg-border md:block' />
-      ) : null}
-      <div className='relative z-10 flex size-11 items-center justify-center rounded-md border bg-background text-muted-foreground'>
-        <PipelineIcon step={step.step} />
-      </div>
-      <div className='min-w-0 space-y-3'>
-        <div className='flex flex-wrap items-start justify-between gap-2'>
-          <div className='min-w-0'>
-            <div className='text-xs text-muted-foreground'>步骤 {index + 1} · {label}</div>
-            <div className='mt-1 truncate text-base font-semibold'>{shortPipelineName(step)}</div>
-          </div>
-          <Badge variant='outline' className={cn('rounded-md', pipelineStatusClass(step.status))}>
-            {pipelineStatusLabel(step.status)}
-          </Badge>
-        </div>
-
-        <p className='text-sm leading-6 text-muted-foreground'>{summary}</p>
-
-        <div className='grid gap-2 text-xs text-muted-foreground md:grid-cols-3'>
-          <div className='rounded-md bg-muted/35 px-2 py-1.5'>
-            <span className='text-foreground'>时间：</span>{step.time || '-'}
-          </div>
-          <div className='rounded-md bg-muted/35 px-2 py-1.5'>
-            <span className='text-foreground'>来源：</span>{truncateMiddle(step.actor || '-', 34)}
-          </div>
-          <div className='rounded-md bg-muted/35 px-2 py-1.5'>
-            <span className='text-foreground'>证据：</span>{truncateMiddle(step.detail || '-', 46)}
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function CicdFindingCard({
-  finding,
-  disabled,
-  onIgnore,
-}: {
-  finding: CicdFinding
-  disabled: boolean
-  onIgnore: () => void
-}) {
-  return (
-    <div className='rounded-md border p-4'>
-      <div className='flex flex-wrap items-start justify-between gap-3'>
-        <div className='min-w-0 space-y-1'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <Badge variant='outline' className={cn('rounded-md', severityClasses[finding.severity])}>
-              {severityLabel(finding.severity)}
-            </Badge>
-            <span className='font-semibold'>{cicdFindingTitle(finding)}</span>
-          </div>
-          <div className='text-xs text-muted-foreground'>
-            {finding.scanner || 'SupplyGuard CI/CD'} · {finding.rule_id}
-          </div>
-        </div>
-        <Button
-          variant='ghost'
-          size='icon'
-          title='标记为误报并忽略'
-          disabled={disabled}
-          onClick={onIgnore}
-        >
-          <EyeOff className='size-4' />
-        </Button>
-      </div>
-
-      <div className='mt-3 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)]'>
-        <div className='rounded-md bg-muted/30 p-3 text-xs leading-6 text-muted-foreground'>
-          <div><span className='text-foreground'>位置：</span>{compactWorkflowPath(finding.workflow)}:{finding.line}</div>
-          <div><span className='text-foreground'>Job：</span>{finding.job_id || '-'}</div>
-          <div><span className='text-foreground'>Step：</span>{finding.step_name || finding.job_name || '-'}</div>
-        </div>
-        <div className='grid min-w-0 gap-3 md:grid-cols-3'>
-          <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
-          <CicdInfoBlock title='关键证据' text={truncateMiddle(finding.evidence || '-', 120)} mono />
-          <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function CicdInfoBlock({
   title,
   text,
   mono = false,
+  tone = 'default',
 }: {
   title: string
   text: string
   mono?: boolean
+  tone?: 'default' | 'action'
 }) {
   return (
-    <div className='min-w-0 rounded-md border bg-background p-3'>
-      <div className='mb-1 text-xs font-medium text-muted-foreground'>{title}</div>
-      <div className={cn('line-clamp-3 text-sm leading-6', mono && 'font-mono text-xs')}>
+    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'action-advice' : 'border-slate-400/10 bg-slate-950/55')}>
+      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', tone === 'action' ? 'text-orange-100' : 'text-slate-200')}>
+        {tone === 'action' ? <ShieldCheck className='size-4' /> : null}
+        {title}
+      </div>
+      <div className={cn('break-words text-body [overflow-wrap:anywhere]', mono && 'code-evidence', tone === 'action' && 'font-semibold text-orange-50')}>
         {text}
       </div>
     </div>
   )
-}
-
-function pipelineStepLabel(step: string) {
-  const labels: Record<string, string> = {
-    commit: '代码提交',
-    resolve: 'Workflow 触发',
-    workflow: 'Workflow 触发',
-    build: '构建环境',
-    artifact: '产物生成',
-    attestation: '来源证明',
-    deploy: '运行印证',
-    'runtime-correlation': '运行印证',
-  }
-  return labels[step] ?? '证据节点'
-}
-
-function pipelineStepSummary(step: SecurityPipelineStep) {
-  const detail = step.detail || ''
-  if (step.step === 'commit') {
-    return `构建从提交 ${truncateMiddle(step.name.replace(/^提交\s*/, ''), 12)} 开始，来源信息用于确认是否为预期仓库和分支。`
-  }
-  if (step.step === 'resolve') {
-    return detail.includes('write-all')
-      ? 'Workflow 存在过宽权限，污染的 Action 或脚本可能借助 GITHUB_TOKEN 扩大影响。'
-      : 'Workflow 负责拉取依赖、执行构建步骤，是定位构建链污染入口的关键文件。'
-  }
-  if (step.step === 'workflow') {
-    return 'Workflow 负责拉取依赖、执行构建步骤和发布产物，是定位构建链污染入口的关键文件。具体配置风险见下方 CI/CD 风险明细。'
-  }
-  if (step.step === 'build') {
-    return /self-hosted/i.test(detail)
-      ? '构建运行在自托管 runner 上，需要确认 runner 环境是否干净、是否被外部依赖或脚本污染。'
-      : '构建步骤负责生成软件产物，需要确认 Action 版本固定且构建输入不可变。'
-  }
-  if (step.step === 'artifact') {
-    return '构建产物的摘要、来源和可信评分异常，需要优先核查是否与 provenance 和预期仓库一致。'
-  }
-  if (step.step === 'attestation') {
-    return '来源证明用于说明产物由哪个仓库、workflow、commit 和 builder 生成，异常会直接影响产物可信度。'
-  }
-  if (step.step === 'deploy' || step.step === 'runtime-correlation') {
-    return '运行期日志与构建链风险发生关联，说明风险可能已经从构建阶段传导到运行阶段。'
-  }
-  return summarizeLongText(detail, 110)
-}
-
-function shortPipelineName(step: SecurityPipelineStep) {
-  if (step.step === 'commit') return `提交 ${truncateMiddle(step.name.replace(/^提交\s*/, ''), 12)}`
-  if (step.step === 'resolve' || step.step === 'workflow') return compactWorkflowPath(step.name)
-  if (step.step === 'build') return /self-hosted/i.test(step.name) ? '自托管 Runner' : truncateMiddle(step.name, 34)
-  if (step.step === 'artifact') return truncateMiddle(step.name, 34)
-  if (step.step === 'attestation') return 'Provenance 来源证明'
-  if (step.step === 'deploy' || step.step === 'runtime-correlation') return '运行期证据关联'
-  return truncateMiddle(step.name, 34)
-}
-
-function pipelineStatusLabel(status: string) {
-  const labels: Record<string, string> = {
-    observed: '已观察',
-    active: '进行中',
-    low: '低危',
-    medium: '中危',
-    high: '高危',
-    critical: '严重',
-  }
-  return labels[status] ?? status
-}
-
-function pipelineStatusClass(status: string) {
-  return statusClasses[status] || severityClasses[status as SecuritySeverity] || statusClasses.observed
 }
 
 function cicdFindingTitle(finding: CicdFinding) {
@@ -4000,18 +7203,7 @@ function truncateMiddle(value: string, max = 40) {
   return `${value.slice(0, head)}...${value.slice(-tail)}`
 }
 
-function PipelineIcon({ step }: { step: string }) {
-  const iconClass = 'size-5'
-  if (step === 'commit') return <GitCommitHorizontal className={iconClass} />
-  if (step === 'resolve' || step === 'workflow') return <PackageCheck className={iconClass} />
-  if (step === 'build') return <TerminalSquare className={iconClass} />
-  if (step === 'artifact') return <Fingerprint className={iconClass} />
-  if (step === 'attestation') return <KeyRound className={iconClass} />
-  if (step === 'deploy' || step === 'runtime-correlation') return <ServerCog className={iconClass} />
-  return <Radar className={iconClass} />
-}
-
-function ArtifactTrustPanel({
+function LegacyArtifactTrustPanel({
   result,
   workspaceId,
   onScanned,
@@ -4029,6 +7221,7 @@ function ArtifactTrustPanel({
   const [requireSignature, setRequireSignature] = useState(true)
   const [allowSelfHostedRunner, setAllowSelfHostedRunner] = useState(false)
   const [scanning, setScanning] = useState(false)
+  const [checksOpen, setChecksOpen] = useState(true)
   const score = result ? artifactTrustScore(result) : 0
   const provenance = result?.provenance ?? {}
   const failedChecks = result?.checks.filter((check) => ['fail', 'missing', 'warn'].includes(check.status)) ?? []
@@ -4096,9 +7289,9 @@ function ArtifactTrustPanel({
   }
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
-      <div className='space-y-4'>
-        <Card className='rounded-md'>
+    <div className={cn(moduleSplitGridClass, 'xl:grid-cols-[minmax(0,1fr)_520px]')}>
+      <div className={moduleMainColumnClass}>
+        <Card className={cn(moduleCardClass, 'overflow-hidden')}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -4106,20 +7299,17 @@ function ArtifactTrustPanel({
                   <Fingerprint className='size-4 text-cyan-600' />
                   发布前产物可信验证门
                 </CardTitle>
-                <CardDescription>
-                  计算 artifact SHA256，解析 SLSA provenance，并验证签名、digest、源码、workflow、builder 和 runner 策略
-                </CardDescription>
               </div>
               <div className='flex shrink-0 gap-2'>
                 <Button variant='outline' size='sm' onClick={() => void downloadArtifactTrustReport()}>
                   <Download />
                   导出报告
                 </Button>
-                <Button variant='outline' size='sm' onClick={() => void scanUpload()} disabled={scanning}>
+                <Button size='sm' className={actionButtonClass} onClick={() => void scanUpload()} disabled={scanning}>
                   {scanning ? <Loader2 className='animate-spin' /> : <Upload />}
                   上传并执行门禁
                 </Button>
-                <Button size='sm' onClick={() => void scanSample()} disabled={scanning}>
+                <Button size='sm' className={actionButtonClass} onClick={() => void scanSample()} disabled={scanning}>
                   {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
                   执行产物可信门禁
                 </Button>
@@ -4190,6 +7380,7 @@ function ArtifactTrustPanel({
                   <Input
                     id='artifact-file'
                     type='file'
+                    className={fileInputClass}
                     onChange={(event) => setArtifactFile(event.target.files?.[0] ?? null)}
                   />
                 </div>
@@ -4199,6 +7390,7 @@ function ArtifactTrustPanel({
                     id='attestation-file'
                     type='file'
                     accept='.json,.jsonl,application/json'
+                    className={fileInputClass}
                     onChange={(event) => setAttestationFile(event.target.files?.[0] ?? null)}
                   />
                 </div>
@@ -4238,13 +7430,12 @@ function ArtifactTrustPanel({
         </CardContent>
       </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <ShieldCheck className='size-4 text-emerald-600' />
               检查项结果
             </CardTitle>
-            <CardDescription>发布门会按 digest、SLSA、builder、source、workflow、runner、签名和 hash 基线逐项判定</CardDescription>
           </CardHeader>
           <CardContent>
             {result?.checks.length ? (
@@ -4257,11 +7448,16 @@ function ArtifactTrustPanel({
                     ))}
                   </div>
                 ) : null}
-                <Collapsible>
+                <Collapsible open={checksOpen} onOpenChange={setChecksOpen}>
                   <CollapsibleTrigger asChild>
-                    <Button variant='outline' className='w-full justify-between rounded-md'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      className='w-full justify-between rounded-md'
+                      aria-expanded={checksOpen}
+                    >
                       全部检查项（{result.checks.length}）
-                      <ChevronDown className='size-4' />
+                      <ChevronDown className={cn('size-4 transition-transform duration-200', checksOpen && 'rotate-180')} />
                     </Button>
                   </CollapsibleTrigger>
                   <CollapsibleContent className='mt-3 space-y-2'>
@@ -4280,14 +7476,13 @@ function ArtifactTrustPanel({
         </Card>
       </div>
 
-      <div className='space-y-4 xl:sticky xl:top-20 xl:self-start'>
-        <Card className='rounded-md'>
+      <div className={moduleSidebarColumnClass}>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <KeyRound className='size-4 text-cyan-600' />
               Provenance 摘要
             </CardTitle>
-            <CardDescription>从 attestation 中解析的可信链声明</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             {result ? (
@@ -4311,13 +7506,12 @@ function ArtifactTrustPanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <ShieldAlert className='size-4 text-orange-600' />
               风险发现
             </CardTitle>
-            <CardDescription>失败、缺失或降级的发布门信号</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             {result?.findings.length ? result.findings.map((finding) => (
@@ -4330,18 +7524,14 @@ function ArtifactTrustPanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <TerminalSquare className='size-4 text-slate-600' />
               验签工具
             </CardTitle>
-            <CardDescription>gh / cosign 可用则执行验签，不可用则作为辅助状态记录</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
-            <div className='rounded-md border border-dashed p-3 text-xs leading-5 text-muted-foreground'>
-              工具异常不代表本地 provenance 解析失败；发布门仍会依据 digest、来源仓库、commit、workflow、builder 和 runner 策略判定。
-            </div>
             <ScannerStatusList scanners={result?.tools ?? []} />
           </CardContent>
         </Card>
@@ -4349,6 +7539,116 @@ function ArtifactTrustPanel({
     </div>
   )
 }
+
+void LegacyArtifactTrustPanel
+
+function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
+  result?: ArtifactTrustResult | null
+  workspaceId?: string
+  onScanned: (result: ArtifactTrustResult) => void | Promise<void>
+}) {
+  const [artifactFile, setArtifactFile] = useState<File | null>(null)
+  const [attestationFile, setAttestationFile] = useState<File | null>(null)
+  const [expectedRepo, setExpectedRepo] = useState('')
+  const [expectedCommit, setExpectedCommit] = useState('')
+  const [allowedWorkflows, setAllowedWorkflows] = useState('')
+  const [allowedBuilders, setAllowedBuilders] = useState('')
+  const [requireSignature] = useState(true)
+  const [allowSelfHostedRunner] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [activeEvidence, setActiveEvidence] = useState<EvidenceKey>('artifact')
+  const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
+  const [configOpen, setConfigOpen] = useState(false)
+  const evidenceInputRef = useRef<HTMLDivElement>(null)
+  const activeResult = result ?? (import.meta.env.DEV ? artifactTrustPreviewResult : undefined)
+  const isPreview = !result && Boolean(activeResult)
+  const score = activeResult ? artifactTrustScore(activeResult) : 0
+  const { value: displayedScore } = useAnimatedNumber(score, { durationMs: 900, delayMs: 80, resetKey: activeResult?.scan_id ?? activeResult?.artifact ?? 'empty' })
+  const checks = activeResult?.checks ?? []
+  const failedChecks = checks.filter((check) => ['fail', 'missing', 'warn'].includes(check.status))
+  const passedChecks = checks.filter((check) => check.status === 'pass')
+  const activeIssue = checks.find((check) => check.name === activeIssueId)
+  const nodes = artifactTrustNodes(activeResult, score)
+
+  function handleEvidenceClick(key: EvidenceKey) { setActiveEvidence(key); setActiveIssueId(null) }
+  function handleIssueClick(issueId: string) { setActiveIssueId((current) => current === issueId ? null : issueId) }
+
+  async function verifyGate() {
+    setScanning(true)
+    try {
+      const next = artifactFile && attestationFile
+        ? await uploadArtifactTrustScan({ workspaceId, artifact: artifactFile, attestation: attestationFile, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
+        : await runArtifactTrustScan({ workspaceId, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
+      await onScanned(next)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '产物可信验证失败')
+    } finally { setScanning(false) }
+  }
+
+  return <div className='min-w-0 space-y-4'>
+    <section className='flex flex-wrap items-start justify-between gap-4'>
+      <div className='min-w-0'>
+        <h1 className='text-page-title flex items-center gap-3'><Fingerprint className='size-7 text-cyan-300' />产物可信门禁</h1>
+        <div className='mt-3 flex flex-wrap gap-2'>
+          <span className='meta-chip-dark' title={activeResult?.artifact}>{artifactFile?.name ?? activeResult?.artifact ?? '待上传产物'}</span>
+          <span className='meta-chip-dark' title={activeResult?.digest}>{activeResult?.digest ? shortDigest(activeResult.digest) : 'Digest 待计算'}</span>
+          <span className='meta-chip-dark'>{activeResult?.provenance.workflow ? compactWorkflowPath(activeResult.provenance.workflow) : 'Workflow 未解析'}</span>
+          {isPreview ? <span className='meta-chip-dark'>预览数据</span> : null}
+        </div>
+      </div>
+      <div className='flex flex-wrap gap-2'>
+        <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}重新验证</Button>
+        <Button variant='outline' size='sm' onClick={() => evidenceInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Upload />上传证据</Button>
+        <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
+      </div>
+    </section>
+
+    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,45fr)_minmax(250px,25fr)]'>
+      <div ref={evidenceInputRef} className='min-w-0'><Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
+        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'><Upload className='size-5 text-cyan-300' />证据输入</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待上传'}</span></div>
+        <div className='mt-5 grid gap-3'><Input type='file' className={fileInputClass} onChange={event => setArtifactFile(event.target.files?.[0] ?? null)} /><Input type='file' accept='.json,.jsonl,application/json' className={fileInputClass} onChange={event => setAttestationFile(event.target.files?.[0] ?? null)} /></div>
+        <div className='mt-4 flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'><span className='text-label'>策略摘要</span><span className='truncate text-value' title={expectedRepo || '未配置'}>{expectedRepo || '未配置'} · {requireSignature ? '要求签名' : '未要求签名'}</span></div>
+        <Collapsible open={configOpen} onOpenChange={setConfigOpen}><CollapsibleTrigger asChild><Button variant='ghost' size='sm' className='mt-2 w-full justify-between'>展开配置<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='grid gap-2 pt-2'><Input placeholder='可信源码仓库（未配置）' value={expectedRepo} onChange={event => setExpectedRepo(event.target.value)} /><Input placeholder='预期 commit（未配置）' value={expectedCommit} onChange={event => setExpectedCommit(event.target.value)} /><Input placeholder='允许 workflow（未配置）' value={allowedWorkflows} onChange={event => setAllowedWorkflows(event.target.value)} /><Input placeholder='可信 builder（未配置）' value={allowedBuilders} onChange={event => setAllowedBuilders(event.target.value)} /></CollapsibleContent></Collapsible>
+        <div className='mt-4 grid grid-cols-2 gap-2'>{nodes.slice(0, 6).map(node => <button key={node.id} type='button' onClick={() => handleEvidenceClick(node.id as EvidenceKey)} className={cn('rounded-md border p-2 text-left transition hover:-translate-y-0.5', activeEvidence === node.id && !activeIssue ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-slate-900/55')}><div className='flex items-center justify-between gap-2'><span className='text-sm font-bold text-slate-100'>{node.label}</span><node.icon className={cn('size-4', node.className)} /></div><span className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</span></button>)}</div>
+      </CardContent></Card></div>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
+        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>发布门禁</span><ArtifactGateBadge score={score} /></div>
+        <div className='flex flex-1 flex-col justify-center'><div className={cn('text-metric', score >= 90 ? 'text-emerald-200' : 'text-red-200')}>{displayedScore}<span className='ml-2 text-xl text-slate-400'>/ 100</span></div><div className='mt-4 h-3 overflow-hidden rounded-full border border-white/10 bg-slate-900/80'><motion.div className={cn('h-full rounded-full', score >= 90 ? 'bg-emerald-400' : 'bg-gradient-to-r from-red-500 to-orange-300')} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.85, ease: 'easeOut' }} /></div><div className='mt-4 text-body'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div></div>
+        <div className='mt-4 grid grid-cols-4 gap-2 text-center'><GateMetric label='检查' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败' value={failedChecks.length} /><GateMetric label='警告' value={checks.filter(check => check.status === 'warn').length} /></div>
+      </CardContent></Card>
+      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='space-y-3 p-5'>
+        <ArtifactDetailPanel detail={activeIssue ? getIssueDetail(activeIssue) : getEvidenceDetail(activeEvidence, activeResult, { artifactName: artifactFile?.name, attestationName: attestationFile?.name, expectedRepo, expectedCommit, allowedWorkflows, allowedBuilders, requireSignature, allowSelfHostedRunner, score })} />
+      </CardContent></Card>
+    </div>
+
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardHeader><CardTitle className='text-section-title'><ShieldAlert className='size-5 text-amber-300' />失败与缺失项</CardTitle></CardHeader><CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>{failedChecks.length ? failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} />) : <div className='text-body'>未发现阻断项</div>}</CardContent></Card>
+
+    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardContent className='p-0'><Collapsible><CollapsibleTrigger asChild><Button variant='ghost' className='w-full justify-between px-5 py-6'>全部检查项 <span className='meta-chip-dark'>{checks.length}</span><ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='space-y-2 px-5 pb-5'>{failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} />)}{passedChecks.length ? <div className='pt-3 text-label'>已通过 {passedChecks.length} 项</div> : null}{passedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} compact />)}</CollapsibleContent></Collapsible></CardContent></Card>
+
+  </div>
+}
+
+const artifactTrustPreviewResult: ArtifactTrustResult = { scan_id: 'preview', artifact: 'preview-release.tar.gz', digest: 'sha256:preview-digest-not-a-real-value', trust_score: 72, level: 'block', checks: [{ name: 'signature_verified', status: 'fail', severity: 'high', evidence: '签名材料未提供' }, { name: 'attestation_max_age', status: 'warn', severity: 'medium', evidence: 'attestation 超出策略时效' }, { name: 'provenance_predicate_type_slsa', status: 'pass', evidence: 'SLSA provenance 已解析' }], findings: [], provenance: {}, policy: {}, tools: [], summary: { check_count: 3, finding_count: 2, trust_score: 72, level: 'block', risk_score: 72, risk_level: 'high', passed: 1, failed: 1, warnings: 1, missing: 0, skipped: 0 }, report: '', warnings: [] }
+
+type EvidenceKey = 'artifact' | 'digest' | 'signature' | 'attestation' | 'provenance' | 'policy'
+type ArtifactDetail = { title: string; rows: Array<[string, string]>; evidence?: string; advice?: string; severity?: SecuritySeverity }
+
+function getEvidenceDetail(key: EvidenceKey, result: ArtifactTrustResult | undefined, input: { artifactName?: string; attestationName?: string; expectedRepo: string; expectedCommit: string; allowedWorkflows: string; allowedBuilders: string; requireSignature: boolean; allowSelfHostedRunner: boolean; score: number }): ArtifactDetail {
+  const check = (name: string) => result?.checks.find((item) => item.name === name)
+  if (key === 'artifact') return { title: '当前证据 · Artifact', rows: [['文件名', input.artifactName || result?.artifact || '待上传'], ['上传状态', input.artifactName ? '已选择，待验证' : result?.artifact ? '已识别' : '待上传'], ['Digest', result?.digest || '待计算'], ['识别状态', result?.artifact ? '已识别' : '未提供']] }
+  if (key === 'digest') return { title: '当前证据 · Digest', rows: [['Digest', result?.digest || '待计算'], ['Subject 匹配', artifactCheckLabel(check('artifact_digest_matches_subject')?.status || 'missing')]], evidence: check('artifact_digest_matches_subject')?.evidence || '未提供 digest 匹配证据' }
+  if (key === 'signature') return { title: '当前证据 · Signature', rows: [['验签状态', artifactCheckLabel(check('signature_verified')?.status || 'missing')], ['材料状态', input.attestationName ? 'Attestation 已选择' : '待上传签名材料']], evidence: check('signature_verified')?.evidence || '缺少签名验签材料', advice: '上传签名或包含签名的 attestation 后重新验证。', severity: 'high' }
+  if (key === 'attestation') return { title: '当前证据 · Attestation', rows: [['解析状态', result?.attestation_path ? '已解析' : input.attestationName ? '已选择，待解析' : '待上传'], ['策略时效', '24 小时'], ['校验结果', artifactCheckLabel(check('attestation_max_age')?.status || 'missing')]], evidence: check('attestation_max_age')?.evidence || '未提供 attestation 时效证据', advice: '重新生成有效时限内的 attestation。', severity: 'medium' }
+  if (key === 'provenance') return { title: '当前证据 · Provenance', rows: [['Repo', result?.provenance.source_repo || '未解析'], ['Commit', result?.provenance.commit || '未解析'], ['Workflow', result?.provenance.workflow || '未解析'], ['Builder', result?.provenance.builder_id || '未解析'], ['Predicate', result?.provenance.predicateType || result?.provenance.predicate_type || '未解析']] }
+  return { title: '当前证据 · Policy', rows: [['要求签名', input.requireSignature ? '已启用' : '未启用'], ['Self-hosted runner', input.allowSelfHostedRunner ? '允许' : '禁止'], ['允许 workflow', input.allowedWorkflows || '未配置'], ['可信 builder', input.allowedBuilders || '未配置'], ['门禁结论', input.score >= 90 ? '允许发布' : '建议阻断']] }
+}
+function getIssueDetail(check: ArtifactTrustCheck): ArtifactDetail { const detail = artifactCheckExplanation(check); return { title: artifactCheckTitle(check.name), rows: [['状态', artifactCheckLabel(check.status)], ['风险等级', check.severity ? severityLabel(check.severity as SecuritySeverity) : '信息'], ['关联检查', check.name]], evidence: check.evidence || '未提供', advice: detail.action, severity: check.severity as SecuritySeverity } }
+function ArtifactDetailPanel({ detail }: { detail: ArtifactDetail }) { return <><h2 className='text-section-title !text-[20px]'>{detail.title}</h2><div className='space-y-2'>{detail.rows.map(([label, value]) => <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2.5'><span className='whitespace-nowrap text-label font-bold'>{label}</span><span className='min-w-0 truncate text-right text-value' title={value}>{value}</span></div>)}</div>{detail.evidence ? <div className='code-evidence mt-4 truncate px-3 py-2.5' title={detail.evidence}>{detail.evidence}</div> : null}{detail.advice ? <div className='action-advice mt-4 p-4'><div className='font-bold'>建议修复</div><div className='mt-1 line-clamp-2 leading-6' title={detail.advice}>{detail.advice}</div></div> : null}</> }
+
+function ArtifactGateBadge({ score }: { score: number }) { const blocked = score < 90; return <span className={cn('inline-flex h-7 items-center rounded-full border px-3 text-sm font-bold', blocked ? 'border-red-400/35 bg-red-500/10 text-red-200' : 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200')}>{blocked ? '建议阻断' : '允许发布'}</span> }
+function GateMetric({ label, value }: { label: string; value: number }) { return <div className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2'><div className='text-label'>{label}</div><div className='mt-1 text-xl font-extrabold text-slate-100'>{value}</div></div> }
+function ArtifactGateCheck({ check, selected, onSelect, compact = false }: { check: ArtifactTrustCheck; selected: boolean; onSelect: () => void; compact?: boolean }) { const detail = artifactCheckExplanation(check); return <button type='button' onClick={onSelect} className={cn('w-full rounded-md border p-5 text-left transition hover:-translate-y-0.5', selected ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-slate-900/45 hover:border-slate-300/30')}><div className='flex items-center justify-between gap-3'><div className='min-w-0'><span className='text-card-title !text-[17px]'>{artifactCheckTitle(check.name)}</span><div className='mt-3 truncate code-evidence px-3 py-2' title={check.evidence}>{check.evidence || '未提供'}</div></div><span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span></div>{selected && !compact ? <div className='action-advice mt-4 p-4'><span className='font-bold'>建议修复</span><div className='mt-1 line-clamp-2 leading-6' title={detail.action}>{detail.action}</div></div> : null}</button> }
+function artifactTrustNodes(result: ArtifactTrustResult | undefined, score: number) { const check = (name: string) => result?.checks.find(item => item.name === name); const node = (id: string, label: string, icon: LucideIcon, status: string, className: string, badgeClass: string) => ({ id, label, icon, status, className, badgeClass }); const signature = check('signature_verified'); const attestation = check('attestation_max_age'); return [node('artifact', 'Artifact', Archive, result?.artifact ? '已识别' : '待上传', 'text-cyan-200', 'border-cyan-400/30 text-cyan-200'), node('digest', 'Digest', Fingerprint, check('artifact_digest_matches_subject')?.status === 'fail' ? '失败' : '通过', 'text-emerald-200', 'border-emerald-400/30 text-emerald-200'), node('signature', 'Signature', KeyRound, artifactCheckLabel(signature?.status || 'missing'), 'text-red-200', artifactCheckClass(signature?.status || 'missing')), node('attestation', 'Attestation', FileText, artifactCheckLabel(attestation?.status || 'missing'), 'text-amber-200', artifactCheckClass(attestation?.status || 'missing')), node('provenance', 'Provenance', GitBranch, result?.provenance.commit ? '通过' : '缺失', 'text-cyan-200', 'border-cyan-400/30 text-cyan-200'), node('policy', 'Policy', ShieldCheck, '已加载', 'text-amber-200', 'border-amber-400/30 text-amber-200'), node('gate', 'Release Gate', ShieldAlert, score >= 90 ? '允许' : '阻断', score >= 90 ? 'text-emerald-200' : 'text-red-200', score >= 90 ? 'border-emerald-400/30 text-emerald-200' : 'border-red-400/30 text-red-200')] }
 
 function ArtifactConfigSummary({ label, value }: { label: string; value?: string }) {
   return (
@@ -4393,17 +7693,28 @@ function ArtifactTrustCheckCard({
 }
 
 function ArtifactTrustFindingCard({ finding }: { finding: ArtifactTrustFinding }) {
+  const summary = artifactFindingSummary(finding)
   return (
-    <Alert className='rounded-md'>
-      <AlertTriangle className='size-4' />
-      <AlertTitle className='flex items-center justify-between gap-3'>
-        <span className='line-clamp-2'>{artifactFindingTitle(finding)}</span>
+    <div className='min-w-0 max-w-full overflow-hidden rounded-md border border-red-500/55 bg-red-950/10 p-4'>
+      <div className='flex min-w-0 items-start justify-between gap-3'>
+        <div className='flex min-w-0 items-center gap-2'>
+          <AlertTriangle className='mt-0.5 size-4 shrink-0 text-red-500' />
+          <div className='min-w-0 break-words text-base font-semibold leading-6 [overflow-wrap:anywhere]'>
+            {artifactFindingTitle(finding)}
+          </div>
+        </div>
         <Badge variant='outline' className={cn('shrink-0 rounded-md', severityClasses[finding.severity])}>
           {severityLabel(finding.severity)}
         </Badge>
-      </AlertTitle>
-      <AlertDescription className='space-y-2'>
-        <div className='line-clamp-3 text-sm leading-6'>{artifactFindingSummary(finding)}</div>
+      </div>
+      <div
+        className='mt-3 min-w-0 max-w-full whitespace-pre-wrap break-all rounded-md bg-background/45 p-3 text-sm leading-7 text-muted-foreground [overflow-wrap:anywhere] [word-break:break-all]'
+        title={summary}
+        style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}
+      >
+        {summary}
+      </div>
+      <div className='mt-2 min-w-0 space-y-2 overflow-hidden'>
         <Collapsible>
           <CollapsibleTrigger asChild>
             <Button variant='ghost' size='sm' className='h-7 px-2 text-xs'>
@@ -4412,16 +7723,22 @@ function ArtifactTrustFindingCard({ finding }: { finding: ArtifactTrustFinding }
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent className='mt-2 space-y-2'>
-            <div className='rounded-md bg-muted/35 p-2 font-mono text-[11px] leading-5 text-muted-foreground'>
+            <div
+              className='min-w-0 max-w-full whitespace-pre-wrap break-all rounded-md bg-muted/35 p-2 font-mono text-[11px] leading-5 text-muted-foreground [overflow-wrap:anywhere] [word-break:break-all]'
+              style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}
+            >
               {finding.evidence}
             </div>
-            <div className='rounded-md bg-muted/35 p-2 text-xs leading-5 text-muted-foreground'>
+            <div
+              className='min-w-0 max-w-full whitespace-pre-wrap break-all rounded-md bg-muted/35 p-2 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere] [word-break:break-all]'
+              style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}
+            >
               {finding.recommendation}
             </div>
           </CollapsibleContent>
         </Collapsible>
-      </AlertDescription>
-    </Alert>
+      </div>
+    </div>
   )
 }
 
@@ -4436,9 +7753,9 @@ function ProvenanceRow({
 }) {
   const displayValue = value ? (formatter ? formatter(value) : value) : '-'
   return (
-    <div className='rounded-md border p-3'>
+    <div className='min-w-0 overflow-hidden rounded-md border p-3'>
       <div className='text-xs text-muted-foreground'>{label}</div>
-      <div className='mt-1 truncate text-sm font-medium' title={value || '-'}>
+      <div className='mt-1 break-words text-sm font-medium [overflow-wrap:anywhere]' title={value || '-'}>
         {displayValue}
       </div>
     </div>
@@ -4726,6 +8043,66 @@ function applyMultimodalAuditToWorkspace(workspace: SecurityWorkspace, result: M
   }
 }
 
+function formatLocalTime(isoString: string) {
+  try {
+    const d = new Date(isoString)
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  } catch { return isoString.slice(11, 16) }
+}
+
+function LogTrendChart({ trend }: { trend: RealtimeLogTrendPoint[] }) {
+  const peak = useMemo(() => {
+    if (!trend.length) return null
+    let maxVal = 0; let maxBucket = ''
+    for (const t of trend) {
+      const total = (t.events ?? 0) + (t.findings ?? 0)
+      if (total > maxVal) { maxVal = total; maxBucket = t.bucket }
+    }
+    return maxVal > 0 ? formatLocalTime(maxBucket) : null
+  }, [trend])
+
+  return (
+    <div className='rounded-md border border-slate-400/15 bg-slate-950/65 p-4'>
+      <div className='flex items-center justify-between'>
+        <span className='text-section-title !text-[20px]'>异常趋势与风险峰值</span>
+        {peak ? (
+          <span className='meta-chip-dark'>{peak} 峰值</span>
+        ) : (
+          <span className='text-xs text-muted-foreground'>等待实时数据</span>
+        )}
+      </div>
+      <div className='mt-3 h-[220px]'>
+        {trend.length > 0 ? (
+          <ResponsiveContainer width='100%' height='100%'>
+            <AreaChart data={trend}>
+              <CartesianGrid strokeDasharray='3 3' vertical={false} />
+              <XAxis
+                dataKey='bucket'
+                tickFormatter={formatLocalTime}
+                interval="preserveStartEnd"
+                tick={{ fontSize: 10 }}
+              />
+              <YAxis width={28} tick={{ fontSize: 10 }} />
+              <Tooltip
+                labelFormatter={(value) => {
+                  try { return new Date(String(value)).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) }
+                  catch { return String(value).replace('T', ' ').slice(0, 19) }
+                }}
+              />
+              <Area type='monotone' dataKey='events' name='事件' stroke='#22d3ee' fill='#22d3ee' fillOpacity={0.1} />
+              <Area type='monotone' dataKey='findings' name='风险' stroke='#fb7185' fill='#fb7185' fillOpacity={0.2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>
+            暂无趋势数据，上传日志文件后将显示实时时间轴
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function LogsPanel({
   logs,
   audit,
@@ -4745,10 +8122,11 @@ function LogsPanel({
   const [realtime, setRealtime] = useState<RealtimeLogPayload | null>(null)
   const [trend, setTrend] = useState<RealtimeLogTrendPoint[]>([])
   const [realtimeBusy, setRealtimeBusy] = useState(false)
+  const [activeLogEventId, setActiveLogEventId] = useState<string | null>(null)
+  const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
-  const auditWarnings = audit?.warnings ?? []
   const displayedLogs: Array<
     SecurityLogEvent & {
       id?: string
@@ -4786,9 +8164,25 @@ function LogsPanel({
       }))
     : logs
 
+  const runtimeSeverity = (log: (typeof displayedLogs)[number]): SecuritySeverity => {
+    const raw = String(log.severity ?? '').toLowerCase()
+    if (raw === 'critical' || raw === 'high' || raw === '严重' || raw === '高危') return 'high'
+    if (raw === 'medium' || raw === '中危') return 'medium'
+    if (raw === 'low' || raw === '低危') return 'low'
+    const confidence = (log.confidence ?? 0) * (log.confidence && log.confidence <= 1 ? 100 : 1)
+    return confidence >= 90 ? 'high' : confidence >= 70 ? 'medium' : 'low'
+  }
+  const filteredLogs = displayedLogs.filter((log) => severityFilter === 'all' || runtimeSeverity(log) === severityFilter)
+  const activeLog = filteredLogs.find((log) => (log.id ?? `${log.time}-${log.event}`) === activeLogEventId) ?? filteredLogs[0]
   useEffect(() => {
     void refreshRealtimeLogs(false)
   }, [])
+  useEffect(() => {
+    if (!activeLogEventId && filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`)
+  }, [activeLogEventId, filteredLogs])
+  useEffect(() => {
+    if (filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`)
+  }, [severityFilter])
 
   async function refreshRealtimeLogs(showToast = true) {
     setRealtimeBusy(true)
@@ -4910,10 +8304,12 @@ function LogsPanel({
     }
   }
 
+  void ignoreFinding
+
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
-      <div className='space-y-4'>
-        <Card className='rounded-md'>
+    <div className={cn(moduleSplitGridClass, 'xl:grid-cols-[minmax(0,1fr)_420px]')}>
+      <div className={moduleMainColumnClass}>
+        <Card className={cn(moduleCardClass, 'overflow-hidden')}>
           <CardHeader>
             <div className='flex flex-wrap items-center justify-between gap-3'>
               <div>
@@ -4921,14 +8317,13 @@ function LogsPanel({
                   <Search className='size-4 text-cyan-600' />
                   日志异常识别
                 </CardTitle>
-                <CardDescription>上传 Web access log、app log 或 auth log，用运行期行为印证前面的供应链风险</CardDescription>
               </div>
               <div className='flex flex-wrap items-center gap-2'>
-                <Button size='sm' variant='outline' onClick={() => void sendSampleRealtimeEvents()} disabled={realtimeBusy}>
+                <Button size='sm' className={actionButtonClass} onClick={() => void sendSampleRealtimeEvents()} disabled={realtimeBusy}>
                   {realtimeBusy ? <Loader2 className='animate-spin' /> : <Send />}
                   发送实时样例
                 </Button>
-                <Button size='sm' variant='outline' onClick={() => void createBaseline()} disabled={realtimeBusy}>
+                <Button size='sm' className={actionButtonClass} onClick={() => void createBaseline()} disabled={realtimeBusy}>
                   <ShieldCheck />
                   建立基线
                 </Button>
@@ -4947,10 +8342,10 @@ function LogsPanel({
                   type='file'
                   multiple
                   accept='.log,.txt,.json,.jsonl'
-                  className='w-[260px]'
+                  className={cn('w-[260px]', fileInputClass)}
                   onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
                 />
-                <Button size='sm' onClick={() => void startLogScan()} disabled={scanning || !selectedFiles.length}>
+                <Button size='sm' className={actionButtonClass} onClick={() => void startLogScan()} disabled={scanning || !selectedFiles.length}>
                   {scanning ? <Loader2 className='animate-spin' /> : <FileSearch />}
                   上传日志印证
                 </Button>
@@ -4967,6 +8362,11 @@ function LogsPanel({
             </div>
           </CardHeader>
           <CardContent className='space-y-4'>
+            <div className='grid gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,50fr)_minmax(220px,20fr)]'>
+              <div className='rounded-md border border-red-400/25 bg-red-950/20 p-5'><div className='text-section-title !text-[20px]'>运行期风险结论</div><div className='mt-4 text-metric text-red-200'>{realtime?.summary.risk_score ?? audit?.summary.risk_score ?? 0}</div><div className='mt-3 text-body'>发现敏感路径访问与异常外联 IP，可作为攻击链运行期印证证据。</div><div className='mt-4 flex flex-wrap gap-2'><span className='meta-chip-dark'>GET /admin/export</span><span className='meta-chip-dark'>异常外联 IP</span></div></div>
+              <LogTrendChart trend={trend ?? []} />
+              <div className='rounded-md border border-slate-400/15 bg-slate-900/50 p-5'><div className='text-section-title !text-[20px]'>实时管道</div>{['实时接入','本地缓冲','规则引擎','风险趋势'].map(item => <div key={item} className='mt-3 flex items-center justify-between text-body'><span>{item}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>)}</div>
+            </div>
             <div className='grid gap-3 md:grid-cols-4'>
               <AuditMetric label='实时事件' value={realtime?.summary.event_count ?? 0} tone='cyan' />
               <AuditMetric label='实时风险' value={realtime?.summary.finding_count ?? 0} tone='orange' />
@@ -4974,22 +8374,12 @@ function LogsPanel({
               <AuditMetric label='实时评分' value={realtime?.summary.risk_score ?? 0} tone='red' />
             </div>
 
-            {audit ? (
-              <div className='grid gap-3 md:grid-cols-4'>
-                <AuditMetric label='日志文件' value={audit.summary.file_count} tone='cyan' />
-                <AuditMetric label='解析事件' value={audit.summary.parsed_events} tone='slate' />
-                <AuditMetric label='风险事件' value={audit.summary.finding_count} tone='orange' />
-                <AuditMetric label='风险评分' value={audit.summary.risk_score} tone='red' />
-              </div>
-            ) : (
-              <Alert className='rounded-md'>
-                <FileSearch className='size-4' />
-                <AlertTitle>实时接入已就绪</AlertTitle>
-                <AlertDescription>
-                  可上传日志做离线扫描，也可通过 Vector/HTTP 持续 POST JSON 日志到 /api/security/logs/ingest。
-                </AlertDescription>
-              </Alert>
-            )}
+            {audit ? <div className='grid gap-3 md:grid-cols-4'>
+              <AuditMetric label='日志文件' value={audit.summary.file_count} tone='cyan' />
+              <AuditMetric label='解析事件' value={audit.summary.parsed_events} tone='slate' />
+              <AuditMetric label='风险事件' value={audit.summary.finding_count} tone='orange' />
+              <AuditMetric label='风险评分' value={audit.summary.risk_score} tone='red' />
+            </div> : null}
 
             {realtime?.state.baseline ? (
               <Badge variant='outline' className='w-fit rounded-md'>
@@ -5012,13 +8402,12 @@ function LogsPanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
+            <div className='flex flex-wrap items-center justify-between gap-3'><CardTitle className='flex items-center gap-2 text-section-title !text-[20px]'>
               <ShieldAlert className='size-4 text-red-600' />
               运行期风险事件
-            </CardTitle>
-            <CardDescription>输出异常时间、日志来源、风险事件、风险类型、置信度和证据片段</CardDescription>
+            </CardTitle><Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}><SelectTrigger size='sm' className='h-8 w-[112px]'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='all'>全部等级</SelectItem><SelectItem value='high'>高危</SelectItem><SelectItem value='medium'>中危</SelectItem><SelectItem value='low'>低危</SelectItem></SelectContent></Select></div>
           </CardHeader>
           <CardContent>
             <Table>
@@ -5027,56 +8416,26 @@ function LogsPanel({
                   <TableHead>异常时间</TableHead>
                   <TableHead>日志来源</TableHead>
                   <TableHead>风险事件</TableHead>
-                  <TableHead>风险类型</TableHead>
                   <TableHead>置信度</TableHead>
-                  <TableHead>次数</TableHead>
-                  <TableHead>证据片段</TableHead>
-                  <TableHead>操作</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {displayedLogs.map((log) => (
-                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`}>
-                    <TableCell className='whitespace-nowrap font-mono text-xs'>{log.time}</TableCell>
+                {filteredLogs.map((log) => (
+                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`} onClick={() => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)} className={cn('cursor-pointer transition-colors hover:bg-slate-900/55', activeLog === log && 'bg-cyan-400/10')}>
+                    <TableCell className='w-[170px] whitespace-nowrap font-mono text-xs text-slate-300'>{log.time}</TableCell>
                     <TableCell>
                       <Badge variant='outline' className='rounded-md'>
                         {log.source}
                       </Badge>
                     </TableCell>
-                    <TableCell className='max-w-[280px] text-sm leading-6'>{log.event}</TableCell>
-                    <TableCell>
-                      <Badge variant='outline' className={cn('rounded-md', severityClasses[log.severity])}>
-                        {log.signal}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
-                    <TableCell>{log.occurrences ?? '-'}</TableCell>
-                    <TableCell className='max-w-[360px]'>
-                      <code className='block truncate rounded bg-muted px-2 py-1 text-xs' title={log.evidence || '-'}>
-                        {log.evidence || '-'}
-                      </code>
-                    </TableCell>
-                    <TableCell>
-                      {log.realtime ? (
-                        <Button
-                          size='sm'
-                          variant='ghost'
-                          onClick={() => void ignoreFinding(log)}
-                          disabled={realtimeBusy}
-                        >
-                          <EyeOff />
-                          误报
-                        </Button>
-                      ) : (
-                        '-'
-                      )}
-                    </TableCell>
+                    <TableCell className='max-w-0'><div className='truncate text-base font-semibold text-slate-100' title={log.event}>{log.event}</div><div className='mt-1'><Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(log)])}>{log.signal}</Badge></div></TableCell>
+                    <TableCell className='w-[90px] text-right text-lg font-bold text-slate-100'>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
                   </TableRow>
                 ))}
-                {!displayedLogs.length ? (
+                {!filteredLogs.length ? (
                   <TableRow>
-                    <TableCell colSpan={8} className='h-24 text-center text-sm text-muted-foreground'>
-                      暂未发现运行期风险；可以发送实时样例或上传包含风险信号的日志验证。
+                    <TableCell colSpan={4} className='h-24 text-center text-sm text-muted-foreground'>
+                      暂无符合条件的运行期风险事件
                     </TableCell>
                   </TableRow>
                 ) : null}
@@ -5086,70 +8445,52 @@ function LogsPanel({
         </Card>
       </div>
 
-      <Card className='rounded-md xl:sticky xl:top-20 xl:self-start'>
-        <CardHeader>
-          <CardTitle className='flex items-center gap-2 text-base'>
-            <ShieldCheck className='size-4 text-emerald-600' />
-            实时管道
-          </CardTitle>
-          <CardDescription>上传模式保留，Vector 可把清洗后的 JSON 推到 ingest API</CardDescription>
-        </CardHeader>
-        <CardContent className='space-y-3'>
-          <div className='h-[180px] rounded-md border p-2'>
-            <ResponsiveContainer width='100%' height='100%'>
-              <AreaChart data={trend ?? []} margin={{ left: 0, right: 0, top: 8, bottom: 0 }}>
-                <CartesianGrid strokeDasharray='3 3' vertical={false} />
-                <XAxis
-                  dataKey='bucket'
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => String(value).slice(11, 16)}
-                  minTickGap={18}
-                />
-                <YAxis tickLine={false} axisLine={false} width={28} />
-                <Tooltip labelFormatter={(value) => String(value).replace('T', ' ').slice(0, 16)} />
-                <Area type='monotone' dataKey='events' name='事件' stroke='#0891b2' fill='#0891b2' fillOpacity={0.12} />
-                <Area type='monotone' dataKey='findings' name='风险' stroke='#dc2626' fill='#dc2626' fillOpacity={0.16} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-          {[
-            'Vector / HTTP 实时接入',
-            '本地 JSONL 事件缓冲',
-            '分钟/小时风险趋势',
-            'rule + IP + path 窗口去重',
-            '基线与误报标记',
-            '敏感接口异常访问',
-            '未知域名外联',
-            '认证失败峰值',
-            'SQL 注入探测',
-            '构建上线后的行为漂移',
-          ].map((rule) => (
-            <div key={rule} className='flex items-center gap-2 rounded-md border p-3 text-sm'>
-              <CheckCircle2 className='size-4 text-emerald-600' />
-              {rule}
-            </div>
-          ))}
-          {auditWarnings.length ? (
-            <>
-              <Separator />
-              <div className='space-y-2'>
-                <div className='text-sm font-medium'>扫描提示</div>
-                {auditWarnings.map((warning) => (
-                  <div key={warning} className='rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground'>
-                    {warning}
-                  </div>
-                ))}
-              </div>
-            </>
-          ) : null}
-        </CardContent>
-      </Card>
+      <div className={moduleSidebarColumnClass}>
+        <Card className={cn(moduleCardClass, 'min-h-[620px]')}>
+          <CardHeader className='pb-3'>
+            <CardTitle className='text-section-title !text-[20px]'>当前事件详情</CardTitle>
+          </CardHeader>
+          <CardContent className='flex h-full flex-col space-y-4 p-5'>
+            {activeLog ? (
+              <>
+                <div className='text-risk-title leading-tight'>{activeLog.event}</div>
+                <div className='flex flex-wrap gap-2'>
+                  <Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(activeLog)])}>
+                    {activeLog.signal}
+                  </Badge>
+                  <span className='meta-chip-dark'>{Math.round((activeLog.confidence ?? 0) * 100)}%</span>
+                </div>
+                <div className='grid gap-2'>
+                  {[
+                    ['日志来源', activeLog.source],
+                    ['异常时间', activeLog.time],
+                    ['攻击链节点', activeLog.signal],
+                  ].map(([label, value]) => (
+                    <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 px-4 py-3'>
+                      <span className='text-label whitespace-nowrap'>{label}</span>
+                      <span className='min-w-0 break-words text-right text-value' title={value}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className='code-evidence min-w-0 whitespace-pre-wrap break-words px-4 py-3 leading-6' title={activeLog.evidence}>
+                  {activeLog.evidence || '未提供证据片段'}
+                </div>
+                <div className='action-advice mt-auto p-5'>
+                  <div className='font-bold'>建议处理</div>
+                  <div className='mt-2 leading-7'>先核查访问来源与账号行为；对异常外联会话执行隔离，再结合敏感路径访问记录复核攻击链影响范围。</div>
+                </div>
+              </>
+            ) : (
+              <div className='text-body'>当前筛选下无风险事件。</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
 
-function MultimodalEvidencePanel({
+function _MultimodalEvidencePanel_OLD({
   result,
   workspaceId,
   onScanned,
@@ -5166,6 +8507,13 @@ function MultimodalEvidencePanel({
   )
   const [textSourceType, setTextSourceType] = useState<MultimodalSourceType>('image')
   const [analyzingText, setAnalyzingText] = useState(false)
+  const [ruleDetailsOpen, setRuleDetailsOpen] = useState(false)
+  const [textDetailsOpen, setTextDetailsOpen] = useState(false)
+  const [sourceDetailsOpen, setSourceDetailsOpen] = useState(false)
+  const ruleDetailsRef = useRef<HTMLDivElement>(null)
+  const textDetailsRef = useRef<HTMLDivElement>(null)
+  const sourceDetailsRef = useRef<HTMLDivElement>(null)
+  const reducedMotion = useReducedMotion()
   const evidence = result?.evidence ?? []
   const summary = result?.summary
   const warnings = result?.warnings ?? []
@@ -5204,6 +8552,24 @@ function MultimodalEvidencePanel({
       setExpandedEntityKey(entitySummaries[0].key)
     }
   }, [entitySummaries, expandedEntityKey])
+  useEffect(() => {
+    const target =
+      sourceDetailsOpen
+        ? sourceDetailsRef.current
+        : textDetailsOpen
+          ? textDetailsRef.current
+          : ruleDetailsOpen
+            ? ruleDetailsRef.current
+            : null
+    if (!target) return
+    const timeoutId = window.setTimeout(() => {
+      target.scrollIntoView({
+        behavior: reducedMotion ? 'auto' : 'smooth',
+        block: 'nearest',
+      })
+    }, 80)
+    return () => window.clearTimeout(timeoutId)
+  }, [ruleDetailsOpen, textDetailsOpen, sourceDetailsOpen, reducedMotion])
   const derivedArtifacts = evidence.flatMap((item) =>
     (item.derived ?? []).map((artifact) => ({
       ...artifact,
@@ -5297,9 +8663,9 @@ function MultimodalEvidencePanel({
   }
 
   return (
-    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
-      <div className='space-y-4'>
-        <Card className='rounded-md'>
+    <div className={cn(moduleSplitGridClass, 'xl:grid-cols-[minmax(0,1fr)_420px]')}>
+      <div className={moduleMainColumnClass}>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -5307,21 +8673,20 @@ function MultimodalEvidencePanel({
                   <Images className='size-4 text-cyan-600' />
                   外部告警证据
                 </CardTitle>
-                <CardDescription>将外部告警截图、语音和视频帧转成可关联的证据</CardDescription>
               </div>
               <div className='flex flex-wrap items-center gap-2'>
                 <Input
                   type='file'
                   multiple
                   accept='audio/*,image/*,video/*,.aac,.flac,.m4a,.mp3,.ogg,.opus,.wav,.png,.jpg,.jpeg,.webp,.gif,.mp4,.mov,.mkv,.webm,.avi'
-                  className='w-[320px] max-w-full'
+                  className={cn('w-[320px] max-w-full', fileInputClass)}
                   onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
                 />
                 <Button size='sm' variant='outline' onClick={() => void refreshLatest()} disabled={refreshingLatest}>
                   {refreshingLatest ? <Loader2 className='animate-spin' /> : <RefreshCw />}
                   刷新
                 </Button>
-                <Button size='sm' onClick={() => void uploadEvidence()} disabled={uploading || !selectedFiles.length}>
+                <Button size='sm' className={actionButtonClass} onClick={() => void uploadEvidence()} disabled={uploading || !selectedFiles.length}>
                   {uploading ? <Loader2 className='animate-spin' /> : <Upload />}
                   上传证据
                 </Button>
@@ -5360,7 +8725,7 @@ function MultimodalEvidencePanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -5368,7 +8733,6 @@ function MultimodalEvidencePanel({
                   <Radar className='size-4 text-orange-600' />
                   安全实体抽取与规则研判
                 </CardTitle>
-                <CardDescription>粘贴 ASR/OCR 文本，按 Sigma 风格 YAML 规则生成 Wazuh 风格告警</CardDescription>
               </div>
               <div className='flex items-center gap-2'>
                 <Select value={textSourceType} onValueChange={(value) => setTextSourceType(value as MultimodalSourceType)}>
@@ -5403,7 +8767,7 @@ function MultimodalEvidencePanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -5411,7 +8775,6 @@ function MultimodalEvidencePanel({
                   <Fingerprint className='size-4 text-cyan-600' />
                   抽取实体
                 </CardTitle>
-                <CardDescription>把 OCR/ASR 文本里的包名、IP、接口、服务和行为关键词聚合成可用线索</CardDescription>
               </div>
               <Badge variant='outline' className='rounded-md'>
                 {entitySummaries.length} 个去重实体
@@ -5651,7 +9014,7 @@ function MultimodalEvidencePanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -5659,7 +9022,6 @@ function MultimodalEvidencePanel({
                   <ShieldAlert className='size-4 text-red-600' />
                   原始规则命中记录
                 </CardTitle>
-                <CardDescription>按实体聚合后的底层命中明细，供审计追溯使用</CardDescription>
               </div>
               <Badge variant='outline' className='rounded-md'>
                 {findingRows.length} 条原始命中
@@ -5667,14 +9029,20 @@ function MultimodalEvidencePanel({
             </div>
           </CardHeader>
           <CardContent>
-            <Collapsible>
+            <Collapsible open={ruleDetailsOpen} onOpenChange={setRuleDetailsOpen}>
               <CollapsibleTrigger asChild>
-                <Button variant='outline' className='w-full justify-between rounded-md'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  className='w-full justify-between rounded-md transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-400/40 hover:shadow-md active:translate-y-0'
+                  aria-expanded={ruleDetailsOpen}
+                >
                   查看全部规则命中记录
-                  <ChevronDown className='size-4' />
+                  <ChevronDown className={cn('size-4 transition-transform duration-300', ruleDetailsOpen && 'rotate-180')} />
                 </Button>
               </CollapsibleTrigger>
-              <CollapsibleContent className='mt-3 overflow-hidden rounded-md border'>
+              <CollapsibleContent className='mt-3 rounded-md border data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1'>
+                <div ref={ruleDetailsRef} className='max-h-[65vh] overflow-auto [scrollbar-gutter:stable]'>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -5721,12 +9089,13 @@ function MultimodalEvidencePanel({
                     ) : null}
                   </TableBody>
                 </Table>
+                </div>
               </CollapsibleContent>
             </Collapsible>
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -5734,7 +9103,6 @@ function MultimodalEvidencePanel({
                   <FileText className='size-4 text-cyan-600' />
                   识别文本追溯
                 </CardTitle>
-                <CardDescription>保留 OCR/ASR 原文，默认只展示与规则和实体相关的重点片段</CardDescription>
               </div>
               <Badge variant='outline' className='rounded-md'>
                 {textRecognitions.length} 条识别文本
@@ -5757,7 +9125,6 @@ function MultimodalEvidencePanel({
                 <div className='space-y-2'>
                   <div className='flex items-center justify-between gap-3'>
                     <div className='text-sm font-medium'>重点文本片段</div>
-                    <div className='text-xs text-muted-foreground'>优先显示能解释实体和规则来源的 OCR/ASR 原文</div>
                   </div>
                   <div className='grid gap-3 lg:grid-cols-3'>
                     {(highlightedTextEvidence.length ? highlightedTextEvidence : textEvidenceSummaries.slice(0, 3)).map(({ item, entityCount, findingCount }) => (
@@ -5792,14 +9159,20 @@ function MultimodalEvidencePanel({
                   </div>
                 </div>
 
-                <Collapsible>
+                <Collapsible open={textDetailsOpen} onOpenChange={setTextDetailsOpen}>
                   <CollapsibleTrigger asChild>
-                    <Button variant='outline' className='w-full justify-between rounded-md'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      className='w-full justify-between rounded-md transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-400/40 hover:shadow-md active:translate-y-0'
+                      aria-expanded={textDetailsOpen}
+                    >
                       查看全部识别文本
-                      <ChevronDown className='size-4' />
+                      <ChevronDown className={cn('size-4 transition-transform duration-300', textDetailsOpen && 'rotate-180')} />
                     </Button>
                   </CollapsibleTrigger>
-                  <CollapsibleContent className='mt-3 overflow-hidden rounded-md border'>
+                  <CollapsibleContent className='mt-3 rounded-md border data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1'>
+                    <div ref={textDetailsRef} className='max-h-[65vh] overflow-auto [scrollbar-gutter:stable]'>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -5834,6 +9207,7 @@ function MultimodalEvidencePanel({
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </CollapsibleContent>
                 </Collapsible>
               </>
@@ -5845,7 +9219,7 @@ function MultimodalEvidencePanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-start justify-between gap-3'>
               <div>
@@ -5853,7 +9227,6 @@ function MultimodalEvidencePanel({
                   <ClipboardList className='size-4 text-emerald-600' />
                   证据来源
                 </CardTitle>
-                <CardDescription>原始材料索引，默认只展示重点来源，完整路径和 hash 可展开追溯</CardDescription>
               </div>
               <Badge variant='outline' className='rounded-md'>
                 {evidence.length} 份材料
@@ -5885,7 +9258,6 @@ function MultimodalEvidencePanel({
                 <div className='space-y-2'>
                   <div className='flex items-center justify-between gap-3'>
                     <div className='text-sm font-medium'>重点来源</div>
-                    <div className='text-xs text-muted-foreground'>优先显示产生规则、实体或文本证据的材料</div>
                   </div>
                   <div className='grid gap-3 lg:grid-cols-2'>
                     {(highlightedEvidenceSources.length ? highlightedEvidenceSources : evidenceSourceSummaries.slice(0, 4)).map(({ item, entityCount, findingCount, recognitionCount }) => (
@@ -5926,14 +9298,20 @@ function MultimodalEvidencePanel({
                   </div>
                 </div>
 
-                <Collapsible>
+                <Collapsible open={sourceDetailsOpen} onOpenChange={setSourceDetailsOpen}>
                   <CollapsibleTrigger asChild>
-                    <Button variant='outline' className='w-full justify-between rounded-md'>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      className='w-full justify-between rounded-md transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-400/40 hover:shadow-md active:translate-y-0'
+                      aria-expanded={sourceDetailsOpen}
+                    >
                       查看全部来源明细
-                      <ChevronDown className='size-4' />
+                      <ChevronDown className={cn('size-4 transition-transform duration-300', sourceDetailsOpen && 'rotate-180')} />
                     </Button>
                   </CollapsibleTrigger>
-                  <CollapsibleContent className='mt-3 overflow-hidden rounded-md border'>
+                  <CollapsibleContent className='mt-3 rounded-md border data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1'>
+                    <div ref={sourceDetailsRef} className='max-h-[65vh] overflow-auto [scrollbar-gutter:stable]'>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -5974,6 +9352,7 @@ function MultimodalEvidencePanel({
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </CollapsibleContent>
                 </Collapsible>
               </>
@@ -5986,14 +9365,13 @@ function MultimodalEvidencePanel({
         </Card>
       </div>
 
-      <div className='space-y-4 xl:sticky xl:top-20 xl:self-start'>
-        <Card className='rounded-md'>
+      <div className={moduleSidebarColumnClass}>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <Boxes className='size-4 text-cyan-600' />
               存储索引
             </CardTitle>
-            <CardDescription>storage/multimodal 下的原始文件和索引</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             <div className='rounded-md border p-3'>
@@ -6009,26 +9387,24 @@ function MultimodalEvidencePanel({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <TerminalSquare className='size-4 text-slate-600' />
               多模态工具
             </CardTitle>
-            <CardDescription>Whisper/faster-whisper 做 ASR，PaddleOCR/Tesseract 做截图 OCR</CardDescription>
           </CardHeader>
           <CardContent>
             <ScannerStatusList scanners={result?.tools ?? []} />
           </CardContent>
         </Card>
 
-        <Card className='rounded-md'>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <FileSearch className='size-4 text-orange-600' />
               派生产物
             </CardTitle>
-            <CardDescription>音频 wav 归一化和视频帧抽取结果</CardDescription>
           </CardHeader>
           <CardContent className='space-y-2'>
             {derivedArtifacts.length ? derivedArtifacts.map((artifact) => (
@@ -6053,7 +9429,7 @@ function MultimodalEvidencePanel({
         </Card>
 
         {warnings.length ? (
-          <Card className='rounded-md'>
+          <Card className={moduleCardClass}>
             <CardHeader>
               <CardTitle className='flex items-center gap-2 text-base'>
                 <AlertTriangle className='size-4 text-amber-600' />
@@ -6599,16 +9975,16 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
         visibleEdgeCount={edges.length}
       />
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
-        <Card className='rounded-md'>
+      <div className={cn(moduleSplitGridClass, 'xl:h-[calc(100vh-19rem)] xl:min-h-[480px] xl:grid-cols-[minmax(0,1fr)_380px]')}>
+        <div className={cn(moduleMainColumnClass, 'xl:pb-6')}>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <div className='flex flex-wrap items-center justify-between gap-3'>
               <div>
-                <CardTitle className='flex items-center gap-2 text-base'>
-                  <GitPullRequestArrow className='size-4 text-cyan-600' />
-                  攻击链地图
-                </CardTitle>
-                <CardDescription>先看可读攻击链，再用证据热力图和技术图谱下钻验证</CardDescription>
+            <CardTitle className='flex items-center gap-2 text-base'>
+              <GitPullRequestArrow className='size-4 text-cyan-600' />
+              攻击链地图
+            </CardTitle>
               </div>
               <div className='flex flex-wrap gap-2'>
                 {[
@@ -6798,14 +10174,15 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
             ) : null}
           </CardContent>
         </Card>
+        </div>
 
-        <Card className='rounded-md xl:sticky xl:top-20 xl:self-start'>
+        <div className={cn(moduleSidebarColumnClass, 'xl:pb-6')}>
+        <Card className={moduleCardClass}>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <BrainCircuit className='size-4 text-emerald-600' />
               当前路径解释
             </CardTitle>
-            <CardDescription>把系统判断翻译成可复核的答辩语言</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             <CurrentPathInsightPanel
@@ -6838,6 +10215,7 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
             ) : null}
           </CardContent>
         </Card>
+        </div>
       </div>
     </div>
   )
@@ -6872,7 +10250,6 @@ function PathConclusionCard({
   const nodeCount = summary?.node_count ?? visibleNodeCount
   const edgeCount = summary?.edge_count ?? visibleEdgeCount
   const title = path?.title || '攻击路径研判结论'
-  const description = path?.conclusion || path?.description || '当前图谱已汇聚多源证据，可继续选择候选路径查看细节。'
 
   return (
     <Card className='rounded-md'>
@@ -6894,8 +10271,7 @@ function PathConclusionCard({
               </Badge>
             </div>
             <div>
-              <h3 className='line-clamp-2 text-lg font-semibold'>{title}</h3>
-              <p className='mt-1 max-w-5xl text-sm leading-6 text-muted-foreground'>{description}</p>
+              <h3 className='break-words text-lg font-semibold leading-7 [overflow-wrap:anywhere]'>{title}</h3>
             </div>
           </div>
           <div className='grid min-w-[260px] grid-cols-3 gap-2 text-center'>
@@ -6969,7 +10345,7 @@ function CompactPathSelector({
                 type='button'
                 onClick={() => onSelect(path)}
                 className={cn(
-                  'min-w-[260px] rounded-md border bg-background px-3 py-2 text-left transition hover:bg-muted/35',
+                  'w-[430px] max-w-[78vw] flex-none rounded-md border bg-background px-3 py-2 text-left transition hover:bg-muted/35',
                   selected && (
                     isVerifiedProvenancePath(path)
                       ? 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/20'
@@ -6979,16 +10355,16 @@ function CompactPathSelector({
                   )
                 )}
               >
-                <div className='flex items-center justify-between gap-2'>
-                  <div className='min-w-0 truncate text-sm font-semibold'>
+                <div className='flex items-start justify-between gap-3'>
+                  <div className='min-w-0 break-words text-sm font-semibold leading-5 [overflow-wrap:anywhere]'>
                     路径 {index + 1}：{path.title}
                   </div>
                   <Badge variant='outline' className={cn('shrink-0 rounded-md', pathVerdictClass(path.verdict))}>
                     {Math.round((path.confidence ?? 0) * 100)}%
                   </Badge>
                 </div>
-                <div className='mt-1 truncate text-xs text-muted-foreground'>
-                  {pathStartLabel(path)} → {pathEndLabel(path)}
+                <div className='mt-1 break-words text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]'>
+                  {pathStartFullLabel(path)} → {pathEndFullLabel(path)}
                 </div>
                 <div className='mt-2 flex flex-wrap gap-1.5'>
                   <Badge variant='outline' className={cn('rounded-md', isTrustPath ? statusClasses.active : severityClasses[path.severity] || statusClasses.observed)}>
@@ -7120,11 +10496,6 @@ function AttackChainStageCard({
               <div className='break-all leading-5'>{stage.target}</div>
             </div>
           </div>
-          <div className='grid grid-cols-2 gap-2'>
-            <InfoPill label='关系' value={stage.relation} />
-            <InfoPill label='证据' value={`${stage.evidenceCount} 条`} />
-          </div>
-          <p className='line-clamp-3 leading-5 text-muted-foreground'>{stage.description || stage.subtitle}</p>
         </div>
       </div>
     </div>
@@ -7172,7 +10543,6 @@ function EvidenceHeatmap({
             <div key={stage.id} className='grid border-b last:border-b-0' style={{ gridTemplateColumns: `220px repeat(${evidenceTypes.length}, minmax(92px, 1fr))` }}>
               <div className='p-3'>
                 <div className='font-medium'>{stage.title}</div>
-                <div className='mt-1 line-clamp-2 text-xs text-muted-foreground'>{stage.subtitle}</div>
               </div>
               {evidenceTypes.map((type) => {
                 const active = stage.evidenceGroups.includes(type)
@@ -7267,9 +10637,20 @@ function CurrentPathInsightPanel({
       <div className='rounded-md border p-3'>
         <div className='mb-2 text-sm font-semibold'>为什么可信</div>
         <div className='space-y-2 text-xs leading-5 text-muted-foreground'>
-          <div>入口：{pathStartLabel(path)}</div>
-          <div>目标：{pathEndLabel(path)}</div>
-          <div>依据：{path.evidence_summary?.[0]?.detail || path.path_steps?.[0]?.why_abusable || path.path_steps?.[0]?.trust_basis || '系统已把多源证据串联为同一条路径。'}</div>
+          <div className='grid gap-1 sm:grid-cols-[40px_minmax(0,1fr)]'>
+            <span className='text-foreground'>入口</span>
+            <span className='min-w-0 break-words [overflow-wrap:anywhere]'>{pathStartFullLabel(path)}</span>
+          </div>
+          <div className='grid gap-1 sm:grid-cols-[40px_minmax(0,1fr)]'>
+            <span className='text-foreground'>目标</span>
+            <span className='min-w-0 break-words [overflow-wrap:anywhere]'>{pathEndFullLabel(path)}</span>
+          </div>
+          <div className='grid gap-1 sm:grid-cols-[40px_minmax(0,1fr)]'>
+            <span className='text-foreground'>依据</span>
+            <span className='min-w-0 break-words [overflow-wrap:anywhere]'>
+              {path.evidence_summary?.[0]?.detail || path.path_steps?.[0]?.why_abusable || path.path_steps?.[0]?.trust_basis || '系统已把多源证据串联为同一条路径。'}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -7913,16 +11294,19 @@ function pathStartLabel(path: KnowledgeGraphAttackPath) {
   return shortPathLabel(pathEndpointLabel(path, 'DependencyPackage') || path.entry_node_id || '起点待确认')
 }
 
-function pathEndLabel(path: KnowledgeGraphAttackPath) {
+function pathStartFullLabel(path: KnowledgeGraphAttackPath) {
+  const firstStep = path.path_steps?.[0]
+  return firstStep?.source || pathEndpointLabel(path, 'DependencyPackage') || path.entry_node_id || '起点待确认'
+}
+
+function pathEndFullLabel(path: KnowledgeGraphAttackPath) {
   const steps = path.path_steps ?? []
   const lastStep = steps[steps.length - 1]
-  if (lastStep?.target) return shortPathLabel(lastStep.target)
-  return shortPathLabel(pathEndpointLabel(path, 'RuntimeService') || path.target_node_id || '终点待确认')
+  return lastStep?.target || pathEndpointLabel(path, 'RuntimeService') || path.target_node_id || '终点待确认'
 }
 
 function shortPathLabel(value: string) {
-  if (value.length <= 36) return value
-  return `${value.slice(0, 16)}...${value.slice(-12)}`
+  return value
 }
 
 function isTrustProvenancePath(path?: KnowledgeGraphAttackPath | null) {
@@ -8228,11 +11612,7 @@ function AgentCommandCenter({
     }
     setAgentBusy(true)
     try {
-      const workspaceId = workspace.workspaceId || workspace.workspace?.workspaceId
-      const request = {
-        ...agentRequestFromForm(form),
-        ...(workspaceId ? { workspaceId } : {}),
-      }
+      const request = agentRequestFromForm(form)
       const created = await createSecurityAgentJob(request)
       setAgentRun(created)
       setDefenseBrief(null)
@@ -8355,7 +11735,7 @@ function AgentCommandCenter({
                 <FileText />
                 溯源报告
               </Button>
-              <Button onClick={() => void startAgentRun()} disabled={agentBusy} size='sm' className='bg-slate-950 text-white hover:bg-slate-800'>
+              <Button onClick={() => void startAgentRun()} disabled={agentBusy} size='sm' className={actionButtonClass}>
                 {agentBusy ? <Loader2 className='animate-spin' /> : <Radar />}
                 {agentBusy ? '正在调查' : '开始智能溯源'}
               </Button>
@@ -8365,13 +11745,12 @@ function AgentCommandCenter({
       </Card>
 
       <div className='grid gap-4 2xl:grid-cols-[320px_minmax(0,1fr)_360px]'>
-        <Card className='rounded-md 2xl:sticky 2xl:top-20 2xl:self-start'>
+        <Card className='rounded-md 2xl:sticky 2xl:top-4 2xl:max-h-[calc(100svh-2rem)] 2xl:self-start 2xl:overflow-y-auto 2xl:overscroll-contain 2xl:[scrollbar-gutter:stable]'>
           <CardHeader className='pb-3'>
             <CardTitle className='flex items-center gap-2 text-base'>
               <ServerCog className='size-4 text-cyan-600' />
               溯源目标
             </CardTitle>
-            <CardDescription>选择案例、项目和补充证据材料</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             <Select value={targetPreset} onValueChange={(value) => selectTarget(value as AgentTargetPreset)}>
@@ -8429,7 +11808,6 @@ function AgentCommandCenter({
                   <GitPullRequestArrow className='size-4 text-cyan-600' />
                   Agent 调查时间线
                 </CardTitle>
-                <CardDescription>点击阶段可跳转到对应检测模块，查看原始证据和细节</CardDescription>
               </div>
               {agentBusy ? (
                 <Badge variant='outline' className='rounded-md border-cyan-200 bg-cyan-50 text-cyan-700'>
@@ -8444,13 +11822,12 @@ function AgentCommandCenter({
           </CardContent>
         </Card>
 
-        <Card className='rounded-md 2xl:sticky 2xl:top-20 2xl:self-start'>
+        <Card className='rounded-md 2xl:sticky 2xl:top-4 2xl:max-h-[calc(100svh-2rem)] 2xl:self-start 2xl:overflow-y-auto 2xl:overscroll-contain 2xl:[scrollbar-gutter:stable]'>
           <CardHeader className='pb-3'>
             <CardTitle className='flex items-center gap-2 text-base'>
               <ShieldCheck className='size-4 text-emerald-600' />
               当前结论
             </CardTitle>
-            <CardDescription>路径可信度、缺口和下一步处置</CardDescription>
           </CardHeader>
           <CardContent className='space-y-4'>
             {agentRun?.narrative ? <AgentNarrativeSummary narrative={agentRun.narrative} /> : null}
@@ -8520,9 +11897,6 @@ function AgentCommandCenter({
                   {agentBusy ? '执行中' : agentRunStatusLabel(agentRun?.status)}
                 </Badge>
               </CardTitle>
-              <CardDescription className='mt-1'>
-                自动编排代码、依赖、CI/CD、产物和日志扫描，生成攻击路径、补证建议和溯源报告
-              </CardDescription>
             </div>
           </div>
           <div className='flex flex-wrap gap-2'>
@@ -8548,7 +11922,6 @@ function AgentCommandCenter({
             <div className='flex items-center justify-between gap-3'>
               <div>
                 <h3 className='text-sm font-semibold'>扫描目标</h3>
-                <p className='mt-1 text-xs text-muted-foreground'>选择预置案例，或填写当前导入项目/本地项目路径</p>
               </div>
               <Badge variant='outline' className='rounded-md'>
                 同步编排
@@ -8650,7 +12023,6 @@ function AgentCommandCenter({
             <div className='flex items-center justify-between gap-3'>
               <div>
                 <h3 className='text-sm font-semibold'>本次研判摘要</h3>
-                <p className='mt-1 text-xs text-muted-foreground'>最近一次 Agent 编排结果</p>
               </div>
               {agentRun?.runId ? (
                 <Badge variant='outline' className='max-w-[160px] truncate rounded-md font-mono text-[10px]' title={agentRun?.runId ?? undefined}>
@@ -8663,13 +12035,6 @@ function AgentCommandCenter({
               <AgentMetric label='攻击路径' value={agentRun?.workspace?.summary.attack_paths ?? workspace.summary.attack_paths} tone='active' />
               <AgentMetric label='成功步骤' value={agentRun?.summary.success ?? 0} tone='success' />
               <AgentMetric label='证据缺口' value={agentRun?.summary.evidenceGapCount ?? 0} tone='warning' />
-            </div>
-            <div className='mt-3 rounded-md border bg-background px-3 py-2 text-xs leading-5 text-muted-foreground'>
-              {agentBusy
-                ? 'Agent 正在按供应链溯源主线执行扫描。同步模式会在全部步骤结束后统一返回结果。'
-                : agentRun?.durationSeconds
-                  ? `最近一次执行耗时 ${agentRun?.durationSeconds ?? 0} 秒；成功 ${agentRun?.summary.success ?? 0} 步，跳过 ${agentRun?.summary.skipped ?? 0} 步，失败 ${agentRun?.summary.failed ?? 0} 步。`
-                  : '尚未执行 Agent。选择目标后点击“开始智能溯源”。'}
             </div>
           </div>
         </section>
@@ -8907,7 +12272,9 @@ function AgentPathBriefing({
           <div className='flex items-start justify-between gap-3'>
             <div className='min-w-0'>
               <div className='text-[10px] text-muted-foreground'>路径 {index + 1}</div>
-              <div className='mt-0.5 line-clamp-2 text-sm font-medium'>{path.title || path.description || '供应链攻击路径'}</div>
+              <div className='mt-0.5 break-words text-sm font-medium leading-5 [overflow-wrap:anywhere]'>
+                {path.title || path.description || '供应链攻击路径'}
+              </div>
             </div>
             <Badge variant='outline' className={cn('shrink-0 rounded-md', pathVerdictClass(path.verdict))}>
               {Math.round((path.confidence ?? 0) * 100)}%
@@ -9071,7 +12438,6 @@ function DefenseBriefPanel({ brief }: { brief: DefenseBrief }) {
               <Sparkles className='size-4 text-cyan-600' />
               {brief.title}
             </CardTitle>
-            <CardDescription>基于本次 Agent 调查结果自动整理的答辩讲解</CardDescription>
           </div>
           <Button variant='outline' size='sm' onClick={() => void copyAgentText(brief.text, '答辩讲解已复制')}>
             <Copy className='size-3.5' />
@@ -9356,7 +12722,7 @@ function workspaceTargetPath(workspace: SecurityWorkspace) {
 }
 
 function jumpToPlatformTab(tab: PlatformTab) {
-  window.location.hash = tab
+  window.location.hash = canonicalWorkspaceTab(tab)
 }
 
 function jumpToModuleName(moduleName?: string) {
@@ -9453,7 +12819,6 @@ function CopilotPanel({
   const retrieval = answer?.retrieval?.length ? answer.retrieval : assistant.retrieval
   const nextActions = answer?.next_actions?.length ? answer.next_actions : assistant.next_actions
   const modelName = answer?.model || 'demo-rag-security-analyst'
-  const graphRag = answer?.graph_rag
   const hasDeepseek = modelName.toLowerCase().includes('deepseek')
   const promptSuggestions = [
     '解释本次 Agent 为什么判定存在供应链攻击风险',
@@ -9482,12 +12847,7 @@ function CopilotPanel({
                     {hasDeepseek ? 'DeepSeek 在线' : '离线 RAG'}
                   </Badge>
                 </CardTitle>
-                <CardDescription>基于供应链证据链生成处置建议、攻击路径解释和误报判断</CardDescription>
               </div>
-            </div>
-            <div className='flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground'>
-              <Sparkles className='size-3.5 text-cyan-600' />
-              {modelName}
             </div>
           </div>
         </CardHeader>
@@ -9497,7 +12857,6 @@ function CopilotPanel({
               <CopilotMessage
                 role='assistant'
                 title='SupplyGuard KG'
-                meta='已载入组件、构建链、产物、日志和攻击路径上下文'
                 icon={<Bot className='size-4' />}
               >
                 <CopilotMarkdown text={assistant.answer} />
@@ -9508,7 +12867,6 @@ function CopilotPanel({
                   <CopilotMessage
                     role='user'
                     title='你'
-                    meta='当前提问'
                     icon={<User className='size-4' />}
                   >
                     <p>{answer.question}</p>
@@ -9516,7 +12874,6 @@ function CopilotPanel({
                   <CopilotMessage
                     role='assistant'
                     title='安全分析'
-                    meta={modelName}
                     icon={<BrainCircuit className='size-4' />}
                     action={<CopyAnswerButton text={answer.answer} />}
                   >
@@ -9563,12 +12920,8 @@ function CopilotPanel({
                   placeholder='询问风险原因、攻击链路、修复优先级或误报可能性'
                   className='min-h-14 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0'
                 />
-                <div className='flex items-center justify-between gap-3 border-t px-2 pt-2'>
-                  <div className='flex items-center gap-2 text-xs text-muted-foreground'>
-                    <CornerDownLeft className='size-3.5' />
-                    Enter 发送，Shift + Enter 换行
-                  </div>
-                  <Button onClick={onSubmit} disabled={busy || !question.trim()} className='rounded-md'>
+                <div className='flex items-center justify-end gap-3 border-t px-2 pt-2'>
+                  <Button onClick={onSubmit} disabled={busy || !question.trim()} className={cn('rounded-md', actionButtonClass)}>
                     {busy ? <Loader2 className='animate-spin' /> : <Send />}
                     分析
                   </Button>
@@ -9579,16 +12932,13 @@ function CopilotPanel({
         </CardContent>
       </Card>
 
-      <div className='space-y-4 xl:sticky xl:top-20 xl:self-start'>
-        <GraphRagEvidenceCard graphRag={graphRag} />
-
+      <div className='space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100svh-2rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain xl:[scrollbar-gutter:stable]'>
         <Card className='rounded-md'>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
               <Search className='size-4 text-cyan-600' />
               检索命中
             </CardTitle>
-            <CardDescription>用于回答的 SBOM、规则、代码和日志片段</CardDescription>
           </CardHeader>
           <CardContent className='space-y-2'>
             {retrieval.map((item) => (
@@ -9608,7 +12958,6 @@ function CopilotPanel({
               <ClipboardList className='size-4 text-emerald-600' />
               建议动作
             </CardTitle>
-            <CardDescription>来自助手和当前证据链的优先处置清单</CardDescription>
           </CardHeader>
           <CardContent className='space-y-3'>
             {nextActions.map((action, index) => (
@@ -9627,274 +12976,6 @@ function CopilotPanel({
   )
 }
 
-function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency }) {
-  const explanations = dependency.gnn_explanations?.length
-    ? dependency.gnn_explanations
-    : dependency.gnn_reasons ?? []
-  const similarPackages = dependency.similar_malicious_packages ?? []
-  const hasModelEvidence =
-    dependency.gnn_model_type
-    || typeof dependency.gnn_confidence === 'number'
-    || explanations.length
-    || similarPackages.length
-
-  if (!hasModelEvidence) {
-    return null
-  }
-
-  return (
-    <div className='mt-3 rounded-md border bg-muted/20 p-3'>
-      <div className='flex flex-wrap items-center gap-2'>
-        <div className='text-xs font-medium'>GNN 模型证据</div>
-        {dependency.gnn_model_type ? (
-          <Badge variant='outline' className='rounded-md text-[10px]'>
-            {dependency.gnn_model_type}
-          </Badge>
-        ) : null}
-        {typeof dependency.gnn_confidence === 'number' ? (
-          <Badge variant='outline' className='rounded-md bg-cyan-50 text-[10px] text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
-            置信 {formatPercent(dependency.gnn_confidence)}
-          </Badge>
-        ) : null}
-      </div>
-
-      {similarPackages.length ? (
-        <div className='mt-2 space-y-1'>
-          <div className='text-[11px] text-muted-foreground'>相似恶意包</div>
-          {similarPackages.slice(0, 3).map((item, index) => (
-            <div key={`${item.ecosystem || 'pkg'}-${item.package || index}`} className='flex items-start justify-between gap-2 rounded-md bg-background/70 px-2 py-1.5 text-xs'>
-              <div className='min-w-0'>
-                <div className='truncate font-medium'>{item.package || 'unknown package'}</div>
-                <div className='text-muted-foreground'>{item.ecosystem || '-'}{item.reason ? ` · ${item.reason}` : ''}</div>
-              </div>
-              {typeof item.score === 'number' ? (
-                <Badge variant='outline' className='shrink-0 rounded-md text-[10px]'>
-                  {formatPercent(item.score)}
-                </Badge>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {explanations.length ? (
-        <div className='mt-2 space-y-1 text-xs leading-5 text-muted-foreground'>
-          {explanations.slice(0, 4).map((reason) => (
-            <div key={reason}>{reason}</div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function GraphRagEvidenceCard({ graphRag }: { graphRag?: SecurityGraphRagResult | null }) {
-  if (!graphRag) return null
-
-  const topNodes = graphRag.top_nodes?.slice(0, 4) ?? []
-  const topPaths = graphRag.top_attack_paths?.slice(0, 2) ?? []
-  const channelEntries = Object.entries(graphRag.channels ?? {}).filter(([, hits]) => hits.length)
-  const evidenceRows = graphRag.evidence_table?.slice(0, 5) ?? []
-  const retrievalTrace = graphRag.retrieval_trace?.slice(0, 5) ?? []
-  const missingEvidence = graphRag.missing_evidence?.slice(0, 5) ?? []
-  const explanation = graphRag.explanation
-
-  return (
-    <Card className='rounded-md'>
-      <CardHeader>
-        <CardTitle className='flex items-center gap-2 text-base'>
-          <Network className='size-4 text-cyan-600' />
-          GraphRAG 证据
-        </CardTitle>
-        <CardDescription>
-          {explanation?.ranking || '关键词种子、图扩展、PageRank 和模型风险分数共同排序'}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className='space-y-3'>
-        <div className='grid grid-cols-2 gap-2 text-xs sm:grid-cols-4'>
-          <InfoPill label='意图' value={graphRag.intent || String(explanation?.intent || 'general')} />
-          <InfoPill label='种子' value={String(explanation?.seed_count ?? graphRag.seed_node_ids?.length ?? 0)} />
-          <InfoPill label='跳数' value={`${explanation?.hop_limit ?? 2} hop`} />
-          <InfoPill label='扩展' value={String(graphRag.expanded_node_ids?.length ?? 0)} />
-        </div>
-
-        {channelEntries.length ? (
-          <div className='space-y-2'>
-            <div className='text-xs font-medium text-muted-foreground'>召回通道</div>
-            <div className='flex flex-wrap gap-1.5'>
-              {channelEntries.map(([channel, hits]) => (
-                <Badge key={channel} variant='outline' className='rounded-md text-[10px]'>
-                  {graphRagChannelLabel(channel)} {hits.length}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {topNodes.length ? (
-          <div className='space-y-2'>
-            <div className='text-xs font-medium text-muted-foreground'>Top 节点</div>
-            {topNodes.map((node) => {
-              const rawProps = graphNodeRawProperties(node)
-              const gnnScore = typeof rawProps.gnn_score === 'number' ? Math.round(rawProps.gnn_score * 100) : null
-              const risk = normalizeGraphNodeRisk(node.risk)
-              return (
-                <div key={node.id} className='rounded-md border p-2 text-xs'>
-                  <div className='flex items-start justify-between gap-2'>
-                    <div className='min-w-0'>
-                      <div className='truncate font-medium'>{node.label}</div>
-                      <div className='mt-0.5 text-muted-foreground'>{node.type}</div>
-                    </div>
-                    <div className='flex shrink-0 flex-col items-end gap-1'>
-                      <Badge variant='outline' className={cn('rounded-md', severityClasses[risk])}>
-                        {severityLabel(risk)}
-                      </Badge>
-                      {gnnScore !== null ? (
-                        <Badge variant='outline' className='rounded-md bg-cyan-50 text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
-                          GNN {gnnScore}%
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </div>
-                  {node.description ? (
-                    <div className='mt-2 line-clamp-2 leading-5 text-muted-foreground'>{node.description}</div>
-                  ) : null}
-                  <GraphRagReasonList reasons={node.why_selected} />
-                </div>
-              )
-            })}
-          </div>
-        ) : null}
-
-        {topPaths.length ? (
-          <div className='space-y-2'>
-            <div className='flex items-center gap-1 text-xs font-medium text-muted-foreground'>
-              <Route className='size-3.5' />
-              命中攻击路径
-            </div>
-            {topPaths.map((path) => (
-              <div key={path.id} className='rounded-md border border-cyan-200/70 bg-cyan-50/45 p-2 text-xs leading-5 dark:border-cyan-900 dark:bg-cyan-950/20'>
-                <div className='font-medium text-cyan-900 dark:text-cyan-100'>{path.title}</div>
-                <div className='mt-1 text-muted-foreground'>
-                  分数 {path.score} · {path.description || path.conclusion || '已与当前问题相关'}
-                </div>
-                <GraphRagReasonList reasons={path.why_selected} />
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        {evidenceRows.length ? (
-          <div className='space-y-2'>
-            <div className='text-xs font-medium text-muted-foreground'>证据压缩表</div>
-            {evidenceRows.map((row, index) => (
-              <div key={`${row.kind || 'evidence'}-${row.id || index}`} className='rounded-md border bg-background/70 p-2 text-xs leading-5'>
-                <div className='flex items-center justify-between gap-2'>
-                  <span className='font-medium'>{row.summary || row.id || row.kind || 'evidence'}</span>
-                  {row.kind ? (
-                    <Badge variant='outline' className='shrink-0 rounded-md text-[10px]'>
-                      {row.kind}
-                    </Badge>
-                  ) : null}
-                </div>
-                {row.source || row.id ? (
-                  <div className='mt-1 truncate text-muted-foreground'>{row.source || row.id}</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-
-        {retrievalTrace.length ? (
-          <div className='space-y-2'>
-            <div className='text-xs font-medium text-muted-foreground'>检索轨迹</div>
-            <div className='space-y-1'>
-              {retrievalTrace.map((item, index) => (
-                <div key={`${item.stage || 'trace'}-${index}`} className='rounded-md bg-muted/35 px-2 py-1.5 text-xs leading-5'>
-                  <span className='font-medium'>{item.stage || `stage ${index + 1}`}</span>
-                  <span className='text-muted-foreground'> · {formatGraphRagTrace(item)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        {missingEvidence.length ? (
-          <div className='space-y-2'>
-            <div className='text-xs font-medium text-muted-foreground'>证据缺口</div>
-            {missingEvidence.map((item, index) => (
-              <div key={`${item.kind || 'missing'}-${index}`} className='rounded-md border border-amber-200/70 bg-amber-50/60 p-2 text-xs leading-5 text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/20 dark:text-amber-100'>
-                <span className='font-medium'>{item.kind || 'missing evidence'}</span>
-                {item.reason ? <span> · {item.reason}</span> : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
-  )
-}
-
-function GraphRagReasonList({ reasons }: { reasons?: string[] }) {
-  if (!reasons?.length) {
-    return null
-  }
-  return (
-    <div className='mt-2 flex flex-wrap gap-1'>
-      {reasons.slice(0, 3).map((reason) => (
-        <Badge key={reason} variant='outline' className='max-w-full rounded-md text-[10px]'>
-          <span className='truncate'>{reason}</span>
-        </Badge>
-      ))}
-    </div>
-  )
-}
-
-function graphRagChannelLabel(channel: string) {
-  const labels: Record<string, string> = {
-    keyword: '关键词',
-    risk: '风险',
-    attack_path: '攻击路径',
-    embedding: 'Embedding',
-  }
-  return labels[channel] ?? channel
-}
-
-function formatGraphRagTrace(item: Record<string, unknown>) {
-  const details = Object.entries(item)
-    .filter(([key]) => key !== 'stage')
-    .map(([key, value]) => `${key}=${formatGraphRagValue(value)}`)
-  return details.length ? details.join('，') : '完成'
-}
-
-function formatGraphRagValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.slice(0, 3).join(', ')
-  }
-  if (value && typeof value === 'object') {
-    return JSON.stringify(value)
-  }
-  return String(value ?? '-')
-}
-
-function graphNodeRawProperties(node: SecurityGraphNode): Record<string, unknown> {
-  const properties = node.properties
-  if (properties && typeof properties === 'object' && 'properties' in properties) {
-    const nested = properties.properties
-    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
-      return nested as Record<string, unknown>
-    }
-  }
-  return properties ?? {}
-}
-
-function normalizeGraphNodeRisk(value?: string): SecuritySeverity {
-  if (value === 'critical' || value === 'high' || value === 'medium' || value === 'low') {
-    return value
-  }
-  return 'medium'
-}
-
 function CopilotMessage({
   role,
   title,
@@ -9905,7 +12986,7 @@ function CopilotMessage({
 }: {
   role: 'assistant' | 'user'
   title: string
-  meta: string
+  meta?: string
   icon: ReactNode
   action?: ReactNode
   children: ReactNode
@@ -9920,7 +13001,7 @@ function CopilotMessage({
       <div className={cn('min-w-0 max-w-[860px] flex-1', role === 'user' && 'flex max-w-[640px] flex-col items-end')}>
         <div className={cn('mb-2 flex items-center gap-2 text-xs text-muted-foreground', role === 'user' && 'justify-end')}>
           <span className='font-medium text-foreground'>{title}</span>
-          <span>{meta}</span>
+          {meta ? <span>{meta}</span> : null}
           {action}
         </div>
         <div
@@ -10095,14 +13176,14 @@ function EvidenceItem({ value }: { value: string }) {
         </Badge>
         <CheckCircle2 className='size-4 text-emerald-600' />
       </div>
-      <code className='block break-words font-mono text-xs leading-5 text-muted-foreground'>
+      <code className='code-evidence' title={detail}>
         {detail}
       </code>
     </div>
   )
 }
 
-function ReportPanel({ workspace }: { workspace: SecurityWorkspace }) {
+function _OldReportPanel({ workspace, animationKey }: { workspace: SecurityWorkspace; animationKey: number }) {
   const [reportMode, setReportMode] = useState<'preview' | 'source'>('preview')
   const report = getWorkspaceReport(workspace)
   const workspaceId = workspace.workspaceId || workspace.workspace?.workspaceId
@@ -10130,7 +13211,6 @@ function ReportPanel({ workspace }: { workspace: SecurityWorkspace }) {
               <FileText className='size-4 text-orange-600' />
               APT 供应链攻击溯源报告
             </CardTitle>
-            <CardDescription>包含污染环节、受影响资产、证据链、攻击路径和修复建议</CardDescription>
           </div>
           <div className='flex flex-wrap gap-2'>
             <Button variant='outline' size='sm' onClick={() => void exportEvidencePackage()}>
@@ -10149,20 +13229,18 @@ function ReportPanel({ workspace }: { workspace: SecurityWorkspace }) {
         </div>
       </CardHeader>
       <CardContent className='space-y-4'>
-        <Alert className='rounded-md border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-100'>
-          <ShieldCheck className='size-4' />
-          <AlertTitle>交付提示</AlertTitle>
-          <AlertDescription>
-            报告用于答辩讲解，证据包用于复现审查。证据包会包含 workspace、证据、攻击路径、报告和各模块原始结果。
-          </AlertDescription>
-        </Alert>
         <Tabs value={reportMode} onValueChange={(value) => setReportMode(value as 'preview' | 'source')}>
           <TabsList className='grid h-10 w-full max-w-sm grid-cols-2 rounded-md'>
             <TabsTrigger value='preview'>报告预览</TabsTrigger>
             <TabsTrigger value='source'>Markdown 源码</TabsTrigger>
           </TabsList>
           <TabsContent value='preview' className='mt-4'>
-            <VisualReportPreview workspace={workspace} report={report} />
+            <VisualReportPreview
+              key={`report-preview-${animationKey}`}
+              workspace={workspace}
+              report={report}
+              animationKey={animationKey}
+            />
           </TabsContent>
           <TabsContent value='source' className='mt-4'>
             <Textarea
@@ -10177,7 +13255,15 @@ function ReportPanel({ workspace }: { workspace: SecurityWorkspace }) {
   )
 }
 
-function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspace; report: string }) {
+function VisualReportPreview({
+  workspace,
+  report,
+  animationKey,
+}: {
+  workspace: SecurityWorkspace
+  report: string
+  animationKey: number
+}) {
   const metrics = buildReportMetrics(workspace)
   const riskSources = buildReportRiskSources(workspace)
   const stages = buildReportPathStages(workspace)
@@ -10203,7 +13289,7 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
               ))}
             </div>
           </div>
-          <RiskDial score={workspace.summary.risk_score} level={workspace.summary.risk_level} />
+          <RiskDial key={`report-risk-${animationKey}`} score={workspace.summary.risk_score} level={workspace.summary.risk_level} />
         </section>
 
         <section className='grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]'>
@@ -10213,7 +13299,6 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
                 <TrendingUp className='size-4 text-red-600' />
                 风险来源分布
               </CardTitle>
-              <CardDescription>按依赖、构建、产物、日志和图谱汇总信号强度</CardDescription>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width='100%' height={260}>
@@ -10222,7 +13307,18 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
                   <XAxis dataKey='name' tickLine={false} axisLine={false} fontSize={12} />
                   <YAxis tickLine={false} axisLine={false} fontSize={12} />
                   <Tooltip />
-                  <Bar dataKey='value' name='信号' fill='#0891b2' radius={[4, 4, 0, 0]} />
+                  <Bar
+                    key={`${animationKey}-${riskSources.map((item) => `${item.name}:${item.value}`).join('|')}`}
+                    dataKey='value'
+                    name='信号'
+                    fill='#0891b2'
+                    radius={[4, 4, 0, 0]}
+                    isAnimationActive
+                    animationBegin={0}
+                    animationDuration={3200}
+                    animationEasing='ease-out'
+                    shape={<AnimatedRiskSourceBar />}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -10234,7 +13330,6 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
                 <Route className='size-4 text-cyan-600' />
                 攻击路径流程
               </CardTitle>
-              <CardDescription>{primaryPath?.title || '当前暂无高可信路径，等待补充证据。'}</CardDescription>
             </CardHeader>
             <CardContent>
               <ReportPathFlow stages={stages} />
@@ -10249,7 +13344,6 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
                 <ClipboardList className='size-4 text-emerald-600' />
                 证据覆盖热力图
               </CardTitle>
-              <CardDescription>展示每段路径由哪些证据类型支撑，缺口在哪里</CardDescription>
             </CardHeader>
             <CardContent>
               <ReportEvidenceHeatmap stages={stages} />
@@ -10262,19 +13356,24 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
                 <AlertTriangle className='size-4 text-orange-600' />
                 可信链断点
               </CardTitle>
-              <CardDescription>发布前需要优先复核的阻断项</CardDescription>
             </CardHeader>
             <CardContent className='space-y-3'>
               {breakpoints.length ? (
                 breakpoints.map((item) => (
-                  <div key={item.id} className='rounded-md border border-red-100 bg-red-50/60 p-3 dark:border-red-900 dark:bg-red-950/20'>
-                    <div className='flex items-center justify-between gap-2'>
-                      <div className='font-medium'>{item.title}</div>
+                  <div key={item.id} className='min-w-0 overflow-hidden rounded-md border border-red-100 bg-red-50/60 p-3 dark:border-red-900 dark:bg-red-950/20'>
+                    <div className='flex min-w-0 items-center justify-between gap-2'>
+                      <div className='min-w-0 break-words font-medium [overflow-wrap:anywhere]'>{item.title}</div>
                       <Badge variant='outline' className={cn('rounded-md', severityClasses[item.severity])}>
                         {severityLabels[item.severity]}
                       </Badge>
                     </div>
-                    <p className='mt-2 text-xs leading-5 text-muted-foreground'>{item.evidence}</p>
+                    <p
+                      className='mt-2 min-w-0 max-w-full whitespace-pre-wrap break-all text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere] [word-break:break-all]'
+                      title={item.evidence}
+                      style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}
+                    >
+                      {item.evidence}
+                    </p>
                   </div>
                 ))
               ) : (
@@ -10292,7 +13391,6 @@ function VisualReportPreview({ workspace, report }: { workspace: SecurityWorkspa
               <FileText className='size-4 text-orange-600' />
               正文摘要
             </CardTitle>
-            <CardDescription>保留 Markdown 报告中的关键文字，便于答辩讲解</CardDescription>
           </CardHeader>
           <CardContent className='grid gap-3 md:grid-cols-2'>
             {summaryParagraphs.map((paragraph, index) => (
@@ -10345,9 +13443,9 @@ function ReportPathFlow({ stages }: { stages: ReportPathStage[] }) {
       {stages.slice(0, 6).map((stage, index) => (
         <div key={stage.id} className='relative rounded-md border bg-background p-3'>
           <div className='flex items-start justify-between gap-2'>
-            <div>
+            <div className='min-w-0'>
               <div className='text-xs text-muted-foreground'>阶段 {index + 1}</div>
-              <div className='mt-1 font-semibold'>{stage.title}</div>
+              <div className='mt-1 break-words font-semibold [overflow-wrap:anywhere]'>{stage.title}</div>
             </div>
             <Badge variant='outline' className='rounded-md'>{stage.confidence}%</Badge>
           </div>
@@ -10355,10 +13453,6 @@ function ReportPathFlow({ stages }: { stages: ReportPathStage[] }) {
             <div className='break-all font-medium'>{stage.source}</div>
             <div className='text-muted-foreground'>→</div>
             <div className='break-all font-medium'>{stage.target}</div>
-          </div>
-          <div className='mt-3 flex items-center justify-between text-xs text-muted-foreground'>
-            <span>{stage.relationship}</span>
-            <span>{stage.evidenceCount} 条证据</span>
           </div>
         </div>
       ))}
@@ -10383,8 +13477,7 @@ function ReportEvidenceHeatmap({ stages }: { stages: ReportPathStage[] }) {
       {visibleStages.map((stage) => (
         <div key={stage.id} className='grid min-w-[780px] border-b last:border-b-0' style={{ gridTemplateColumns: `180px repeat(${evidenceTypes.length}, minmax(88px, 1fr))` }}>
           <div className='p-2'>
-            <div className='text-sm font-medium'>{stage.title}</div>
-            <div className='mt-1 line-clamp-1 text-xs text-muted-foreground'>{stage.relationship}</div>
+            <div className='break-words text-sm font-medium [overflow-wrap:anywhere]'>{stage.title}</div>
           </div>
           {evidenceTypes.map((type) => {
             const active = stage.evidenceGroups.includes(type)
@@ -10403,6 +13496,14 @@ function ReportEvidenceHeatmap({ stages }: { stages: ReportPathStage[] }) {
 }
 
 function RiskBar({ value }: { value: number }) {
+  const { value: displayValue, spring } = useAnimatedNumber(value, {
+    stiffness: 115,
+    damping: 20,
+    delayMs: 520,
+    durationMs: 3000,
+    respectReducedMotion: false,
+  })
+  const width = useTransform(spring, (latest) => `${Math.max(0, Math.min(100, latest))}%`)
   const color =
     value >= 90
       ? 'bg-red-600'
@@ -10415,10 +13516,59 @@ function RiskBar({ value }: { value: number }) {
   return (
     <div className='space-y-1'>
       <div className='h-2 overflow-hidden rounded-full bg-muted'>
-        <div className={cn('h-full rounded-full', color)} style={{ width: `${value}%` }} />
+        <motion.div
+          className={cn('h-full rounded-full', color)}
+          style={{ width }}
+        />
       </div>
-      <div className='text-right text-xs text-muted-foreground'>{value}</div>
+      <div className='text-right text-xs text-muted-foreground'>{displayValue}</div>
     </div>
+  )
+}
+
+function AnimatedRiskSourceBar(props: {
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  fill?: string
+  index?: number
+}) {
+  const { x = 0, y = 0, width = 0, height = 0, fill = '#0891b2', index = 0 } = props
+  const progress = useMotionValue(0)
+  const spring = useSpring(progress, { stiffness: 22, damping: 10, mass: 1 })
+  const animatedHeight = useTransform(spring, [0, 1], [0, height])
+  const animatedY = useTransform(spring, [0, 1], [y + height, y])
+  const opacity = useTransform(spring, [0, 0.25, 1], [0.35, 0.8, 1])
+  const capOpacity = useTransform(spring, [0, 0.55, 1], [0, 0.85, 0.18])
+
+  useEffect(() => {
+    progress.jump(0)
+    const timeoutId = window.setTimeout(() => progress.set(1), index * 90)
+    return () => window.clearTimeout(timeoutId)
+  }, [progress, height, index])
+
+  return (
+    <g>
+      <motion.rect
+        x={x}
+        y={animatedY}
+        width={width}
+        height={animatedHeight}
+        rx={4}
+        fill={fill}
+        opacity={opacity}
+      />
+      <motion.rect
+        x={x}
+        y={animatedY}
+        width={width}
+        height={3}
+        rx={2}
+        fill='#67e8f9'
+        opacity={capOpacity}
+      />
+    </g>
   )
 }
 
@@ -10740,5 +13890,7 @@ function escapeHtml(value: string) {
 }
 
 function tabFromHash(hash: string): PlatformTab {
-  return normalizeWorkbenchHash(hash)
+  return canonicalWorkspaceTab(normalizeWorkbenchHash(hash))
 }
+
+

@@ -34,9 +34,15 @@ RUN sed -i \
   && pip install --no-cache-dir -r requirements.txt semgrep bandit checkov \
   && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
   && pip install --no-cache-dir -r requirements-gnn-pyg.txt \
-  && curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz \
-    | tar -xz -C /usr/local/bin gitleaks \
-  && chmod +x /usr/local/bin/gitleaks
+  && if curl -sSfL --connect-timeout 20 --retry 2 \
+      "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+      -o /tmp/gitleaks.tar.gz; then \
+        tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
+        && chmod +x /usr/local/bin/gitleaks; \
+     else \
+        echo "WARNING: gitleaks download failed; code audit will use the built-in secret scan fallback."; \
+     fi \
+  && rm -f /tmp/gitleaks.tar.gz
 
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist

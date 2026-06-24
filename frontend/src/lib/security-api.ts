@@ -395,6 +395,29 @@ export type CICDAuditResult = {
   warnings: string[]
 }
 
+export type CICDScanRun = {
+  id?: string
+  scan_id?: string
+  projectId?: string
+  module?: 'cicd' | string
+  createdAt?: string
+  generated_at?: string
+  totalRisks?: number
+  total?: number
+  criticalCount?: number
+  critical?: number
+  highCount?: number
+  high?: number
+  mediumCount?: number
+  medium?: number
+  lowCount?: number
+  low?: number
+  fixedCount?: number
+  fixed?: number
+  newCount?: number
+  new?: number
+}
+
 export type ArtifactTrustCheckStatus = 'pass' | 'fail' | 'warn' | 'missing' | 'skipped' | string
 
 export type ArtifactTrustCheck = {
@@ -777,7 +800,6 @@ export type SecurityGraphNode = {
   source_model?: string
   evidence_ids?: string[]
   properties?: Record<string, unknown>
-  why_selected?: string[]
   position?: {
     x: number
     y: number
@@ -794,7 +816,6 @@ export type SecurityGraphEdge = {
   reason?: string
   evidence_ids?: string[]
   properties?: Record<string, unknown>
-  why_selected?: string[]
 }
 
 export type SecurityAttackPath = {
@@ -863,7 +884,6 @@ export type SecurityAttackPath = {
   }>
   mappings?: Array<Record<string, unknown>>
   references?: string[]
-  why_selected?: string[]
 }
 
 export interface SecurityGraphRagChannelHit {
@@ -969,6 +989,7 @@ export type SecurityAssistantPayload = {
   default_question: string
   answer: string
   retrieval: string[]
+  graph_rag?: SecurityGraphRagResult | null
   next_actions: string[]
 }
 
@@ -998,6 +1019,34 @@ export type SecurityWorkspace = {
   workspaceId?: string
   workspace_id?: string
   generated_at: string
+  import?: {
+    importId?: string
+    projectName?: string
+    sourceType?: string
+    sourcePath?: string
+    status?: string
+    summary?: {
+      projectName?: string
+      sourceType?: string
+      sourceRef?: Record<string, string | number>
+      fileStats?: {
+        total?: number
+        scannable?: number
+        ignored?: number
+        binary?: number
+      }
+      languages?: Array<{
+        name: string
+        percent: number
+        files: number
+        bytes: number
+      }>
+      dependencyFiles?: string[]
+      ciFiles?: string[]
+      warnings?: string[]
+      scanScope?: string
+    }
+  }
   workspace: {
     workspaceId?: string
     importId?: string
@@ -1094,6 +1143,12 @@ export type SecurityWorkspace = {
   normalized_findings?: Array<Record<string, unknown>>
   report_html?: string | null
   report?: string | null
+  scanSuite?: {
+    status?: 'completed' | 'partial' | 'failed' | 'running' | 'idle' | string
+    completed?: string[]
+    skipped?: Array<{ module: string; reason?: string }>
+    errors?: Array<{ module: string; message: string }>
+  }
 }
 
 export type SecurityAssistantResponse = {
@@ -1462,6 +1517,10 @@ export async function runCICDAuditScan(options: CICDAuditScanOptions = {}) {
 
 export async function loadCICDAuditSarif() {
   return api<Record<string, unknown>>('/api/security/cicd/sarif')
+}
+
+export async function loadCICDScanRuns() {
+  return api<{ scanRuns: CICDScanRun[] }>('/api/security/cicd/scan-runs')
 }
 
 export async function runArtifactTrustScan(options: ArtifactTrustScanOptions = {}) {

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import {
   AlertTriangle,
   Archive,
-  CheckCircle2,
   FolderOpen,
   GitBranch,
   Loader2,
@@ -26,7 +25,6 @@ import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -38,6 +36,11 @@ import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 
 type BusyState = DemoPresetKey | 'upload' | 'git' | 'local' | null
+
+const actionButtonClass =
+  'border-cyan-500/35 bg-cyan-950/80 text-cyan-50 shadow-sm shadow-cyan-950/20 hover:border-cyan-400/70 hover:bg-cyan-900 hover:text-white disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none'
+const fileInputClass =
+  'h-11 cursor-pointer text-sm file:mr-4 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-cyan-400/45 file:bg-cyan-700 file:px-4 file:text-sm file:font-semibold file:text-white file:shadow-sm file:transition-colors hover:file:bg-cyan-600'
 
 export function ProjectImportPage() {
   const navigate = useNavigate()
@@ -164,15 +167,9 @@ export function ProjectImportPage() {
 
       <Main fluid className='space-y-5'>
         <div className='space-y-2'>
-          <Badge variant='outline' className='rounded-md border-cyan-200 bg-cyan-50 text-cyan-700'>
-            Step 1 · Case Selection
-          </Badge>
           <h1 className='text-2xl font-semibold tracking-normal sm:text-3xl'>
             选择要调查的项目
           </h1>
-          <p className='max-w-3xl text-sm leading-6 text-muted-foreground'>
-            这一步只做一件事：确定本次供应链溯源的调查对象。选择后系统会立即完成资产预检，并进入第 2 步查看材料体检结果。
-          </p>
         </div>
 
         {apiReady === false ? (
@@ -204,10 +201,9 @@ export function ProjectImportPage() {
                   </Badge>
                 </div>
                 <CardTitle className='text-lg'>{preset.label}</CardTitle>
-                <CardDescription className='min-h-10'>{preset.description}</CardDescription>
               </CardHeader>
               <CardContent>
-                <Button className='w-full' onClick={() => void importDemo(key)} disabled={disabled}>
+                <Button className={cn('w-full', actionButtonClass)} onClick={() => void importDemo(key)} disabled={disabled}>
                   {busy === key ? <Loader2 className='animate-spin' /> : <Play />}
                   选择并预检
                 </Button>
@@ -221,9 +217,6 @@ export function ProjectImportPage() {
                 <FolderOpen className='size-5' />
               </div>
               <CardTitle className='text-lg'>自定义项目</CardTitle>
-              <CardDescription>
-                支持压缩包、Git 仓库或服务端本地目录，适合比赛自带样例和真实项目预检。
-              </CardDescription>
             </CardHeader>
             <CardContent className='space-y-4'>
               <div className='space-y-2'>
@@ -232,7 +225,6 @@ export function ProjectImportPage() {
                   id='project-name'
                   value={projectName}
                   onChange={(event) => setProjectName(event.target.value)}
-                  placeholder='可选，留空则自动识别'
                 />
               </div>
 
@@ -244,11 +236,11 @@ export function ProjectImportPage() {
                 <Input
                   type='file'
                   accept='.zip,.tar,.tar.gz,.tgz,application/zip,application/gzip'
+                  className={fileInputClass}
                   onChange={(event) => setArchive(event.target.files?.[0] ?? null)}
                 />
                 <Button
-                  variant='outline'
-                  className='mt-3 w-full'
+                  className={cn('mt-3 w-full', actionButtonClass)}
                   onClick={() => void importArchive()}
                   disabled={disabled}
                 >
@@ -271,12 +263,11 @@ export function ProjectImportPage() {
                   <Input
                     value={gitRef}
                     onChange={(event) => setGitRef(event.target.value)}
-                    placeholder='分支 / Tag，可选'
+                    placeholder='分支 / Tag'
                   />
                 </div>
                 <Button
-                  variant='outline'
-                  className='mt-3 w-full'
+                  className={cn('mt-3 w-full', actionButtonClass)}
                   onClick={() => void importGit()}
                   disabled={disabled}
                 >
@@ -296,8 +287,7 @@ export function ProjectImportPage() {
                   placeholder='C:/Users/86189/Desktop/my-project'
                 />
                 <Button
-                  variant='outline'
-                  className='mt-3 w-full'
+                  className={cn('mt-3 w-full', actionButtonClass)}
                   onClick={() => void importLocal()}
                   disabled={disabled}
                 >
@@ -309,13 +299,6 @@ export function ProjectImportPage() {
           </Card>
         </section>
 
-        <Alert className='rounded-md border-cyan-200 bg-cyan-50 text-cyan-900 dark:border-cyan-900 dark:bg-cyan-950/30 dark:text-cyan-100'>
-          <CheckCircle2 className='size-4' />
-          <AlertTitle>当前页面只负责选对象</AlertTitle>
-          <AlertDescription>
-            选择完成后会进入独立的“预检资产”页面，那里会展示文件、语言、依赖、CI 文件、缺失材料和下一步建议。
-          </AlertDescription>
-        </Alert>
       </Main>
     </div>
   )

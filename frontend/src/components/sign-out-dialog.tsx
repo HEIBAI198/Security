@@ -21,7 +21,7 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       open={open}
       onOpenChange={onOpenChange}
       title='退出登录'
-      desc='这会清除当前本地登录会话，并返回登录页面。'
+      desc='这会清除当前登录状态，并返回登录页面。'
       confirmText='退出'
       destructive
       handleConfirm={handleSignOut}

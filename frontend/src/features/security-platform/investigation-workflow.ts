@@ -161,14 +161,14 @@ export const investigationSteps: InvestigationStep[] = [
 ]
 
 export const workspaceTabTitles: Record<PlatformTab, string> = {
-  overview: '调查总览',
-  supply: '供应链风险发现',
+  overview: '研判对话',
+  supply: '供应链可达性研判',
   pipeline: 'CI/CD 构建链',
   artifact: '产物可信',
   logs: '日志印证',
   graph: '攻击链地图',
   report: '溯源报告',
-  code: '可达性佐证',
+  code: '供应链可达性研判',
   multimodal: '外部告警证据',
   copilot: '供应链溯源 Agent',
 }
