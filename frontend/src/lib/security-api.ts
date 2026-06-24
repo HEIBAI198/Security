@@ -1349,10 +1349,10 @@ export async function downloadWorkspaceEvidencePackage(workspaceId: string) {
   return response.blob()
 }
 
-export async function askSecurityAssistant(question: string) {
+export async function askSecurityAssistant(question: string, workspaceId?: string) {
   return api<SecurityAssistantResponse>('/api/security/assistant', {
     method: 'POST',
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, ...(workspaceId ? { workspaceId } : {}) }),
   })
 }
 

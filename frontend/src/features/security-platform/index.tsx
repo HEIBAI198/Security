@@ -147,6 +147,7 @@ import {
   type SecurityAssistantResponse,
   type SecurityDependency,
   type SecurityFinding,
+  type SecurityGraphRagResult,
   type SecurityLogEvent,
   type SecurityPipelineStep,
   type SecuritySeverity,
@@ -707,6 +708,7 @@ function getAssistantPayload(workspace: Pick<SecurityWorkspace, 'assistant'>): S
     default_question: assistant?.default_question || fallbackAssistant.default_question,
     answer: assistant?.answer || fallbackAssistant.answer,
     retrieval: assistant?.retrieval ?? fallbackAssistant.retrieval,
+    graph_rag: assistant?.graph_rag ?? null,
     next_actions: assistant?.next_actions?.length
       ? assistant.next_actions
       : fallbackAssistant.next_actions,
@@ -865,6 +867,7 @@ export function SecurityPlatform() {
       question: assistant.default_question,
       answer: assistant.answer,
       retrieval: assistant.retrieval,
+      graph_rag: assistant.graph_rag ?? null,
       next_actions: assistant.next_actions,
       model: 'demo-rag-security-analyst',
     })
@@ -981,7 +984,7 @@ export function SecurityPlatform() {
     if (!value) return
     setAssistantBusy(true)
     try {
-      setAssistantAnswer(await askSecurityAssistant(value))
+      setAssistantAnswer(await askSecurityAssistant(value, workspace ? getWorkspaceId(workspace) : undefined))
       setQuestion('')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '安全助手分析失败')
@@ -1488,6 +1491,7 @@ export function SecurityPlatform() {
                   question: assistant.default_question,
                   answer: assistant.answer,
                   retrieval: assistant.retrieval,
+                  graph_rag: assistant.graph_rag ?? null,
                   next_actions: assistant.next_actions,
                   model: 'demo-rag-security-analyst',
                 })
@@ -1989,6 +1993,7 @@ function AgentConversationHome({
           icon={<BrainCircuit className='size-4 text-primary' />}
         >
           <CopilotMarkdown text={answer?.answer || assistant.answer} />
+          <GraphRagGnnWorkspaceCard workspace={workspace} graphRag={answer?.graph_rag ?? assistant.graph_rag} />
           <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
           <ModuleLaunchGrid
             modules={visibleModules}
@@ -2490,6 +2495,8 @@ export function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
               tone='emerald'
             />
           </div>
+
+          <GraphRagGnnWorkspaceCard workspace={workspace} graphRag={assistant.graph_rag} />
         </div>
 
         <Card className='rounded-md'>
@@ -3288,6 +3295,7 @@ function SupplyReachabilityPanel({
             </div>
           </CardHeader>
           <CardContent>
+            <ReachabilityGnnSummary items={reachabilityItems} />
             <div className='overflow-x-auto rounded-md border border-slate-400/10'>
               <Table>
                 <TableHeader>
@@ -3319,7 +3327,10 @@ function SupplyReachabilityPanel({
                           <ReachabilityStatePill state={item.status} />
                         </TableCell>
                         <TableCell>
-                          <SeverityPill severity={item.severity} />
+                          <div className='flex flex-wrap items-center gap-1.5'>
+                            <SeverityPill severity={item.severity} />
+                            <ReachabilityGnnPill dependency={item.dependency} />
+                          </div>
                         </TableCell>
                       </TableRow>
                     )
@@ -3352,6 +3363,158 @@ type ReachabilityWorkbenchStep = {
   label: string
   value: string | number
   tone: 'hit' | 'risk' | 'gap'
+}
+
+function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }) {
+  const gnnItems = items.filter((item) => typeof item.dependency.gnn_score === 'number')
+  if (!gnnItems.length) return null
+
+  const topItems = gnnItems
+    .slice()
+    .sort((left, right) => (right.dependency.gnn_score ?? 0) - (left.dependency.gnn_score ?? 0))
+    .slice(0, 4)
+  const highCount = gnnItems.filter((item) => item.dependency.gnn_label === 'high').length
+  const elevatedCount = gnnItems.filter((item) => item.dependency.gnn_label === 'elevated').length
+  const confidences = gnnItems
+    .map((item) => item.dependency.gnn_confidence)
+    .filter((value): value is number => typeof value === 'number')
+  const avgConfidence = confidences.length
+    ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+    : null
+  const modelTypes = Array.from(new Set(gnnItems.map((item) => item.dependency.gnn_model_type).filter(Boolean)))
+
+  return (
+    <div className='mb-3 rounded-md border border-cyan-300/20 bg-cyan-400/10 p-3'>
+      <div className='flex flex-wrap items-start justify-between gap-3'>
+        <div>
+          <div className='flex items-center gap-2 text-sm font-semibold text-cyan-100'>
+            <BrainCircuit className='size-4' />
+            GNN 依赖风险证据
+          </div>
+          <div className='mt-1 text-xs text-slate-400'>
+            图神经网络对当前高风险依赖重新打分，用于补充可达性、版本和相似恶意包证据。
+          </div>
+        </div>
+        <div className='flex flex-wrap gap-1.5'>
+          {modelTypes.slice(0, 2).map((model) => (
+            <span key={model} className='rounded-full border border-cyan-300/25 bg-slate-950/55 px-2 py-0.5 text-[11px] text-cyan-100'>
+              {model}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className='mt-3 grid gap-2 text-xs sm:grid-cols-4'>
+        <ReachabilityGnnMetric label='覆盖依赖' value={`${gnnItems.length}/${items.length}`} />
+        <ReachabilityGnnMetric label='高危标签' value={String(highCount)} />
+        <ReachabilityGnnMetric label='提升风险' value={String(elevatedCount)} />
+        <ReachabilityGnnMetric label='平均置信' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
+      </div>
+
+      <div className='mt-3 grid gap-2 lg:grid-cols-4'>
+        {topItems.map((item) => (
+          <button
+            key={item.id}
+            type='button'
+            className='rounded-md border border-slate-400/10 bg-slate-950/55 p-2 text-left'
+            title={item.dependency.gnn_explanations?.join('；') || item.dependency.gnn_reasons?.join('；') || item.name}
+          >
+            <div className='flex items-center justify-between gap-2'>
+              <span className='min-w-0 truncate text-xs font-semibold text-slate-100'>{item.name}</span>
+              <ReachabilityGnnPill dependency={item.dependency} />
+            </div>
+            <div className='mt-1 truncate text-[11px] text-slate-400'>
+              {item.dependency.gnn_explanations?.[0] || item.dependency.gnn_reasons?.[0] || item.dependency.gnn_model_type || 'GNN risk signal'}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ReachabilityGnnMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className='rounded-md border border-slate-400/10 bg-slate-950/55 px-2 py-2'>
+      <div className='text-[11px] text-slate-500'>{label}</div>
+      <div className='mt-1 text-sm font-semibold tabular-nums text-cyan-100'>{value}</div>
+    </div>
+  )
+}
+
+function ReachabilityGnnPill({ dependency }: { dependency: SecurityDependency }) {
+  if (typeof dependency.gnn_score !== 'number') return null
+  const severity = dependencyGnnSeverity(dependency)
+  const tone =
+    severity === 'high'
+      ? 'border-red-300/30 bg-red-500/10 text-red-200'
+      : severity === 'medium'
+        ? 'border-amber-300/30 bg-amber-500/10 text-amber-200'
+        : 'border-emerald-300/30 bg-emerald-500/10 text-emerald-200'
+  return (
+    <span
+      className={cn('rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums', tone)}
+      title={dependency.gnn_reasons?.join('；') || dependency.gnn_model_type || 'GNN risk score'}
+    >
+      GNN {formatPercent(dependency.gnn_score)}
+    </span>
+  )
+}
+
+function ReachabilityGnnEvidence({ dependency }: { dependency: SecurityDependency }) {
+  const explanations = dependency.gnn_explanations?.length
+    ? dependency.gnn_explanations
+    : dependency.gnn_reasons ?? []
+  const similarPackages = dependency.similar_malicious_packages ?? []
+  const hasEvidence =
+    typeof dependency.gnn_score === 'number'
+    || typeof dependency.gnn_confidence === 'number'
+    || explanations.length
+    || similarPackages.length
+
+  if (!hasEvidence) return null
+
+  return (
+    <div className='rounded-md border border-cyan-300/20 bg-cyan-400/10 p-3'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <div className='text-xs font-semibold text-cyan-100'>GNN 模型证据</div>
+        {dependency.gnn_model_type ? (
+          <span className='rounded-full border border-cyan-300/25 bg-slate-950/55 px-2 py-0.5 text-[11px] text-cyan-100'>
+            {dependency.gnn_model_type}
+          </span>
+        ) : null}
+        {typeof dependency.gnn_confidence === 'number' ? (
+          <span className='rounded-full border border-slate-400/15 bg-slate-950/55 px-2 py-0.5 text-[11px] text-slate-200'>
+            置信 {formatPercent(dependency.gnn_confidence)}
+          </span>
+        ) : null}
+      </div>
+
+      {explanations.length ? (
+        <ul className='mt-2 space-y-1 text-xs leading-5 text-slate-300'>
+          {explanations.slice(0, 3).map((reason) => (
+            <li key={reason} className='flex gap-2'>
+              <span className='mt-2 size-1.5 shrink-0 rounded-full bg-cyan-300' />
+              <span>{reason}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {similarPackages.length ? (
+        <div className='mt-2 flex flex-wrap gap-1.5'>
+          {similarPackages.slice(0, 3).map((item) => (
+            <span
+              key={`${item.package}-${item.score}`}
+              className='rounded-full border border-slate-400/15 bg-slate-950/55 px-2 py-0.5 text-[11px] text-slate-300'
+            >
+              {item.package || 'similar'} {typeof item.score === 'number' ? formatPercent(item.score) : ''}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 function DependencySelectorRail({
@@ -3627,6 +3790,7 @@ function DependencyDetailWorkbench({
           <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
             风险 {item?.riskScore ?? 0}
           </span>
+          {item ? <ReachabilityGnnPill dependency={item.dependency} /> : null}
         </div>
         <div className='grid gap-2 text-sm'>
           <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
@@ -3635,6 +3799,7 @@ function DependencyDetailWorkbench({
           <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} />
           <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} />
         </div>
+        {item ? <ReachabilityGnnEvidence dependency={item.dependency} /> : null}
         {(item?.advisories.length ?? 0) > 0 ? (
           <Collapsible>
             <CollapsibleTrigger asChild>
@@ -5519,6 +5684,7 @@ export function SupplyChainPanel({
                   日志痕迹 {reachabilitySummary?.runtime_trace_dependencies ?? 0}
                 </Badge>
               </div>
+              <DependencyGnnSummary dependencies={dependencies} />
             </div>
           ) : (
             <Alert className='rounded-md'>
@@ -5674,6 +5840,7 @@ export function SupplyChainPanel({
                   </TableCell>
                   <TableCell>
                     <RiskBar value={dependency.risk} />
+                    <DependencyGnnBadge dependency={dependency} />
                   </TableCell>
                 </TableRow>
               )) : (
@@ -5697,7 +5864,10 @@ export function SupplyChainPanel({
       </CardHeader>
         <CardContent className='space-y-4'>
           {selectedDependency ? (
-            <DependencyVexRecommendation dependency={selectedDependency} />
+            <>
+              <DependencyGnnEvidence dependency={selectedDependency} />
+              <DependencyVexRecommendation dependency={selectedDependency} />
+            </>
           ) : null}
           {supplyFindings.map((finding) => (
             <Alert key={finding.id} className='rounded-md'>
@@ -5736,6 +5906,188 @@ function DependencyVexBadge({ dependency }: { dependency: SecurityDependency }) 
   return (
     <Badge variant='outline' className={cn('rounded-md', vexStatusClass(status))}>
       {vexStatusLabel(status)}
+    </Badge>
+  )
+}
+
+function GraphRagGnnWorkspaceCard({
+  workspace,
+  graphRag,
+}: {
+  workspace: SecurityWorkspace
+  graphRag?: SecurityGraphRagResult | null
+}) {
+  const graph = workspace.graph
+  const dependencies = workspace.dependencies ?? []
+  const gnnDependencies = dependenciesWithGnn(dependencies)
+  const topDependencies = topGnnDependencies(dependencies, 3)
+  const modelTypes = Array.from(new Set(gnnDependencies.map((dependency) => dependency.gnn_model_type).filter(Boolean)))
+  const graphNodeCount = graph?.nodes?.length ?? 0
+  const graphEdgeCount = graph?.edges?.length ?? 0
+  const graphPathCount = graph?.attack_paths?.length ?? 0
+  const channelEntries = Object.entries(graphRag?.channels ?? {}).filter(([, hits]) => hits.length)
+
+  if (!graphNodeCount && !gnnDependencies.length) {
+    return null
+  }
+
+  return (
+    <Card className='rounded-md border-cyan-200/70 bg-cyan-50/40 dark:border-cyan-900/70 dark:bg-cyan-950/15'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <BrainCircuit className='size-4 text-cyan-600' />
+          GraphRAG + GNN 智能证据
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='grid grid-cols-2 gap-2 text-xs sm:grid-cols-4'>
+          <InfoPill label='图谱节点' value={String(graphNodeCount)} />
+          <InfoPill label='图谱边' value={String(graphEdgeCount)} />
+          <InfoPill label='攻击路径' value={String(graphPathCount)} />
+          <InfoPill label='GNN 覆盖' value={`${gnnDependencies.length}/${dependencies.length || 0}`} />
+        </div>
+
+        <div className='flex flex-wrap gap-1'>
+          {modelTypes.slice(0, 3).map((model) => (
+            <Badge key={model} variant='outline' className='rounded-md bg-background text-[10px]'>
+              {model}
+            </Badge>
+          ))}
+          {channelEntries.map(([channel, hits]) => (
+            <Badge key={channel} variant='outline' className='rounded-md bg-background text-[10px]'>
+              {graphRagChannelLabel(channel)} {hits.length}
+            </Badge>
+          ))}
+        </div>
+
+        {topDependencies.length ? (
+          <div className='space-y-2'>
+            {topDependencies.map((dependency) => (
+              <div key={dependencyKey(dependency)} className='rounded-md border bg-background/80 p-2'>
+                <div className='flex items-start justify-between gap-2'>
+                  <div className='min-w-0'>
+                    <div className='truncate text-sm font-medium'>{dependency.name}</div>
+                    <div className='text-[11px] text-muted-foreground'>
+                      {dependency.ecosystem} · {dependency.version || '-'}
+                    </div>
+                  </div>
+                  <Badge
+                    variant='outline'
+                    className={cn('shrink-0 rounded-md text-[10px]', severityClasses[dependencyGnnSeverity(dependency)])}
+                  >
+                    GNN {formatPercent(dependency.gnn_score ?? 0)}
+                  </Badge>
+                </div>
+                {dependency.gnn_explanations?.length ? (
+                  <div className='mt-1 line-clamp-1 text-xs text-muted-foreground'>
+                    {dependency.gnn_explanations[0]}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependency[] }) {
+  const gnnDependencies = dependenciesWithGnn(dependencies)
+  if (!gnnDependencies.length) {
+    return null
+  }
+  const highCount = gnnDependencies.filter((dependency) => dependency.gnn_label === 'high').length
+  const elevatedCount = gnnDependencies.filter((dependency) => dependency.gnn_label === 'elevated').length
+  const confidences = gnnDependencies
+    .map((dependency) => dependency.gnn_confidence)
+    .filter((value): value is number => typeof value === 'number')
+  const avgConfidence = confidences.length
+    ? confidences.reduce((total, value) => total + value, 0) / confidences.length
+    : null
+  const modelTypes = Array.from(new Set(gnnDependencies.map((dependency) => dependency.gnn_model_type).filter(Boolean)))
+  const topDependencies = topGnnDependencies(dependencies, 4)
+
+  return (
+    <div className='rounded-md border border-cyan-200/70 bg-cyan-50/45 p-3 dark:border-cyan-900/70 dark:bg-cyan-950/15'>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <div className='flex items-center gap-2 text-sm font-medium'>
+          <BrainCircuit className='size-4 text-cyan-600' />
+          GNN 依赖风险证据
+        </div>
+        <div className='flex flex-wrap gap-1'>
+          {modelTypes.slice(0, 2).map((model) => (
+            <Badge key={model} variant='outline' className='rounded-md bg-background text-[10px]'>
+              {model}
+            </Badge>
+          ))}
+        </div>
+      </div>
+
+      <div className='mt-3 grid gap-2 text-xs sm:grid-cols-4'>
+        <InfoPill label='覆盖依赖' value={`${gnnDependencies.length}/${dependencies.length}`} />
+        <InfoPill label='高危标签' value={String(highCount)} />
+        <InfoPill label='提升风险' value={String(elevatedCount)} />
+        <InfoPill label='平均置信' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
+      </div>
+
+      <div className='mt-3 grid gap-2 md:grid-cols-2'>
+        {topDependencies.map((dependency) => (
+          <div key={dependencyKey(dependency)} className='rounded-md border bg-background/80 p-2'>
+            <div className='flex items-center justify-between gap-2'>
+              <div className='min-w-0 truncate text-sm font-medium'>{dependency.name}</div>
+              <Badge
+                variant='outline'
+                className={cn('shrink-0 rounded-md text-[10px]', severityClasses[dependencyGnnSeverity(dependency)])}
+              >
+                {formatPercent(dependency.gnn_score ?? 0)}
+              </Badge>
+            </div>
+            <div className='mt-1 truncate text-[11px] text-muted-foreground'>
+              {dependency.gnn_explanations?.[0] || dependency.gnn_reasons?.[0] || dependency.gnn_model_type || 'GNN risk signal'}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function dependenciesWithGnn(dependencies: SecurityDependency[]) {
+  return dependencies.filter((dependency) => typeof dependency.gnn_score === 'number')
+}
+
+function topGnnDependencies(dependencies: SecurityDependency[], limit: number) {
+  return dependenciesWithGnn(dependencies)
+    .slice()
+    .sort((left, right) => (right.gnn_score ?? 0) - (left.gnn_score ?? 0))
+    .slice(0, limit)
+}
+
+function dependencyGnnSeverity(dependency: SecurityDependency): SecuritySeverity {
+  if (dependency.gnn_label === 'high') return 'high'
+  if (dependency.gnn_label === 'elevated') return 'medium'
+  return 'low'
+}
+
+function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) {
+  if (typeof dependency.gnn_score !== 'number') {
+    return null
+  }
+  const score = Math.round(dependency.gnn_score * 100)
+  const tone =
+    dependency.gnn_label === 'high'
+      ? severityClasses.high
+      : dependency.gnn_label === 'elevated'
+        ? severityClasses.medium
+        : severityClasses.low
+  return (
+    <Badge
+      variant='outline'
+      className={cn('mt-1 w-fit rounded-md text-[10px]', tone)}
+      title={dependency.gnn_reasons?.join('；') || 'Graph risk model score'}
+    >
+      GNN {score}%
     </Badge>
   )
 }
@@ -5838,6 +6190,61 @@ function DependencyVexRecommendation({ dependency }: { dependency: SecurityDepen
           ) : null}
         </CollapsibleContent>
       </Collapsible>
+    </div>
+  )
+}
+
+function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency }) {
+  const explanations = dependency.gnn_explanations?.length
+    ? dependency.gnn_explanations
+    : dependency.gnn_reasons ?? []
+  const similarPackages = dependency.similar_malicious_packages ?? []
+  const hasModelEvidence =
+    dependency.gnn_model_type
+    || typeof dependency.gnn_confidence === 'number'
+    || explanations.length
+    || similarPackages.length
+
+  if (!hasModelEvidence) {
+    return null
+  }
+
+  return (
+    <div className='mt-3 rounded-md border bg-cyan-50/45 p-3 dark:bg-cyan-950/15'>
+      <div className='flex flex-wrap items-center gap-2'>
+        <div className='text-xs font-medium'>GNN 模型证据</div>
+        {dependency.gnn_model_type ? (
+          <Badge variant='outline' className='rounded-md text-[10px]'>
+            {dependency.gnn_model_type}
+          </Badge>
+        ) : null}
+        {typeof dependency.gnn_confidence === 'number' ? (
+          <Badge variant='outline' className='rounded-md bg-background text-[10px]'>
+            置信 {formatPercent(dependency.gnn_confidence)}
+          </Badge>
+        ) : null}
+      </div>
+
+      {explanations.length ? (
+        <ul className='mt-2 space-y-1 text-xs leading-5 text-muted-foreground'>
+          {explanations.slice(0, 4).map((reason) => (
+            <li key={reason} className='flex gap-2'>
+              <span className='mt-2 size-1.5 shrink-0 rounded-full bg-cyan-500' />
+              <span>{reason}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {similarPackages.length ? (
+        <div className='mt-2 flex flex-wrap gap-1'>
+          {similarPackages.slice(0, 4).map((item) => (
+            <Badge key={`${item.package}-${item.score}`} variant='outline' className='rounded-md bg-background text-[10px]'>
+              {item.package || 'similar'} {typeof item.score === 'number' ? formatPercent(item.score) : ''}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -12819,6 +13226,7 @@ function CopilotPanel({
   const retrieval = answer?.retrieval?.length ? answer.retrieval : assistant.retrieval
   const nextActions = answer?.next_actions?.length ? answer.next_actions : assistant.next_actions
   const modelName = answer?.model || 'demo-rag-security-analyst'
+  const graphRag = answer?.graph_rag ?? assistant.graph_rag ?? null
   const hasDeepseek = modelName.toLowerCase().includes('deepseek')
   const promptSuggestions = [
     '解释本次 Agent 为什么判定存在供应链攻击风险',
@@ -12933,6 +13341,8 @@ function CopilotPanel({
       </Card>
 
       <div className='space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100svh-2rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain xl:[scrollbar-gutter:stable]'>
+        <GraphRagEvidenceCard graphRag={graphRag} />
+
         <Card className='rounded-md'>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-base'>
@@ -13022,6 +13432,234 @@ function CopilotMessage({
       ) : null}
     </div>
   )
+}
+
+function GraphRagEvidenceCard({ graphRag }: { graphRag?: SecurityGraphRagResult | null }) {
+  if (!graphRag) return null
+
+  const topNodes = graphRag.top_nodes?.slice(0, 3) ?? []
+  const topEdges = graphRag.top_edges?.slice(0, 3) ?? []
+  const topPaths = graphRag.top_attack_paths?.slice(0, 2) ?? []
+  const channelEntries = Object.entries(graphRag.channels ?? {}).filter(([, hits]) => hits.length)
+  const evidenceRows = graphRag.evidence_table?.slice(0, 4) ?? []
+  const retrievalTrace = graphRag.retrieval_trace?.slice(0, 4) ?? []
+  const missingEvidence = graphRag.missing_evidence?.slice(0, 4) ?? []
+  const explanation = graphRag.explanation
+  const ranking = explanation?.ranking
+
+  return (
+    <Card className='rounded-md border-cyan-200/70 bg-cyan-50/40 dark:border-cyan-900/70 dark:bg-cyan-950/15'>
+      <CardHeader>
+        <CardTitle className='flex items-center gap-2 text-base'>
+          <Network className='size-4 text-cyan-600' />
+          GraphRAG 证据
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <div className='grid grid-cols-2 gap-2 text-xs'>
+          <InfoPill label='问题' value={graphRag.query || '-'} />
+          <InfoPill label='意图' value={graphRag.intent || String(explanation?.intent || 'general')} />
+          <InfoPill label='种子' value={String(explanation?.seed_count ?? graphRag.seed_node_ids?.length ?? 0)} />
+          <InfoPill label='跳数' value={`${explanation?.hop_limit ?? 2} hop`} />
+          <InfoPill label='扩展' value={String(graphRag.expanded_node_ids?.length ?? 0)} />
+          <InfoPill label='排序' value={ranking || '-'} />
+          <InfoPill label='上下文' value={graphRag.context ? '已生成' : '-'} />
+        </div>
+
+        {channelEntries.length ? (
+          <div className='flex flex-wrap gap-1'>
+            {channelEntries.map(([channel, hits]) => (
+              <Badge key={channel} variant='outline' className='rounded-md bg-background text-[10px]'>
+                {graphRagChannelLabel(channel)} {hits.length}
+              </Badge>
+            ))}
+          </div>
+        ) : null}
+
+        {topNodes.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium'>Top 证据节点</div>
+            {topNodes.map((node) => {
+              const rawProps = graphNodeRawProperties(node)
+              const gnnScore = typeof rawProps.gnn_score === 'number' ? Math.round(rawProps.gnn_score * 100) : null
+              const risk = normalizeGraphNodeRisk(node.risk)
+              return (
+                <div key={node.id} className='rounded-md border bg-background/75 p-2'>
+                  <div className='flex items-start justify-between gap-2'>
+                    <div className='min-w-0'>
+                      <div className='truncate text-sm font-medium'>{node.label || node.id}</div>
+                      <div className='text-[11px] text-muted-foreground'>{node.type}</div>
+                    </div>
+                    <div className='flex shrink-0 gap-1'>
+                      <Badge variant='outline' className={cn('rounded-md text-[10px]', severityClasses[risk])}>
+                        {severityLabel(risk)}
+                      </Badge>
+                      {gnnScore !== null ? (
+                        <Badge variant='outline' className='rounded-md bg-cyan-50 text-[10px] text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
+                          GNN {gnnScore}%
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                  {node.description ? (
+                    <div className='mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground'>{node.description}</div>
+                  ) : null}
+                  <GraphRagReasonList reasons={node.why_selected} />
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+
+        {topPaths.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium'>候选攻击路径</div>
+            {topPaths.map((path) => (
+              <div key={path.id} className='rounded-md border bg-background/75 p-2 text-xs leading-5'>
+                <div className='font-medium'>{path.title}</div>
+                <div className='text-muted-foreground'>
+                  分数 {path.score} · {path.description || path.conclusion || '已与当前问题相关'}
+                </div>
+                <GraphRagReasonList reasons={path.why_selected} />
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {evidenceRows.length ? (
+          <div className='space-y-1.5'>
+            <div className='text-xs font-medium'>证据表</div>
+            {evidenceRows.map((row, index) => (
+              <div key={`${row.kind}-${row.id}-${index}`} className='rounded-md bg-background/75 px-2 py-1.5 text-xs leading-5'>
+                <span className='font-medium'>{row.kind || 'evidence'}</span>
+                <span className='text-muted-foreground'> · {row.summary || row.id || row.source || '-'}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {topEdges.length ? (
+          <div className='space-y-2'>
+            <div className='text-xs font-medium'>Top 关联边</div>
+            {topEdges.map((edge) => (
+              <div key={edge.id} className='rounded-md border bg-background/75 px-2 py-2 text-xs leading-5'>
+                <div className='flex flex-wrap items-center justify-between gap-2'>
+                  <div className='font-medium'>
+                    {edge.source} → {edge.target}
+                  </div>
+                  <Badge variant='outline' className='rounded-md bg-background text-[10px]'>
+                    {edge.type}
+                  </Badge>
+                </div>
+                <div className='mt-1 text-muted-foreground'>
+                  {edge.label || edge.reason || 'GraphRAG selected edge'}
+                </div>
+                <GraphRagReasonList reasons={edge.why_selected} />
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {graphRag.context ? (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' size='sm' className='w-full justify-between rounded-md'>
+                GraphRAG 上下文
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-2 rounded-md border bg-background/75 p-3 text-xs leading-5 text-muted-foreground'>
+              <pre className='whitespace-pre-wrap break-words font-mono'>{graphRag.context}</pre>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+
+        {retrievalTrace.length ? (
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' size='sm' className='w-full justify-between rounded-md'>
+                召回轨迹
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-2 space-y-1.5'>
+              {retrievalTrace.map((item, index) => (
+                <div key={`${item.stage || 'trace'}-${index}`} className='rounded-md bg-background/75 px-2 py-1.5 text-xs leading-5'>
+                  <span className='font-medium'>{item.stage || `stage ${index + 1}`}</span>
+                  <span className='text-muted-foreground'> · {formatGraphRagTrace(item)}</span>
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+
+        {missingEvidence.length ? (
+          <div className='rounded-md border border-amber-200 bg-amber-50/70 p-2 text-xs leading-5 text-amber-800 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-200'>
+            <div className='font-medium'>缺失证据</div>
+            <ul className='mt-1 space-y-1'>
+              {missingEvidence.map((item, index) => (
+                <li key={`${item.kind}-${index}`}>{item.kind || 'evidence'}：{item.reason || '需要继续补证'}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  )
+}
+
+function GraphRagReasonList({ reasons }: { reasons?: string[] }) {
+  if (!reasons?.length) {
+    return null
+  }
+  return (
+    <ul className='mt-2 space-y-1 text-[11px] leading-5 text-muted-foreground'>
+      {reasons.slice(0, 3).map((reason) => (
+        <li key={reason} className='flex gap-2'>
+          <span className='mt-2 size-1 shrink-0 rounded-full bg-cyan-500' />
+          <span>{reason}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function graphNodeRawProperties(node: { properties?: Record<string, unknown> }) {
+  return node.properties ?? {}
+}
+
+function normalizeGraphNodeRisk(value?: string): SecuritySeverity {
+  if (value === 'critical' || value === 'high' || value === 'medium' || value === 'low') {
+    return value
+  }
+  return 'medium'
+}
+
+function graphRagChannelLabel(channel: string) {
+  const labels: Record<string, string> = {
+    keyword: '关键词',
+    risk: '风险',
+    attack_path: '攻击路径',
+    embedding: '向量召回',
+  }
+  return labels[channel] || channel
+}
+
+function formatGraphRagTrace(item: Record<string, unknown>) {
+  const details = Object.entries(item)
+    .filter(([key]) => key !== 'stage')
+    .map(([key, value]) => `${key}=${formatGraphRagValue(value)}`)
+  return details.length ? details.join('，') : '完成'
+}
+
+function formatGraphRagValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.slice(0, 3).join(', ')
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value)
+  }
+  return String(value ?? '-')
 }
 
 function CopilotMarkdown({ text }: { text: string }) {
@@ -13587,6 +14225,10 @@ function formatBytes(value: number) {
 
 function formatTimestamp(value?: string | null) {
   return String(value || '').slice(0, 19).replace('T', ' ') || '-'
+}
+
+function formatPercent(value: number) {
+  return `${Math.round(value * 100)}%`
 }
 
 function scannerStateLabel(state: string | undefined, available: boolean) {

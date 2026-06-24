@@ -119,6 +119,8 @@ AGENT_JOB_LOCK = Lock()
 
 class AssistantQuestion(BaseModel):
     question: str = Field(min_length=1, max_length=600)
+    workspaceId: str | None = Field(default=None, max_length=128)
+    workspace_id: str | None = Field(default=None, max_length=128)
 
 
 class IgnoreFindingRequest(BaseModel):
@@ -3108,7 +3110,8 @@ async def code_audit_baseline(payload: BaselineRequest) -> dict[str, Any]:
 @router.post("/assistant")
 async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
     question = payload.question.strip()
-    workspace = build_workspace_payload()
+    workspace_id = payload.workspaceId or payload.workspace_id
+    workspace = workspace_or_current(workspace_id) if workspace_id else build_workspace_payload()
     base = workspace["assistant"]
     graph_rag_result: dict[str, Any] | None = None
     if isinstance(workspace.get("graph"), dict):
