@@ -68,6 +68,7 @@ from ..dependency_audit import (
     serialize_dependency,
     serialize_dependency_audit,
 )
+from ..evidence_discovery import infer_case_evidence_paths
 from ..log_audit import (
     LogAuditResult,
     LogFileInput,
@@ -2244,6 +2245,7 @@ async def security_workspace_scan_suite(workspace_id: str, payload: ScanSuiteReq
     if import_id is None:
         existing = workspace_or_current(workspace_id)
         import_id = existing.get("workspace", {}).get("importId") or existing.get("import", {}).get("importId")
+    payload = apply_scan_suite_inferred_evidence(payload, import_id)
 
     if payload.include_code_audit:
         try:
@@ -2311,6 +2313,26 @@ async def security_workspace_scan_suite(workspace_id: str, payload: ScanSuiteReq
     workspace["scanSuite"] = {"status": "partial" if errors else "completed", "errors": errors}
     save_workspace_snapshot(workspace, workspace_id=workspace_id, module_key="scan_suite", module_payload=workspace["scanSuite"])
     return workspace
+
+
+def apply_scan_suite_inferred_evidence(payload: ScanSuiteRequest, import_id: str | None) -> ScanSuiteRequest:
+    target_path = ""
+    if import_id:
+        try:
+            target_path = str(load_import(import_id).get("sourcePath") or "")
+        except Exception:
+            target_path = ""
+    inferred = infer_case_evidence_paths(target_path)
+    updates: dict[str, object] = {}
+    if not payload.artifact_path and isinstance(inferred.get("artifact_path"), str):
+        updates["artifact_path"] = inferred["artifact_path"]
+    if not payload.attestation_path and isinstance(inferred.get("attestation_path"), str):
+        updates["attestation_path"] = inferred["attestation_path"]
+    if not payload.log_paths and isinstance(inferred.get("log_paths"), list):
+        updates["log_paths"] = inferred["log_paths"]
+    if not updates:
+        return payload
+    return payload.model_copy(update=updates)
 
 
 def store_agent_job(run_id: str, payload: dict[str, Any]) -> None:

@@ -186,6 +186,7 @@ class CICDAuditRequest(BaseModel):
 
     import_id: str | None = Field(default=None, alias="importId")
     target_path: str | None = Field(default=None, alias="targetPath")
+    allow_external: bool = Field(default=False, alias="allowExternal")
     max_workflows: int = Field(default=MAX_WORKFLOWS, alias="maxWorkflows", ge=1, le=1000)
     include_zizmor: bool = Field(default=True, alias="includeZizmor")
     include_actionlint: bool = Field(default=True, alias="includeActionlint")
@@ -359,7 +360,7 @@ def resolve_cicd_target(request: CICDAuditRequest) -> tuple[Path, dict[str, Any]
         return import_cicd_target(request.import_id)
 
     if request.target_path:
-        return path_cicd_target(request.target_path)
+        return path_cicd_target(request.target_path, allow_external=request.allow_external)
 
     latest_import = load_latest_import()
     if latest_import is not None:
@@ -390,7 +391,7 @@ def import_cicd_target(import_id: str) -> tuple[Path, dict[str, Any]]:
     }
 
 
-def path_cicd_target(target_path: str) -> tuple[Path, dict[str, Any]]:
+def path_cicd_target(target_path: str, *, allow_external: bool = False) -> tuple[Path, dict[str, Any]]:
     candidate = Path(target_path).expanduser()
     if not candidate.is_absolute():
         candidate = ROOT / candidate
@@ -398,7 +399,7 @@ def path_cicd_target(target_path: str) -> tuple[Path, dict[str, Any]]:
 
     if not candidate.exists():
         raise ValueError(f"CI/CD scan target does not exist: {candidate}")
-    if not is_within_root(candidate):
+    if not allow_external and not is_within_root(candidate):
         raise ValueError(f"CI/CD scan target must stay inside project root: {ROOT}")
     return candidate, {"sourceType": "path", "projectName": candidate.name}
 

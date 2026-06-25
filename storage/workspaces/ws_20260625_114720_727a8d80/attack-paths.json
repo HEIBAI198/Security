@@ -1,0 +1,319 @@
+[
+  {
+    "id": "attack-path:70c784f3c783e93c",
+    "title": "证据可串成供应链投毒到运行期异常的攻击路径",
+    "category": "supply-chain-compromise",
+    "severity": "critical",
+    "score": 100,
+    "description": "高危依赖、CI/CD 构建关系、产物部署和运行期异常日志位于同一条可达路径上。",
+    "conclusion": "能串成一次高度可信的真实攻击路径：入口、构建、产物、运行期行为连续可达，综合置信度 83%。",
+    "verdict": "likely-real-attack-path",
+    "confidence": 0.83,
+    "entry_node_id": "asset:1cb9102423119adc",
+    "target_node_id": "asset:26b09ac35db486ff",
+    "node_ids": [
+      "asset:1cb9102423119adc",
+      "asset:259b0a5cff917f21",
+      "asset:3e58ab763cb02543",
+      "asset:6d09229f7476f39f",
+      "asset:26b09ac35db486ff",
+      "attack:supply-chain-compromise"
+    ],
+    "edge_ids": [
+      "edge:8776f635b017a27f",
+      "edge:5f53c3147ca4b67c",
+      "edge:23c9bab259d5e0df",
+      "edge:1897f04008794cc9"
+    ],
+    "evidence_ids": [
+      "evidence:1911354b1cce6b21",
+      "evidence:18418232d69a9fc0",
+      "evidence:be07954123128bd0"
+    ],
+    "recommendation": "隔离高危依赖，使用干净 runner 重新构建，校验产物哈希，并排查运行期外联。",
+    "path_steps": [
+      {
+        "index": 1,
+        "source": "npm:axios@1.6.8",
+        "source_type": "DependencyPackage",
+        "target": ".github/workflows/desktop-release.yml",
+        "target_type": "CIStep",
+        "relationship": "可进入构建",
+        "edge_type": "DEPENDENCY_REACHES_BUILD",
+        "confidence": 0.72,
+        "why_abusable": "A poisoned dependency can run install-time behavior or influence generated artifacts.",
+        "trust_basis": "Not trusted without provenance tying materials to the produced artifact.",
+        "model": "GUAC",
+        "evidence_ids": [
+          "evidence:1911354b1cce6b21",
+          "evidence:18418232d69a9fc0"
+        ]
+      },
+      {
+        "index": 2,
+        "source": ".github/workflows/desktop-release.yml",
+        "source_type": "CIStep",
+        "target": "3cx-desktop-replay build",
+        "target_type": "BuildArtifact",
+        "relationship": "生成产物",
+        "edge_type": "STEP_PRODUCES_ARTIFACT",
+        "confidence": 0.78,
+        "why_abusable": "A compromised step or builder can produce a modified artifact.",
+        "trust_basis": "Needs provenance/attestation with subject digest, builder identity, and materials.",
+        "model": "SLSA/in-toto",
+        "evidence_ids": [
+          "evidence:18418232d69a9fc0"
+        ]
+      },
+      {
+        "index": 3,
+        "source": "3cx-desktop-replay build",
+        "source_type": "BuildArtifact",
+        "target": "3cx-desktop-replay runtime",
+        "target_type": "RuntimeService",
+        "relationship": "部署为",
+        "edge_type": "ARTIFACT_DEPLOYED_AS",
+        "confidence": 0.82,
+        "why_abusable": "Workspace runtime metadata links the build artifact to the deployed service.",
+        "trust_basis": "SLSA/in-toto"
+      },
+      {
+        "index": 4,
+        "source": "3cx-desktop-replay runtime",
+        "source_type": "RuntimeService",
+        "target": "egress",
+        "target_type": "LogEvent",
+        "relationship": "产生日志",
+        "edge_type": "SERVICE_EMITS_LOG",
+        "confidence": 0.84,
+        "why_abusable": "Runtime logs show whether the build-time risk manifested after deployment.",
+        "trust_basis": "Stronger when timestamps align with deployment and multiple log sources agree.",
+        "model": "Runtime evidence",
+        "evidence_ids": [
+          "evidence:be07954123128bd0"
+        ]
+      },
+      {
+        "index": 5,
+        "source": "egress",
+        "source_type": "LogEvent",
+        "target": "供应链投毒阶段",
+        "target_type": "AttackStage",
+        "relationship": "关联",
+        "confidence": 0.5,
+        "trust_basis": "NormalizedLogEvent"
+      }
+    ],
+    "evidence_summary": [
+      {
+        "id": "evidence:1911354b1cce6b21",
+        "kind": "sbom-component-risk",
+        "title": "npm:axios@1.6.8",
+        "detail": "OSV: GHSA-35jp-ww65-95wh; OSV: GHSA-3g43-6gmg-66jw; OSV: GHSA-3p68-rc4w-qgx5; OSV: GHSA-3w6x-2g7m-8v23; OSV: GHSA-43fc-jf86-j433; OSV: GHSA-445q-vr5w-6q77; OSV: GHSA-4hjh-wcwx-x...",
+        "source": "dependency_audit",
+        "source_model": "CycloneDX",
+        "time": "2026-06-25 11:47"
+      },
+      {
+        "id": "evidence:18418232d69a9fc0",
+        "kind": "workflow-risk-finding",
+        "title": "GitHub Token 权限过宽",
+        "detail": "permissions: write-all 会给 GITHUB_TOKEN 授予全部写权限，扩大凭据泄露或工作流劫持后的影响面。 Evidence: permissions: write-all",
+        "source": "cicd_audit",
+        "source_model": "SARIF",
+        "time": "2026-06-25 11:48"
+      },
+      {
+        "id": "evidence:be07954123128bd0",
+        "kind": "runtime-log-finding",
+        "title": "未知域名外联",
+        "detail": "checkout-api -> 185.199.108.153:443",
+        "source": "workspace",
+        "source_model": "NormalizedLogEvent",
+        "time": "2026-05-30 03:07:04",
+        "confidence": 0.91
+      }
+    ],
+    "trust_chain": [
+      {
+        "model": "GUAC",
+        "claim": "软件树中存在可达依赖节点",
+        "subject": "npm:axios@1.6.8",
+        "status": "observed",
+        "basis": "CycloneDX"
+      },
+      {
+        "model": "in-toto",
+        "claim": "构建步骤将 material 转换为 product",
+        "subject": ".github/workflows/desktop-release.yml",
+        "status": "needs-attestation",
+        "basis": "workflow evidence"
+      },
+      {
+        "model": "SLSA",
+        "claim": "产物需要 subject digest、builder identity 和 materials provenance",
+        "subject": "3cx-desktop-replay build",
+        "status": "gap",
+        "basis": "SLSA/in-toto style product node connecting CI steps to runtime deployment."
+      },
+      {
+        "model": "Runtime evidence",
+        "claim": "运行期行为证明风险可能已经触发",
+        "subject": "egress",
+        "status": "observed",
+        "basis": "NormalizedLogEvent"
+      }
+    ],
+    "checks": [],
+    "gaps": [],
+    "choke_points": [
+      {
+        "node_id": "asset:1cb9102423119adc",
+        "label": "npm:axios@1.6.8",
+        "action": "固定私有源、锁定版本并清理缓存包。"
+      },
+      {
+        "node_id": "asset:259b0a5cff917f21",
+        "label": ".github/workflows/desktop-release.yml",
+        "action": "收敛权限、固定 Action 到 commit SHA，并使用干净 runner。"
+      },
+      {
+        "node_id": "asset:3e58ab763cb02543",
+        "label": "3cx-desktop-replay build",
+        "action": "重新构建并校验产物哈希/provenance。"
+      },
+      {
+        "node_id": "asset:6d09229f7476f39f",
+        "label": "3cx-desktop-replay runtime",
+        "action": "回滚或隔离服务实例，保留日志和镜像证据。"
+      },
+      {
+        "node_id": "asset:26b09ac35db486ff",
+        "label": "egress",
+        "action": "封禁相关来源/目的地址并扩大同时间窗排查。"
+      }
+    ],
+    "mappings": [
+      {
+        "framework": "MITRE ATT&CK",
+        "technique": "T1195",
+        "name": "Supply Chain Compromise"
+      }
+    ],
+    "references": [
+      "GUAC",
+      "SLSA",
+      "in-toto",
+      "BloodHound CE",
+      "MITRE ATT&CK STIX"
+    ]
+  },
+  {
+    "id": "attack-path:027c0b3aa1bcd7eb",
+    "title": "证据可串成构建链路完整性受损路径",
+    "category": "build-integrity-risk",
+    "severity": "high",
+    "score": 95,
+    "description": "CI/CD 风险通过 SLSA/in-toto 的 step -> product 关系影响产物可信度，并继续到运行资产。",
+    "conclusion": "能串成构建完整性风险路径，但还需要 provenance/attestation 才能证明产物确被篡改，综合置信度 64%。",
+    "verdict": "provenance-risk-path",
+    "confidence": 0.64,
+    "entry_node_id": "asset:33ff0644a4c50844",
+    "target_node_id": "asset:6d09229f7476f39f",
+    "node_ids": [
+      "asset:33ff0644a4c50844",
+      "asset:3e58ab763cb02543",
+      "asset:6d09229f7476f39f",
+      "attack:build-system-compromise"
+    ],
+    "edge_ids": [
+      "edge:23c9bab259d5e0df"
+    ],
+    "evidence_ids": [],
+    "recommendation": "收敛 workflow 权限，第三方 Action 固定到 commit SHA，并为产物增加 provenance/attestation。",
+    "path_steps": [
+      {
+        "index": 1,
+        "source": ".github/workflows/desktop-release.yml",
+        "source_type": "CIStep",
+        "target": "3cx-desktop-replay build",
+        "target_type": "BuildArtifact",
+        "relationship": "关联",
+        "confidence": 0.5,
+        "trust_basis": "WorkspaceSummary"
+      },
+      {
+        "index": 2,
+        "source": "3cx-desktop-replay build",
+        "source_type": "BuildArtifact",
+        "target": "3cx-desktop-replay runtime",
+        "target_type": "RuntimeService",
+        "relationship": "部署为",
+        "edge_type": "ARTIFACT_DEPLOYED_AS",
+        "confidence": 0.82,
+        "why_abusable": "Workspace runtime metadata links the build artifact to the deployed service.",
+        "trust_basis": "SLSA/in-toto"
+      },
+      {
+        "index": 3,
+        "source": "3cx-desktop-replay runtime",
+        "source_type": "RuntimeService",
+        "target": "构建链路风险阶段",
+        "target_type": "AttackStage",
+        "relationship": "关联",
+        "confidence": 0.5,
+        "trust_basis": "Runtime"
+      }
+    ],
+    "evidence_summary": [],
+    "trust_chain": [
+      {
+        "model": "in-toto",
+        "claim": "构建步骤将 material 转换为 product",
+        "subject": ".github/workflows/desktop-release.yml",
+        "status": "needs-attestation",
+        "basis": "workflow evidence"
+      },
+      {
+        "model": "SLSA",
+        "claim": "产物需要 subject digest、builder identity 和 materials provenance",
+        "subject": "3cx-desktop-replay build",
+        "status": "gap",
+        "basis": "SLSA/in-toto style product node connecting CI steps to runtime deployment."
+      }
+    ],
+    "checks": [],
+    "gaps": [
+      "路径节点没有关联证据片段，需要补充扫描结果或日志。"
+    ],
+    "choke_points": [
+      {
+        "node_id": "asset:33ff0644a4c50844",
+        "label": ".github/workflows/desktop-release.yml",
+        "action": "收敛权限、固定 Action 到 commit SHA，并使用干净 runner。"
+      },
+      {
+        "node_id": "asset:3e58ab763cb02543",
+        "label": "3cx-desktop-replay build",
+        "action": "重新构建并校验产物哈希/provenance。"
+      },
+      {
+        "node_id": "asset:6d09229f7476f39f",
+        "label": "3cx-desktop-replay runtime",
+        "action": "回滚或隔离服务实例，保留日志和镜像证据。"
+      }
+    ],
+    "mappings": [
+      {
+        "framework": "SLSA",
+        "name": "Build provenance and integrity"
+      }
+    ],
+    "references": [
+      "SLSA",
+      "in-toto",
+      "GUAC",
+      "BloodHound CE"
+    ]
+  }
+]

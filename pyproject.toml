@@ -25,5 +25,8 @@ dependencies = [
   "paddleocr>=3.6,<3.7",
 ]
 
+[project.scripts]
+supplyguard = "supplyguard.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["supplyguard*"]

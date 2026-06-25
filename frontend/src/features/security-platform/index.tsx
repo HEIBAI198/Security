@@ -1147,8 +1147,8 @@ export function SecurityPlatform() {
       runCICDAuditScan({ workspaceId: activeWorkspaceId, importId: activeImportId })
     )
 
-    updateStep('artifact', 'skipped', '缺少 artifact 与 provenance 材料')
-    updateStep('logs', 'skipped', '缺少运行期日志文件')
+    updateStep('artifact', 'running', '正在自动发现 artifact 与 provenance')
+    updateStep('logs', 'running', '正在自动发现运行期日志')
     updateStep('multimodal', 'skipped', '未上传外部告警证据')
     updateStep('graph', 'running', '正在汇总证据')
 
@@ -1158,8 +1158,8 @@ export function SecurityPlatform() {
         includeCodeAudit: false,
         includeDependencyAudit: false,
         includeCicdAudit: false,
-        includeArtifactTrust: false,
-        includeLogAudit: false,
+        includeArtifactTrust: true,
+        includeLogAudit: true,
       })
       const scanSuiteErrors = nextWorkspace.scanSuite?.errors ?? []
       errors.push(...scanSuiteErrors.map((item) => ({
@@ -1180,6 +1180,16 @@ export function SecurityPlatform() {
               }
             : item
         )
+      )
+      updateStep(
+        'artifact',
+        nextWorkspace.artifact_trust?.scan_id ? 'completed' : 'skipped',
+        nextWorkspace.artifact_trust?.scan_id ? '扫描完成' : '缺少 artifact 与 provenance 材料'
+      )
+      updateStep(
+        'logs',
+        nextWorkspace.log_audit?.scan_id ? 'completed' : 'skipped',
+        nextWorkspace.log_audit?.scan_id ? '扫描完成' : '缺少运行期日志文件'
       )
       updateStep('graph', scanSuiteErrors.length ? 'failed' : 'completed', scanSuiteErrors.length ? '汇总时出现错误' : '图谱与报告已更新')
     } catch (error) {

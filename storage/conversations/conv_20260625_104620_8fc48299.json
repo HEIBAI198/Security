@@ -1,0 +1,24 @@
+{
+  "conversationId": "conv_20260625_104620_8fc48299",
+  "title": "3cx-supply-chain",
+  "workspaceId": "ws_20260625_104620_883d20e7",
+  "importId": "imp_703f8b6b75e4",
+  "projectName": "3cx-supply-chain",
+  "sourceType": "local",
+  "sourcePath": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain",
+  "createdAt": "2026-06-25T10:46:20.852087+00:00",
+  "updatedAt": "2026-06-25T10:46:20.852087+00:00",
+  "summary": {
+    "scanStatus": "high",
+    "riskScore": null,
+    "riskLevel": "preflight",
+    "attackPaths": null,
+    "dependencies": 314,
+    "findings": 4,
+    "preflightFiles": 29,
+    "preflightScannable": 23,
+    "dependencyFiles": 3,
+    "ciFiles": 0,
+    "primaryLanguage": "JSON"
+  }
+}

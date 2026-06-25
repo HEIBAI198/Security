@@ -337,6 +337,7 @@ class DependencyAuditRequest(BaseModel):
 
     import_id: str | None = Field(default=None, alias="importId")
     target_path: str | None = Field(default=None, alias="targetPath")
+    allow_external: bool = Field(default=False, alias="allowExternal")
     runtime_log_paths: list[str] = Field(default_factory=list, alias="runtimeLogPaths")
     include_dev: bool = Field(default=True, alias="includeDev")
     max_manifests: int = Field(default=MAX_MANIFESTS, alias="maxManifests", ge=1, le=1000)
@@ -527,12 +528,12 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
 
 
 def resolve_dependency_target(request: DependencyAuditRequest) -> tuple[Path, dict[str, Any]]:
-    runtime_log_paths = normalize_runtime_log_paths(request.runtime_log_paths)
+    runtime_log_paths = normalize_runtime_log_paths(request.runtime_log_paths, allow_external=request.allow_external)
     if request.import_id:
         target, target_info = import_dependency_target(request.import_id)
         return target, {**target_info, "runtimeLogPaths": runtime_log_paths}
     if request.target_path:
-        target, target_info = path_dependency_target(request.target_path)
+        target, target_info = path_dependency_target(request.target_path, allow_external=request.allow_external)
         return target, {**target_info, "runtimeLogPaths": runtime_log_paths}
     latest_import = load_latest_import()
     if latest_import is not None:
@@ -566,19 +567,19 @@ def import_dependency_target(import_id: str) -> tuple[Path, dict[str, Any]]:
     }
 
 
-def path_dependency_target(target_path: str) -> tuple[Path, dict[str, Any]]:
+def path_dependency_target(target_path: str, *, allow_external: bool = False) -> tuple[Path, dict[str, Any]]:
     candidate = Path(target_path).expanduser()
     if not candidate.is_absolute():
         candidate = ROOT / candidate
     candidate = candidate.resolve()
     if not candidate.exists() or not candidate.is_dir():
         raise ValueError(f"Dependency scan target does not exist or is not a directory: {candidate}")
-    if not is_within_root(candidate):
+    if not allow_external and not is_within_root(candidate):
         raise ValueError(f"Dependency scan target must stay inside project root: {ROOT}")
     return candidate, {"sourceType": "path", "projectName": candidate.name}
 
 
-def normalize_runtime_log_paths(paths: Iterable[str] | None) -> list[str]:
+def normalize_runtime_log_paths(paths: Iterable[str] | None, *, allow_external: bool = False) -> list[str]:
     normalized: list[str] = []
     for raw_path in paths or []:
         candidate = Path(str(raw_path)).expanduser()
@@ -587,7 +588,7 @@ def normalize_runtime_log_paths(paths: Iterable[str] | None) -> list[str]:
         candidate = candidate.resolve()
         if not candidate.exists() or not candidate.is_file():
             raise ValueError(f"Runtime log path does not exist or is not a file: {candidate}")
-        if not is_within_root(candidate):
+        if not allow_external and not is_within_root(candidate):
             raise ValueError(f"Runtime log path must stay inside project root: {ROOT}")
         normalized.append(str(candidate))
     return list(dict.fromkeys(normalized))

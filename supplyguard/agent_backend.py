@@ -21,6 +21,7 @@ from .cicd_audit import CICDAuditRequest, CICDAuditResult, run_cicd_audit
 from .code_audit import CodeAuditRequest, CodeAuditResult, run_code_audit
 from .config import ROOT
 from .dependency_audit import DependencyAuditRequest, DependencyAuditResult, run_dependency_audit
+from .evidence_discovery import infer_case_evidence_paths, resolve_local_path
 from .log_audit import LogAuditResult, LogFileInput, run_log_audit
 
 
@@ -78,6 +79,7 @@ def run_agent_backend(
 
     started_at = time.monotonic()
     started_at_iso = datetime.now(UTC).isoformat()
+    request = apply_inferred_evidence(request)
     run_id = run_id or new_agent_run_id()
     results = AgentInternalResults()
     steps: list[dict[str, Any]] = [
@@ -502,11 +504,18 @@ def load_log_inputs(log_paths: list[str]) -> list[LogFileInput]:
     return inputs
 
 
-def resolve_local_path(value: str) -> Path:
-    path = Path(value)
-    if not path.is_absolute():
-        path = ROOT / path
-    return path.resolve()
+def apply_inferred_evidence(request: AgentRunRequest) -> AgentRunRequest:
+    inferred = infer_case_evidence_paths(request.target_path)
+    updates: dict[str, object] = {}
+    if not request.artifact_path and isinstance(inferred.get("artifact_path"), str):
+        updates["artifact_path"] = inferred["artifact_path"]
+    if not request.attestation_path and isinstance(inferred.get("attestation_path"), str):
+        updates["attestation_path"] = inferred["attestation_path"]
+    if not request.log_paths and isinstance(inferred.get("log_paths"), list):
+        updates["log_paths"] = inferred["log_paths"]
+    if not updates:
+        return request
+    return request.model_copy(update=updates)
 
 
 def summarize_code_audit(result: CodeAuditResult) -> dict[str, Any]:

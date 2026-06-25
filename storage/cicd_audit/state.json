@@ -769,6 +769,60 @@
       "fixed": 0,
       "ignored": 0,
       "tools": []
+    },
+    {
+      "scan_id": "cicd-20260625114853",
+      "generated_at": "2026-06-25T11:48:53.624765+00:00",
+      "target_key": "import:imp_3a62fda0dacd",
+      "projectName": "3cx-desktop-replay",
+      "total": 6,
+      "critical": 0,
+      "high": 4,
+      "medium": 1,
+      "low": 1,
+      "new": 6,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260625125153",
+      "generated_at": "2026-06-25T12:51:53.703157+00:00",
+      "target_key": "import:imp_e458df7ae187",
+      "projectName": "3cx-desktop-replay",
+      "total": 6,
+      "critical": 0,
+      "high": 4,
+      "medium": 1,
+      "low": 1,
+      "new": 6,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
+    },
+    {
+      "scan_id": "cicd-20260625151951",
+      "generated_at": "2026-06-25T15:19:51.317732+00:00",
+      "target_key": "import:imp_b7ec70265afd",
+      "projectName": "测试",
+      "total": 3,
+      "critical": 0,
+      "high": 2,
+      "medium": 1,
+      "low": 0,
+      "new": 3,
+      "fixed": 0,
+      "ignored": 0,
+      "tools": [
+        "zizmor",
+        "actionlint"
+      ]
     }
   ]
 }

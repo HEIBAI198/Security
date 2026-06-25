@@ -40,6 +40,7 @@ class ArtifactTrustRequest(BaseModel):
         default="storage/samples/attestations/checkout-api.intoto.jsonl",
         alias="attestationPath",
     )
+    allow_external: bool = Field(default=False, alias="allowExternal")
     policy_artifact: str | None = Field(default=None, alias="policyArtifact")
     expected_repo: str | None = Field(default=None, alias="expectedRepo")
     expected_commit: str | None = Field(default=None, alias="expectedCommit")
@@ -130,8 +131,8 @@ class ArtifactTrustResult:
 def run_artifact_trust_scan(request: ArtifactTrustRequest | None = None) -> ArtifactTrustResult:
     started_at = time.monotonic()
     payload = request or ArtifactTrustRequest()
-    artifact_path = resolve_workspace_path(payload.artifact_path)
-    attestation_path = resolve_workspace_path(payload.attestation_path)
+    artifact_path = resolve_workspace_path(payload.artifact_path, allow_external=payload.allow_external)
+    attestation_path = resolve_workspace_path(payload.attestation_path, allow_external=payload.allow_external)
     scan_id = datetime.now(UTC).strftime("artifact-trust-%Y%m%d%H%M%S")
     generated_at = datetime.now(UTC).isoformat()
     warnings: list[str] = []
@@ -204,15 +205,16 @@ def run_artifact_trust_scan(request: ArtifactTrustRequest | None = None) -> Arti
     )
 
 
-def resolve_workspace_path(value: str) -> Path:
+def resolve_workspace_path(value: str, *, allow_external: bool = False) -> Path:
     candidate = Path(value).expanduser()
     if not candidate.is_absolute():
         candidate = ROOT / candidate
     candidate = candidate.resolve()
-    try:
-        candidate.relative_to(ROOT.resolve())
-    except ValueError as exc:
-        raise ValueError(f"Path must stay inside project root: {candidate}") from exc
+    if not allow_external:
+        try:
+            candidate.relative_to(ROOT.resolve())
+        except ValueError as exc:
+            raise ValueError(f"Path must stay inside project root: {candidate}") from exc
     return candidate
 
 

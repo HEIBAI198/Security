@@ -1,0 +1,24 @@
+{
+  "conversationId": "conv_20260625_125029_8835188b",
+  "title": "3cx-desktop-replay",
+  "workspaceId": "ws_20260625_125029_aef03d60",
+  "importId": "imp_e458df7ae187",
+  "projectName": "3cx-desktop-replay",
+  "sourceType": "local",
+  "sourcePath": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo",
+  "createdAt": "2026-06-25T12:50:29.243962+00:00",
+  "updatedAt": "2026-06-25T12:50:29.243962+00:00",
+  "summary": {
+    "scanStatus": "high",
+    "riskScore": null,
+    "riskLevel": "preflight",
+    "attackPaths": null,
+    "dependencies": 314,
+    "findings": 4,
+    "preflightFiles": 11,
+    "preflightScannable": 7,
+    "dependencyFiles": 3,
+    "ciFiles": 1,
+    "primaryLanguage": "JSON"
+  }
+}

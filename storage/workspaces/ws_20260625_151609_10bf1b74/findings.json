@@ -1,0 +1,132 @@
+[
+  {
+    "id": "CORR-11B6213B",
+    "module": "证据链",
+    "title": "依赖与 CI/CD 风险后出现运行期外联/敏感接口访问",
+    "severity": "critical",
+    "score": 97,
+    "asset": "dependency -> cicd -> runtime-log",
+    "recommendation": "已跨模块关联，建议按证据链优先级处置。",
+    "status": "已跨模块关联，建议按证据链优先级处置。"
+  },
+  {
+    "id": "LOG-2FEF91C2",
+    "module": "日志风险",
+    "title": "异常外联 IP：Suspicious External Egress IP",
+    "severity": "critical",
+    "score": 92,
+    "asset": "app / dst=45.83.64.12",
+    "recommendation": "置信度 94%，建议结合源 IP、账号和时间窗口复核。",
+    "status": "置信度 94%，建议结合源 IP、账号和时间窗口复核。"
+  },
+  {
+    "id": "LOG-EB993334",
+    "module": "日志风险",
+    "title": "异常外联 IP：Suspicious External Egress IP",
+    "severity": "high",
+    "score": 84,
+    "asset": "app / dst=45.83.64.11",
+    "recommendation": "置信度 88%，建议结合源 IP、账号和时间窗口复核。",
+    "status": "置信度 88%，建议结合源 IP、账号和时间窗口复核。"
+  },
+  {
+    "id": "ART-8D58AD41",
+    "module": "产物可信",
+    "title": "产物 digest 与 attestation subject 不一致或缺失",
+    "severity": "critical",
+    "score": 98,
+    "asset": "3cx-desktop-app.tar.gz",
+    "recommendation": "阻断发布，重新获取产物与 provenance，确认 subject digest 指向当前产物。",
+    "status": "阻断发布，重新获取产物与 provenance，确认 subject digest 指向当前产物。"
+  },
+  {
+    "id": "ART-CAC4BED9",
+    "module": "产物可信",
+    "title": "runner 环境不符合策略",
+    "severity": "high",
+    "score": 87,
+    "asset": "3cx-desktop-app.tar.gz",
+    "recommendation": "按 .supplyguard/trust-policy.yml 复核策略并重新生成可信 provenance。",
+    "status": "按 .supplyguard/trust-policy.yml 复核策略并重新生成可信 provenance。"
+  },
+  {
+    "id": "ART-C3352145",
+    "module": "产物可信",
+    "title": "产物签名验签未通过",
+    "severity": "medium",
+    "score": 64,
+    "asset": "3cx-desktop-app.tar.gz",
+    "recommendation": "安装并配置 gh/cosign 验签，或在发布门禁中强制执行 GitHub artifact attestation verify。",
+    "status": "安装并配置 gh/cosign 验签，或在发布门禁中强制执行 GitHub artifact attestation verify。"
+  },
+  {
+    "id": "ART-F1948089",
+    "module": "产物可信",
+    "title": "产物 builder 身份不可信",
+    "severity": "medium",
+    "score": 62,
+    "asset": "3cx-desktop-app.tar.gz",
+    "recommendation": "把 builder.id 纳入企业根信任列表，未知 builder 生成的产物需要重新构建。",
+    "status": "把 builder.id 纳入企业根信任列表，未知 builder 生成的产物需要重新构建。"
+  },
+  {
+    "id": "CI-541A60DC",
+    "module": "CI/CD",
+    "title": "zizmor: unpinned-uses",
+    "severity": "high",
+    "score": 75,
+    "asset": "sample-repo/.github/workflows/desktop-release.yml:13 (desktop-build)",
+    "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。",
+    "status": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。"
+  },
+  {
+    "id": "CI-1480C512",
+    "module": "CI/CD",
+    "title": "zizmor: unpinned-uses",
+    "severity": "high",
+    "score": 75,
+    "asset": "sample-repo/.github/workflows/desktop-release.yml:14 (desktop-build)",
+    "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。",
+    "status": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。"
+  },
+  {
+    "id": "CI-EB7DBD7A",
+    "module": "CI/CD",
+    "title": "zizmor: artipacked",
+    "severity": "medium",
+    "score": 62,
+    "asset": "sample-repo/.github/workflows/desktop-release.yml:13 (desktop-build)",
+    "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#artipacked 修复该 GitHub Actions 风险。",
+    "status": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#artipacked 修复该 GitHub Actions 风险。"
+  },
+  {
+    "id": "DEP-859D03A1",
+    "module": "供应链",
+    "title": "axios has exploitable VEX context",
+    "severity": "critical",
+    "score": 100,
+    "asset": "npm:axios@1.6.8 (sample-repo/package.json; sample-repo/package-lock.json)",
+    "recommendation": "Treat as exploitable in this product context: update or mitigate, verify exposed routes, and review matching runtime logs.",
+    "status": "Treat as exploitable in this product context: update or mitigate, verify exposed routes, and review matching runtime logs."
+  },
+  {
+    "id": "DEP-3C68DCF0",
+    "module": "供应链",
+    "title": "starlette vulnerability needs reachability triage",
+    "severity": "critical",
+    "score": 100,
+    "asset": "pypi:starlette@1.2.1 (C:/Users/86189/Desktop/sysml2/storage/sbom/requirements.lock.txt)",
+    "recommendation": "Triage reachability: confirm call paths, route exposure, exploit preconditions, and runtime log correlation before accepting or suppressing.",
+    "status": "Triage reachability: confirm call paths, route exposure, exploit preconditions, and runtime log correlation before accepting or suppressing."
+  },
+  {
+    "id": "DEP-1E4D388C",
+    "module": "供应链",
+    "title": "electron matched OSV vulnerabilities",
+    "severity": "medium",
+    "score": 68,
+    "asset": "npm:electron@25.9.8 (sample-repo/package.json; sample-repo/package-lock.json)",
+    "recommendation": "VEX marks this dependency vulnerability as not affected in the scanned context; keep the statement current when imports, routes, or logs change.",
+    "status": "VEX marks this dependency vulnerability as not affected in the scanned context; keep the statement current when imports, routes, or logs change."
+  }
+]

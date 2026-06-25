@@ -230,6 +230,7 @@ class CodeAuditRequest(BaseModel):
         default=None,
         description="Path to scan. Relative paths are resolved from the project root.",
     )
+    allow_external: bool = Field(default=False, alias="allowExternal")
     include_gitleaks: bool = True
     include_semgrep: bool = True
     include_bandit: bool = True
@@ -400,7 +401,7 @@ def resolve_scan_target(request: CodeAuditRequest) -> tuple[Path, dict[str, Any]
         return import_scan_target(request.import_id)
 
     if request.target_path:
-        return path_scan_target(request.target_path)
+        return path_scan_target(request.target_path, allow_external=request.allow_external)
 
     latest_import = load_latest_import()
     if latest_import is not None:
@@ -431,7 +432,7 @@ def import_scan_target(import_id: str) -> tuple[Path, dict[str, Any]]:
     }
 
 
-def path_scan_target(target_path: str) -> tuple[Path, dict[str, Any]]:
+def path_scan_target(target_path: str, *, allow_external: bool = False) -> tuple[Path, dict[str, Any]]:
     candidate = Path(target_path).expanduser()
     if not candidate.is_absolute():
         candidate = ROOT / candidate
@@ -439,7 +440,7 @@ def path_scan_target(target_path: str) -> tuple[Path, dict[str, Any]]:
 
     if not candidate.exists():
         raise ValueError(f"Scan target does not exist: {candidate}")
-    if not is_within_root(candidate):
+    if not allow_external and not is_within_root(candidate):
         raise ValueError(f"Scan target must stay inside project root: {ROOT}")
     return candidate, {"sourceType": "path", "projectName": candidate.name}
 

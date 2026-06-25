@@ -1,0 +1,62 @@
+[
+  {
+    "id": "ev-dependency-0001",
+    "type": "dependency",
+    "source": "dependency_audit",
+    "asset": "axios@1.6.8",
+    "summary": "OSV: GHSA-35jp-ww65-95wh; OSV: GHSA-3g43-6gmg-66jw; OSV: GHSA-3p68-rc4w-qgx5; OSV: GHSA-3w6x-2g7m-8v23; OSV: GHSA-43fc-jf86-j433; OSV: GHSA-445q-vr5w-6q77; OSV: GHSA-4hjh-wcwx-xvwj; OSV: GHSA-5c9x-8gcm-mpgx; OSV: GHSA-62hf-57xw-28j9; OSV: GHSA-6chq-wfr3-2hj9; OSV: GHSA-898c-q2cr-xwhg; OSV: GHSA-8hc4-vh64-cxmj; OSV: GHSA-fvcv-3m26-pcqx; OSV: GHSA-hfxv-24rg-xrqf; OSV: GHSA-j5f8-grm9-p9fc; OSV: GHSA-jr5f-v2jv-69x6; OSV: GHSA-m7pr-hjqh-92cm; OSV: GHSA-p92q-9vqr-4j8v; OSV: GHSA-pf86-5x62-jrwf; OSV: GHSA-pjwm-pj3p-43mv; OSV: GHSA-pmwg-cvhr-8vh7; OSV: GHSA-q8qp-cvcw-x6jj; OSV: GHSA-vf2m-468p-8v99; OSV: GHSA-w9j2-pvgh-6h63; OSV: GHSA-xhjh-pmcv-23jw; OSV: GHSA-xx6v-rp6x-q39c; exact version from lockfile; reachable import detected; reachable call detected; related service attack surface exposed; VEX: affected, fixed",
+    "confidence": 100,
+    "findingId": "DEP-859D03A1",
+    "createdAt": "2026-06-25T10:46:57.853887+00:00"
+  },
+  {
+    "id": "ev-dependency-0002",
+    "type": "dependency",
+    "source": "dependency_audit",
+    "asset": "starlette@1.2.1",
+    "summary": "OSV: GHSA-82w8-qh3p-5jfq; OSV: GHSA-jp82-jpqv-5vv3; unknown license; exact version from environment; transitive dependency; related service attack surface exposed; VEX: under_investigation",
+    "confidence": 100,
+    "findingId": "DEP-3C68DCF0",
+    "createdAt": "2026-06-25T10:46:57.853887+00:00"
+  },
+  {
+    "id": "ev-dependency-0003",
+    "type": "dependency",
+    "source": "dependency_audit",
+    "asset": "electron@25.9.8",
+    "summary": "install script; OSV: GHSA-3c8v-cfp5-9885; OSV: GHSA-4p4r-m79c-wq3v; OSV: GHSA-532v-xpq5-8h95; OSV: GHSA-5rqw-r77c-jp79; OSV: GHSA-6r2x-8pq8-9489; OSV: GHSA-8337-3p73-46f4; OSV: GHSA-9899-m83m-qhpj; OSV: GHSA-9w97-2464-8783; OSV: GHSA-9wfr-w7mm-pc7f; OSV: GHSA-f37v-82c4-4x64; OSV: GHSA-f3pv-wv63-48x8; OSV: GHSA-jfqx-fxh3-c62j; OSV: GHSA-jjp3-mq3x-295m; OSV: GHSA-mwmh-mq4g-g6gr; OSV: GHSA-r5p7-gp4j-qhrx; OSV: GHSA-vmqv-hx8q-j7mg; OSV: GHSA-xj5x-m3f3-5x3h; OSV: GHSA-xwr5-m59h-vwqr; exact version from lockfile; VEX: not_affected",
+    "confidence": 68,
+    "findingId": "DEP-1E4D388C",
+    "createdAt": "2026-06-25T10:46:57.853887+00:00"
+  },
+  {
+    "id": "ev-cicd-0001",
+    "type": "cicd",
+    "source": "cicd_audit",
+    "asset": "sample-repo/.github/workflows/desktop-release.yml",
+    "summary": "actions/checkout@v3",
+    "confidence": "high",
+    "findingId": "CI-541A60DC",
+    "createdAt": "2026-06-25T10:47:31.541356+00:00"
+  },
+  {
+    "id": "ev-cicd-0002",
+    "type": "cicd",
+    "source": "cicd_audit",
+    "asset": "sample-repo/.github/workflows/desktop-release.yml",
+    "summary": "vendor/electron-builder@v2",
+    "confidence": "high",
+    "findingId": "CI-1480C512",
+    "createdAt": "2026-06-25T10:47:31.541356+00:00"
+  },
+  {
+    "id": "ev-cicd-0003",
+    "type": "cicd",
+    "source": "cicd_audit",
+    "asset": "sample-repo/.github/workflows/desktop-release.yml",
+    "summary": "uses: actions/checkout@v3",
+    "confidence": "low",
+    "findingId": "CI-EB7DBD7A",
+    "createdAt": "2026-06-25T10:47:31.541356+00:00"
+  }
+]

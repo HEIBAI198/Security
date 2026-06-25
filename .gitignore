@@ -27,6 +27,7 @@ storage/gnn_datasets/
 storage/eval/
 storage/*.log
 
+tmp/
 datasets/
 .tmp-shadcn-admin/
 frontend/node_modules/
