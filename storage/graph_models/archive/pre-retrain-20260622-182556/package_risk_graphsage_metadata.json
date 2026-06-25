@@ -1,0 +1,53 @@
+{
+  "artifact_files": {
+    "embedding_index": "package_embedding_index.json",
+    "embeddings": "package_embeddings.npy",
+    "metrics": "graphsage_eval.json",
+    "model": "package_risk_graphsage.pt"
+  },
+  "cuda_available": true,
+  "cuda_device_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "device": "cuda",
+  "dropout": 0.3,
+  "edge_construction": {
+    "edge_types": [
+      "has_risk_signal",
+      "observed_in"
+    ],
+    "method": "package-package edges by shared targets"
+  },
+  "edge_count": 25167052,
+  "epochs": 80,
+  "feature_names": [
+    "ecosystem_npm",
+    "ecosystem_pypi",
+    "name_length",
+    "name_separator_count",
+    "has_scope",
+    "has_digits",
+    "version_count",
+    "alias_count",
+    "evidence_source_count",
+    "risk_keyword_count",
+    "text_length"
+  ],
+  "hidden_dim": 64,
+  "input_dim": 11,
+  "label_mapping": {
+    "benign": 0,
+    "malicious": 1
+  },
+  "learning_rate": 0.01,
+  "model_type": "pyg_graphsage_package_risk",
+  "node_count": 10689,
+  "random_state": 42,
+  "split_counts": {
+    "test": 1604,
+    "train": 7482,
+    "val": 1603
+  },
+  "torch_cuda_version": "12.8",
+  "torch_version": "2.7.0+cu128",
+  "trained_epochs": 80,
+  "training_status": "trained"
+}

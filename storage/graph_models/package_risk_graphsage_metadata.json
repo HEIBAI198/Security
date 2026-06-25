@@ -1,0 +1,83 @@
+{
+  "artifact_files": {
+    "embedding_index": "package_embedding_index.json",
+    "embeddings": "package_embeddings.npy",
+    "metrics": "graphsage_eval.json",
+    "model": "package_risk_graphsage.pt"
+  },
+  "cuda_available": true,
+  "cuda_device_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "device": "cuda",
+  "dropout": 0.3,
+  "edge_construction": {
+    "edge_types": [
+      "has_risk_signal",
+      "observed_in"
+    ],
+    "max_group_size": 128,
+    "method": "package-package edges by shared targets"
+  },
+  "edge_count": 5698,
+  "epochs": 80,
+  "feature_mean": [
+    0.5153896808624268,
+    0.48461034893989563,
+    15.607540130615234,
+    1.1187201738357544,
+    0.022359434515237808,
+    0.30657684803009033,
+    0.64814293384552,
+    0.07231733202934265,
+    0.7785574197769165,
+    0.8012910485267639,
+    572.8263549804688
+  ],
+  "feature_names": [
+    "ecosystem_npm",
+    "ecosystem_pypi",
+    "name_length",
+    "name_separator_count",
+    "has_scope",
+    "has_digits",
+    "version_count",
+    "alias_count",
+    "evidence_source_count",
+    "risk_keyword_count",
+    "text_length"
+  ],
+  "feature_scale": [
+    0.4997659921646118,
+    0.4997659921646118,
+    8.162222862243652,
+    1.4482338428497314,
+    0.1478610336780548,
+    0.4610770046710968,
+    2.885878324508667,
+    0.28384527564048767,
+    3.129734992980957,
+    0.5951570868492126,
+    315.50341796875
+  ],
+  "hidden_dim": 64,
+  "input_dim": 11,
+  "label_mapping": {
+    "benign": 0,
+    "malicious": 1
+  },
+  "learning_rate": 0.01,
+  "max_edge_group_size": 128,
+  "max_train_positive_ratio": 1.0,
+  "model_type": "pyg_graphsage_package_risk",
+  "node_count": 10689,
+  "online_loss_weight": 1.5,
+  "random_state": 42,
+  "split_counts": {
+    "test": 1604,
+    "train": 7482,
+    "val": 1603
+  },
+  "torch_cuda_version": "12.8",
+  "torch_version": "2.7.0+cu128",
+  "trained_epochs": 80,
+  "training_status": "trained"
+}

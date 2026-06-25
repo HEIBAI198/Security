@@ -1,0 +1,92 @@
+{
+  "cuda_available": true,
+  "cuda_device_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "device": "cuda",
+  "dropout": 0.3,
+  "edge_count": 5698,
+  "epochs": 80,
+  "feature_mean": [
+    0.5153896808624268,
+    0.48461034893989563,
+    15.607540130615234,
+    1.1187201738357544,
+    0.022359434515237808,
+    0.30657684803009033,
+    0.64814293384552,
+    0.07231733202934265,
+    0.7785574197769165,
+    0.8012910485267639,
+    572.8263549804688
+  ],
+  "feature_scale": [
+    0.4997659921646118,
+    0.4997659921646118,
+    8.162222862243652,
+    1.4482338428497314,
+    0.1478610336780548,
+    0.4610770046710968,
+    2.885878324508667,
+    0.28384527564048767,
+    3.129734992980957,
+    0.5951570868492126,
+    315.50341796875
+  ],
+  "final_loss": 0.0015931347152218223,
+  "hidden_dim": 64,
+  "learning_rate": 0.01,
+  "max_edge_group_size": 128,
+  "max_train_positive_ratio": 1.0,
+  "model_type": "pyg_graphsage_package_risk",
+  "negative_samples": 689,
+  "online_loss_weight": 1.5,
+  "online_no_edge": {
+    "benign_high_score_rate": 0.0,
+    "benign_mean_score": 0.0019449080573394895,
+    "malicious_high_score_rate": 1.0,
+    "malicious_mean_score": 0.9998562335968018,
+    "sanity_cases": {
+      "flask": 0.003812,
+      "left-pad": 0.529847,
+      "numpy": 0.003871,
+      "react": 0.680927,
+      "requests": 0.004782,
+      "x-trader-codec": 1.0
+    }
+  },
+  "positive_samples": 10000,
+  "random_state": 42,
+  "samples": 10689,
+  "splits": {
+    "test": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "negative_samples": 105,
+      "positive_samples": 1499,
+      "precision": 1.0,
+      "recall": 1.0,
+      "samples": 1604
+    },
+    "train": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "negative_samples": 491,
+      "positive_samples": 491,
+      "precision": 1.0,
+      "recall": 1.0,
+      "samples": 982
+    },
+    "val": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "negative_samples": 93,
+      "positive_samples": 1510,
+      "precision": 1.0,
+      "recall": 1.0,
+      "samples": 1603
+    }
+  },
+  "torch_cuda_version": "12.8",
+  "torch_version": "2.7.0+cu128",
+  "trained_epochs": 80,
+  "training_status": "trained"
+}

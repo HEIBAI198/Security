@@ -1,0 +1,49 @@
+{
+  "cuda_available": true,
+  "cuda_device_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "device": "cuda",
+  "dropout": 0.3,
+  "edge_count": 25167052,
+  "epochs": 80,
+  "final_loss": 0.06443345546722412,
+  "hidden_dim": 64,
+  "learning_rate": 0.01,
+  "model_type": "pyg_graphsage_package_risk",
+  "negative_samples": 689,
+  "positive_samples": 10000,
+  "random_state": 42,
+  "samples": 10689,
+  "splits": {
+    "test": {
+      "accuracy": 0.9993765586034913,
+      "f1": 0.9996663329996663,
+      "negative_samples": 105,
+      "positive_samples": 1499,
+      "precision": 1.0,
+      "recall": 0.9993328885923949,
+      "samples": 1604
+    },
+    "train": {
+      "accuracy": 0.9995990376904571,
+      "f1": 0.9997853923742757,
+      "negative_samples": 491,
+      "positive_samples": 6991,
+      "precision": 1.0,
+      "recall": 0.9995708768416536,
+      "samples": 7482
+    },
+    "val": {
+      "accuracy": 0.9993761696818465,
+      "f1": 0.9996687644915535,
+      "negative_samples": 93,
+      "positive_samples": 1510,
+      "precision": 1.0,
+      "recall": 0.9993377483443708,
+      "samples": 1603
+    }
+  },
+  "torch_cuda_version": "12.8",
+  "torch_version": "2.7.0+cu128",
+  "trained_epochs": 80,
+  "training_status": "trained"
+}
