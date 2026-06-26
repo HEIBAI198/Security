@@ -245,11 +245,17 @@ import { MultimodalEvidencePanel } from './multimodal-evidence-panel'
 import { AttackChainGraph } from './attack-chain-graph'
 import { ReportPanel } from './report-panel'
 import {
+  ARTIFACT_TRUST_OPTIONAL_MATERIALS,
+  ARTIFACT_TRUST_REQUIRED_MATERIALS,
   SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT,
   SUPPLEMENT_FILE_INPUT_TITLE,
   SUPPLEMENT_FILE_LABEL,
+  artifactTrustGateButtonLabel,
+  artifactTrustGateReadinessMessage,
+  artifactTrustRequiredFilesReady,
   isSupplementProjectArchive,
   supplementFileSuccessMessage,
+  type ArtifactTrustMaterial,
 } from './supplement-file-workflow'
 type KnowledgeGraphNode = NonNullable<
   NonNullable<SecurityWorkspace['graph']>['nodes']
@@ -570,7 +576,7 @@ const statusClasses: Record<string, string> = {
   active:
     'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950/45 dark:text-cyan-300',
   observed:
-    'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300',
+    'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-muted-foreground',
 }
 
 const graphPositions: Record<string, { x: number; y: number }> = {
@@ -617,17 +623,17 @@ const fallbackAssistant: SecurityAssistantPayload = {
 }
 
 const actionButtonClass =
-  'border-cyan-400/50 bg-cyan-700 text-white shadow-md shadow-cyan-950/30 transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-cyan-200 hover:bg-cyan-500 hover:text-white hover:shadow-lg hover:shadow-cyan-900/30 active:translate-y-0 active:scale-[0.98] disabled:translate-y-0 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none'
+  'border-primary/70 bg-primary text-primary-foreground shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-ring hover:bg-primary/90 hover:text-primary-foreground hover:shadow-[var(--shadow-interactive)] active:translate-y-0 active:scale-[0.98] disabled:translate-y-0 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none'
 const fileInputClass =
-  'h-11 cursor-pointer text-sm file:mr-4 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-cyan-300/70 file:bg-cyan-600 file:px-4 file:text-sm file:font-semibold file:text-white file:shadow-sm file:shadow-cyan-950/25 file:transition-colors hover:file:bg-cyan-500'
+  'h-11 cursor-pointer bg-[color:var(--surface-inset)] text-sm file:mr-4 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-primary/60 file:bg-primary file:px-4 file:text-sm file:font-semibold file:text-primary-foreground file:shadow-sm file:transition-colors hover:file:bg-primary/90'
 const moduleSplitGridClass =
-  'grid min-h-0 gap-4 xl:h-[calc(100vh-8.5rem)] xl:grid-cols-[minmax(0,1fr)_420px] xl:items-stretch xl:overflow-hidden'
+  'grid min-h-0 gap-5 xl:h-[calc(100vh-8.5rem)] xl:grid-cols-[minmax(0,1fr)_420px] xl:items-stretch xl:overflow-hidden'
 const moduleMainColumnClass =
-  'min-h-0 min-w-0 space-y-4 xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:[scrollbar-gutter:stable] xl:[scrollbar-width:thin]'
+  'min-h-0 min-w-0 space-y-5 xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:[scrollbar-gutter:stable] xl:[scrollbar-width:thin]'
 const moduleSidebarColumnClass =
-  'min-h-0 min-w-0 space-y-4 xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:[scrollbar-gutter:stable] xl:[scrollbar-width:thin]'
+  'min-h-0 min-w-0 space-y-5 xl:overflow-y-auto xl:overscroll-contain xl:pr-1 xl:[scrollbar-gutter:stable] xl:[scrollbar-width:thin]'
 const moduleCardClass =
-  'rounded-md border-border/80 bg-card/95 shadow-sm shadow-slate-950/10 transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-1 hover:border-cyan-400/35 hover:shadow-lg hover:shadow-cyan-950/15 active:translate-y-0'
+  'surface-raised rounded-md transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-1 hover:border-ring/45 hover:shadow-[var(--shadow-interactive)] active:translate-y-0'
 const moduleTabContentClass =
   'm-0 space-y-4 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-3 motion-safe:zoom-in-95 motion-safe:duration-300'
 
@@ -1055,6 +1061,7 @@ export function SecurityPlatform() {
     record: ProjectImportRecord,
     options: { targetTab?: PlatformTab; successMessage?: string } = {}
   ) {
+    const targetTab = options.targetTab ?? 'overview'
     const nextWorkspace = await createSecurityWorkspace({
       importId: record.importId,
       name: record.projectName,
@@ -1072,7 +1079,6 @@ export function SecurityPlatform() {
       nextConversation,
       ...items.filter((item) => item.conversationId !== nextConversation.conversationId),
     ])
-    const targetTab = options.targetTab ?? 'overview'
     setOpenTabs(defaultWorkspaceTabs(targetTab))
     setActiveTabId(targetTab)
     window.history.replaceState(null, '', `#${targetTab}`)
@@ -1245,7 +1251,7 @@ export function SecurityPlatform() {
 
   return (
     <div className='security-platform min-h-svh bg-background'>
-      <Header fixed className='border-b bg-background/95 backdrop-blur'>
+      <Header fixed className='border-b bg-[color:var(--surface-shell)]/95 shadow-[var(--shadow-soft)] backdrop-blur'>
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
           <div className='min-w-0'>
             <div className='truncate text-sm font-semibold'>APT 溯源助手</div>
@@ -1305,7 +1311,7 @@ export function SecurityPlatform() {
             onValueChange={(value) => {
               if (isPlatformTab(value)) openWorkspaceTab(value)
             }}
-            className='flex min-h-0 min-w-0 flex-col border-l bg-background'
+            className='flex min-h-0 min-w-0 flex-col border-l bg-[color:var(--surface-shell)]'
           >
             <WorkspaceTabs
               tabs={openTabs}
@@ -1907,7 +1913,7 @@ function EmbeddedProjectImportPanel({
         </div>
 
         <div className='grid gap-3 lg:grid-cols-3'>
-          <div className='rounded-md border bg-background/70 p-3'>
+          <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
             <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
               <Archive className='size-4 text-primary' />
               zip / 压缩包
@@ -1928,7 +1934,7 @@ function EmbeddedProjectImportPanel({
             </Button>
           </div>
 
-          <div className='rounded-md border bg-background/70 p-3'>
+          <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
             <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
               <FolderOpen className='size-4 text-primary' />
               本地路径
@@ -1948,7 +1954,7 @@ function EmbeddedProjectImportPanel({
             </Button>
           </div>
 
-          <div className='rounded-md border bg-background/70 p-3'>
+          <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
             <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
               <GitBranch className='size-4 text-primary' />
               GitHub 链接
@@ -2008,24 +2014,55 @@ function AgentConversationHome({
   const assistant = getAssistantPayload(workspace)
   const visibleModules = agentModuleTabs.filter((module) => module !== 'copilot')
 
+  const [thinkOpen, setThinkOpen] = useState(true)
+  const hasAnalysisResult = !!(answer?.answer || assistant.answer || answer?.graph_rag || assistant.graph_rag)
+
   return (
     <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-5xl flex-col'>
       <div className='flex-1 space-y-5 pb-40'>
         <CopilotMessage
           role='assistant'
-          title='预检结果'
-          icon={<Bot className='size-4 text-primary' />}
-        >
-          <PreflightConversationCard workspace={workspace} />
-        </CopilotMessage>
-
-        <CopilotMessage
-          role='assistant'
-          title='分析助手'
+          title='研判助手'
           icon={<BrainCircuit className='size-4 text-primary' />}
         >
           <CopilotMarkdown text={answer?.answer || assistant.answer} />
-          <GraphRagGnnWorkspaceCard workspace={workspace} graphRag={answer?.graph_rag ?? assistant.graph_rag} />
+          <Collapsible open={thinkOpen} onOpenChange={setThinkOpen} className='mt-3'>
+            <div className='flex items-center gap-2'>
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant='ghost'
+                  className='group flex items-center gap-2 rounded-md border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                >
+                  {analysisStarted && !scanRunning ? (
+                    <BrainCircuit className='size-4 text-cyan-500' />
+                  ) : (
+                    <Loader2 className='size-4 animate-spin text-primary' />
+                  )}
+                  <span className='font-medium'>
+                    {analysisStarted && !scanRunning ? '思考完成' : '思考中'}
+                  </span>
+                  <span className='text-xs text-muted-foreground'>
+                    {thinkOpen ? '点击收起' : '点击展开'}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      'size-4 transition-transform duration-200',
+                      thinkOpen && 'rotate-180'
+                    )}
+                  />
+                </Button>
+              </CollapsibleTrigger>
+              {hasAnalysisResult && !thinkOpen ? (
+                <span className='text-xs text-muted-foreground'>
+                  预检完成，点击查看分析详情
+                </span>
+              ) : null}
+            </div>
+            <CollapsibleContent className='mt-4 space-y-4'>
+              <PreflightConversationCard workspace={workspace} />
+              <GraphRagGnnWorkspaceCard workspace={workspace} graphRag={answer?.graph_rag ?? assistant.graph_rag} />
+            </CollapsibleContent>
+          </Collapsible>
           <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
           <ModuleLaunchGrid
             modules={visibleModules}
@@ -2045,8 +2082,8 @@ function AgentConversationHome({
         ) : null}
       </div>
 
-      <div className='fixed inset-x-4 bottom-4 z-40 mx-auto max-w-5xl lg:left-[calc(292px+1.25rem)] lg:right-5'>
-        <div className='rounded-md border bg-background/95 p-2 shadow-xl shadow-background/50 backdrop-blur supports-[backdrop-filter]:bg-background/85'>
+      <div className='sticky -bottom-4 z-40 w-full bg-[color:var(--surface-shell)] pt-4 pb-3'>
+        <div className='rounded-md border bg-card p-2 shadow-[var(--shadow-raised)]'>
           <Textarea
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
@@ -2091,7 +2128,7 @@ function PreflightConversationCard({ workspace }: { workspace: SecurityWorkspace
     <div className='space-y-4'>
       <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
         {metrics.map(([label, value]) => (
-          <div key={label} className='rounded-md border bg-background/70 p-3'>
+          <div key={label} className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
             <div className='text-xs text-muted-foreground'>{label}</div>
             <div className='mt-1 truncate text-sm font-semibold'>{value}</div>
           </div>
@@ -2100,7 +2137,7 @@ function PreflightConversationCard({ workspace }: { workspace: SecurityWorkspace
       {languages.length ? (
         <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
           {languages.slice(0, 3).map((language) => (
-            <div key={language.name} className='rounded-md border bg-background/70 p-3'>
+            <div key={language.name} className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
               <div className='flex items-center justify-between gap-3 text-sm'>
                 <span className='font-medium'>{language.name}</span>
                 <span className='text-muted-foreground'>{Math.round(language.percent)}%</span>
@@ -2114,7 +2151,7 @@ function PreflightConversationCard({ workspace }: { workspace: SecurityWorkspace
         </div>
       ) : null}
       <div className='grid gap-2 lg:grid-cols-2'>
-        <div className='rounded-md border bg-background/70 p-3'>
+        <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
           <div className='text-xs font-medium text-muted-foreground'>依赖清单</div>
           <div className='mt-2 space-y-1 text-xs'>
             {dependencyFiles.slice(0, 4).map((file) => (
@@ -2125,7 +2162,7 @@ function PreflightConversationCard({ workspace }: { workspace: SecurityWorkspace
             {!dependencyFiles.length ? <div className='text-muted-foreground'>未发现依赖清单</div> : null}
           </div>
         </div>
-        <div className='rounded-md border bg-background/70 p-3'>
+        <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
           <div className='text-xs font-medium text-muted-foreground'>CI/CD 配置</div>
           <div className='mt-2 space-y-1 text-xs'>
             {ciFiles.slice(0, 4).map((file) => (
@@ -2292,7 +2329,7 @@ function ModuleLaunchGrid({
                 type='button'
                 variant='outline'
                 className={cn(
-                  'group relative h-[132px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-slate-400/15 bg-slate-950/70 px-5 py-4 text-left shadow-[0_8px_8px_rgba(2,6,23,0.22)] backdrop-blur transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300/30 hover:bg-slate-900/80 hover:shadow-[0_8px_8px_rgba(2,6,23,0.3)] active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
+                  'group relative h-[132px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] px-5 py-4 text-left shadow-[0_8px_8px_rgba(2,6,23,0.22)] backdrop-blur transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300/30 hover:bg-[color:var(--surface-inset)] hover:shadow-[0_8px_8px_rgba(2,6,23,0.3)] active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
                   isCompleted && 'hover:border-emerald-300/35',
                   isReady && isSkipped && 'hover:border-amber-300/35',
                   isFailed && 'hover:border-red-300/35'
@@ -2307,7 +2344,7 @@ function ModuleLaunchGrid({
                     <span className={cn('grid size-11 shrink-0 place-items-center rounded-md border', tone.iconWrap)}>
                       <Icon className={cn('size-5', tone.icon)} />
                     </span>
-                    <span className={cn('min-w-0 pt-1 !text-[18px] !font-extrabold leading-[1.15] text-slate-50 [word-break:keep-all]', allowTitleWrap ? 'line-clamp-2 whitespace-normal' : 'truncate whitespace-nowrap')} title={moduleTitle}>
+                    <span className={cn('min-w-0 pt-1 !text-[18px] !font-extrabold leading-[1.15] text-section-title [word-break:keep-all]', allowTitleWrap ? 'line-clamp-2 whitespace-normal' : 'truncate whitespace-nowrap')} title={moduleTitle}>
                       {moduleTitle}
                     </span>
                     <span className={cn('inline-flex h-7 shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-3 text-[13px] font-extrabold leading-none', tone.badge)}>
@@ -2371,7 +2408,7 @@ function ScanProgressPanel({
 
   return (
     <motion.div
-      className='mt-4 space-y-3 overflow-hidden rounded-md border bg-background/70 p-4 shadow-sm shadow-cyan-950/10'
+      className='mt-4 space-y-3 overflow-hidden rounded-md border bg-[color:var(--surface-panel)] p-4 shadow-sm shadow-cyan-950/10'
       initial={reducedMotion ? false : { opacity: 0, y: 18, scale: 0.985 }}
       animate={reducedMotion ? undefined : { opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.42, ease: workbenchMotionEase }}
@@ -2626,7 +2663,7 @@ export function InvestigationDotStepper({
           </Button>
         </div>
 
-        <div className='flex flex-wrap items-center gap-2 rounded-md border bg-background/70 p-3'>
+        <div className='flex flex-wrap items-center gap-2 rounded-md border bg-[color:var(--surface-panel)] p-3'>
           {investigationSteps.map((step, index) => {
             const state = getInvestigationStepState(workspace, step, activeStepId)
             return (
@@ -3122,40 +3159,18 @@ function SupplyReachabilityPanel({
     () => [...(workspace.dependencies ?? [])].sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0)),
     [workspace.dependencies]
   )
-  const riskDependencies = useMemo(
-    () =>
-      dependencies.filter(
-        (dependency) =>
-          dependency.risk >= 50 ||
-          (dependency.signals?.length ?? 0) > 0 ||
-          (dependency.vulnerabilities?.length ?? 0) > 0 ||
-          dominantVexStatus(dependency) === 'affected'
-      ),
-    [dependencies]
-  )
   const reachability = buildReachabilityViewModel(workspace)
   const reachabilityItems = useMemo(
-    () => buildReachabilityItems(riskDependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
-    [riskDependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
+    () => buildReachabilityItems(dependencies, workspace.code_audit?.findings ?? [], reachability, workspace.multimodal_audit?.summary.evidence_count ?? 0),
+    [dependencies, reachability, workspace.code_audit?.findings, workspace.multimodal_audit?.summary.evidence_count]
   )
   const [reachabilityFilter, setReachabilityFilter] = useState<ReachabilityStatus | 'all'>('all')
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
-  const [showAllRiskRows, setShowAllRiskRows] = useState(false)
   const [selectedDependencyId, setSelectedDependencyId] = useState('')
   const [activeEvidence, setActiveEvidence] = useState('dependency')
   const [scanning, setScanning] = useState(false)
   const [supplementing, setSupplementing] = useState(false)
   const supplementInputRef = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (!reachabilityItems.length) return
-    if (!selectedDependencyId || !reachabilityItems.some((item) => item.id === selectedDependencyId)) {
-      setSelectedDependencyId(reachabilityItems[0].id)
-    }
-  }, [reachabilityItems, selectedDependencyId])
-  const selectedItem =
-    reachabilityItems.find((item) => item.id === selectedDependencyId) ??
-    reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
-    reachabilityItems[0]
   const baseRows = reachabilityItems
   const reachabilityOptions = reachabilityStatusOrder
   const severityOptions = severityOrder
@@ -3171,11 +3186,18 @@ function SupplyReachabilityPanel({
       }),
     [baseRows, reachabilityFilter, severityFilter]
   )
-  const hasMoreRiskRows = filteredRows.length > 12
-  const visibleRows = showAllRiskRows || !hasMoreRiskRows ? filteredRows : filteredRows.slice(0, 12)
   useEffect(() => {
-    setShowAllRiskRows(false)
-  }, [reachabilityFilter, severityFilter])
+    if (!reachabilityItems.length) return
+    const selectableRows = filteredRows.length ? filteredRows : reachabilityItems
+    if (!selectedDependencyId || !selectableRows.some((item) => item.id === selectedDependencyId)) {
+      setSelectedDependencyId(selectableRows[0].id)
+    }
+  }, [filteredRows, reachabilityItems, selectedDependencyId])
+  const selectedItem =
+    filteredRows.find((item) => item.id === selectedDependencyId) ??
+    reachabilityItems.find((item) => item.id === selectedDependencyId) ??
+    reachabilityItems.find((item) => item.name === reachability.targetDependency?.name) ??
+    reachabilityItems[0]
   useEffect(() => {
     if (!import.meta.env.DEV) return
 
@@ -3204,7 +3226,7 @@ function SupplyReachabilityPanel({
     { id: 'execution', label: '执行证据', value: selectedItem?.evidence.runtimeEvidence ?? 0, tone: (selectedItem?.evidence.runtimeEvidence ?? 0) > 0 ? 'hit' as const : 'gap' as const },
     { id: 'graph', label: '攻击链关联', value: selectedItem?.evidence.attackChainLinks ?? 0, tone: (selectedItem?.evidence.attackChainLinks ?? 0) > 0 ? 'hit' as const : 'gap' as const },
   ]
-  const matrixRows = buildUnifiedEvidenceRows(reachabilityItems)
+  const matrixRows = buildUnifiedEvidenceRows(filteredRows)
   const gapLabels = selectedItem?.missing ?? []
 
   async function rerunReachability() {
@@ -3250,7 +3272,7 @@ function SupplyReachabilityPanel({
 
   return (
     <div className='space-y-4'>
-      <section className='rounded-md border border-slate-400/15 bg-slate-950/70 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div className='min-w-0'>
             <div className='flex items-center gap-3'>
@@ -3308,106 +3330,18 @@ function SupplyReachabilityPanel({
           rows={matrixRows}
           selectedId={selectedItem?.id ?? ''}
           onSelectDependency={setSelectedDependencyId}
+          reachabilityFilter={reachabilityFilter}
+          onReachabilityFilter={setReachabilityFilter}
+          severityFilter={severityFilter}
+          onSeverityFilter={setSeverityFilter}
+          reachabilityOptions={reachabilityOptions}
+          severityOptions={severityOptions}
+          filteredCount={filteredRows.length}
+          totalCount={reachabilityItems.length}
         />
         <DependencyDetailWorkbench
           item={selectedItem}
         />
-      </div>
-
-      <div className='space-y-4'>
-        <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
-          <CardHeader className='pb-3'>
-            <div className='flex flex-wrap items-center justify-between gap-3'>
-              <CardTitle className='text-section-title text-slate-100'>高风险依赖</CardTitle>
-              <div className='flex flex-wrap items-center justify-end gap-3'>
-                <div className='flex flex-wrap gap-1.5'>
-                {(['all', ...reachabilityOptions] as const).map((value) => (
-                  <button
-                    key={value}
-                    type='button'
-                    className={cn(
-                      'inline-flex h-7 items-center whitespace-nowrap rounded-full border px-2.5 text-[13px] font-bold transition-colors',
-                      reachabilityFilter === value
-                        ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
-                        : 'border-slate-400/15 bg-slate-900/50 text-slate-300 hover:border-slate-300/30 hover:text-slate-100'
-                    )}
-                    onClick={() => setReachabilityFilter(value)}
-                  >
-                    {value === 'all' ? '全部' : reachabilityStatusLabel(value)}
-                  </button>
-                ))}
-                </div>
-                <Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}>
-                  <SelectTrigger size='sm' className='h-7 min-w-[112px] border-slate-400/15 bg-slate-900/50 text-slate-100'>
-                    <SelectValue placeholder='全部等级' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>全部等级</SelectItem>
-                    {severityOptions.map((severity) => <SelectItem key={severity} value={severity}>{severityLabel(severity)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ReachabilityGnnSummary items={reachabilityItems} />
-            <div className='overflow-x-auto rounded-md border border-slate-400/10'>
-              <Table>
-                <TableHeader>
-                  <TableRow className='border-slate-400/10 hover:bg-transparent'>
-                    <TableHead>依赖名</TableHead>
-                    <TableHead>当前版本</TableHead>
-                    <TableHead>请求版本</TableHead>
-                    <TableHead>来源</TableHead>
-                    <TableHead>可达性</TableHead>
-                    <TableHead>风险</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {visibleRows.length ? visibleRows.map((item) => {
-                    const selected = item.id === selectedItem?.id
-                    return (
-                      <TableRow
-                        key={item.id}
-                        className={cn('cursor-pointer border-slate-400/10 transition-colors hover:bg-slate-900/60', selected && 'bg-cyan-400/10')}
-                        onClick={() => setSelectedDependencyId(item.id)}
-                      >
-                        <TableCell className='font-medium text-slate-100'>{item.name}</TableCell>
-                        <TableCell className='text-slate-300'>{item.currentVersion || '-'}</TableCell>
-                        <TableCell className='text-slate-400'>{item.requestedVersion || '-'}</TableCell>
-                        <TableCell className='max-w-[180px] truncate text-slate-400' title={item.sourceFiles.join(' / ')}>
-                          {item.sourceFiles[0] || '-'}
-                        </TableCell>
-                        <TableCell>
-                          <ReachabilityStatePill state={item.status} />
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex flex-wrap items-center gap-1.5'>
-                            <SeverityPill severity={item.severity} />
-                            <ReachabilityGnnPill dependency={item.dependency} />
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  }) : (
-                    <TableRow>
-                      <TableCell colSpan={6} className='h-24 text-center text-sm text-slate-500'>
-                        无匹配依赖
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-            {hasMoreRiskRows ? (
-              <div className='mt-3 flex justify-center'>
-                <Button variant='ghost' size='sm' onClick={() => setShowAllRiskRows((current) => !current)}>
-                  {showAllRiskRows ? '收起' : `展开全部 ${filteredRows.length} 条`}
-                </Button>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
       </div>
     </div>
   )
@@ -3446,13 +3380,13 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
             <BrainCircuit className='size-4' />
             GNN 依赖风险证据
           </div>
-          <div className='mt-1 text-xs text-slate-400'>
+          <div className='mt-1 text-xs text-muted-foreground'>
             图神经网络对当前高风险依赖重新打分，用于补充可达性、版本和相似恶意包证据。
           </div>
         </div>
         <div className='flex flex-wrap gap-1.5'>
           {modelTypes.slice(0, 2).map((model) => (
-            <span key={model} className='rounded-full border border-cyan-300/25 bg-slate-950/55 px-2 py-0.5 text-[11px] text-cyan-100'>
+            <span key={model} className='rounded-full border border-cyan-300/25 bg-[color:var(--surface-inset)] px-2 py-0.5 text-[11px] text-cyan-100'>
               {model}
             </span>
           ))}
@@ -3471,14 +3405,14 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
           <button
             key={item.id}
             type='button'
-            className='rounded-md border border-slate-400/10 bg-slate-950/55 p-2 text-left'
+            className='rounded-md border border-border bg-[color:var(--surface-inset)] p-2 text-left'
             title={item.dependency.gnn_explanations?.join('；') || item.dependency.gnn_reasons?.join('；') || item.name}
           >
             <div className='flex items-center justify-between gap-2'>
-              <span className='min-w-0 truncate text-xs font-semibold text-slate-100'>{item.name}</span>
+              <span className='min-w-0 truncate text-xs font-semibold text-foreground'>{item.name}</span>
               <ReachabilityGnnPill dependency={item.dependency} />
             </div>
-            <div className='mt-1 truncate text-[11px] text-slate-400'>
+            <div className='mt-1 truncate text-[11px] text-muted-foreground'>
               {item.dependency.gnn_explanations?.[0] || item.dependency.gnn_reasons?.[0] || item.dependency.gnn_model_type || 'GNN risk signal'}
             </div>
           </button>
@@ -3490,8 +3424,8 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
 
 function ReachabilityGnnMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className='rounded-md border border-slate-400/10 bg-slate-950/55 px-2 py-2'>
-      <div className='text-[11px] text-slate-500'>{label}</div>
+    <div className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2'>
+      <div className='text-[11px] text-muted-foreground'>{label}</div>
       <div className='mt-1 text-sm font-semibold tabular-nums text-cyan-100'>{value}</div>
     </div>
   )
@@ -3534,19 +3468,19 @@ function ReachabilityGnnEvidence({ dependency }: { dependency: SecurityDependenc
       <div className='flex flex-wrap items-center gap-2'>
         <div className='text-xs font-semibold text-cyan-100'>GNN 模型证据</div>
         {dependency.gnn_model_type ? (
-          <span className='rounded-full border border-cyan-300/25 bg-slate-950/55 px-2 py-0.5 text-[11px] text-cyan-100'>
+          <span className='rounded-full border border-cyan-300/25 bg-[color:var(--surface-inset)] px-2 py-0.5 text-[11px] text-cyan-100'>
             {dependency.gnn_model_type}
           </span>
         ) : null}
         {typeof dependency.gnn_confidence === 'number' ? (
-          <span className='rounded-full border border-slate-400/15 bg-slate-950/55 px-2 py-0.5 text-[11px] text-slate-200'>
+          <span className='rounded-full border border-slate-400/15 bg-[color:var(--surface-inset)] px-2 py-0.5 text-[11px] text-[color:var(--type-body)]'>
             置信 {formatPercent(dependency.gnn_confidence)}
           </span>
         ) : null}
       </div>
 
       {explanations.length ? (
-        <ul className='mt-2 space-y-1 text-xs leading-5 text-slate-300'>
+        <ul className='mt-2 space-y-1 text-xs leading-5 text-muted-foreground'>
           {explanations.slice(0, 3).map((reason) => (
             <li key={reason} className='flex gap-2'>
               <span className='mt-2 size-1.5 shrink-0 rounded-full bg-cyan-300' />
@@ -3561,7 +3495,7 @@ function ReachabilityGnnEvidence({ dependency }: { dependency: SecurityDependenc
           {similarPackages.slice(0, 3).map((item) => (
             <span
               key={`${item.package}-${item.score}`}
-              className='rounded-full border border-slate-400/15 bg-slate-950/55 px-2 py-0.5 text-[11px] text-slate-300'
+              className='rounded-full border border-slate-400/15 bg-[color:var(--surface-inset)] px-2 py-0.5 text-[11px] text-muted-foreground'
             >
               {item.package || 'similar'} {typeof item.score === 'number' ? formatPercent(item.score) : ''}
             </span>
@@ -3597,11 +3531,11 @@ function DependencySelectorRail({
                 'relative min-w-44 rounded-md border px-3 py-2 text-left transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5',
                 selected
                   ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_10px_26px_rgba(8,145,178,0.12)]'
-                  : 'border-slate-400/15 bg-slate-900/55 hover:border-slate-300/30'
+                  : 'border-border bg-[color:var(--surface-inset)] hover:border-slate-300/30'
               )}
             >
               {selected ? <motion.span layoutId='dependency-rail-active' className='absolute inset-x-3 bottom-0 h-px bg-cyan-300/70' /> : null}
-              <div className='truncate text-sm font-semibold text-slate-100'>{item.name}@{item.currentVersion || '-'}</div>
+              <div className='truncate text-sm font-semibold text-foreground'>{item.name}@{item.currentVersion || '-'}</div>
               <div className='mt-2 flex items-center gap-1.5'>
                 <SeverityPill severity={item.severity} />
                 <ReachabilityStatePill state={item.status} />
@@ -3656,11 +3590,11 @@ function RiskScoreWorkbenchCard({
   const evidenceTotal = Math.max(1, evidenceBar.reduce((sum, item) => sum + item.value, 0))
 
   return (
-    <Card className='group h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25'>
+    <Card className='group h-full min-h-[420px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25 xl:h-[520px]'>
       <CardContent className='relative flex h-full flex-col p-4'>
         <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
         <div className='relative flex items-center justify-between gap-3'>
-          <div className='text-label text-slate-300'>风险评分</div>
+          <div className='text-label text-muted-foreground'>风险评分</div>
           <SeverityPill severity={severity} />
         </div>
         <div className='relative flex flex-1 items-center justify-center py-4'>
@@ -3671,7 +3605,7 @@ function RiskScoreWorkbenchCard({
               transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
             />
             <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
-              <circle cx='56' cy='56' r={radius} className='fill-none stroke-slate-800' strokeWidth='8' />
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
               <motion.circle
                 cx='56'
                 cy='56'
@@ -3697,13 +3631,13 @@ function RiskScoreWorkbenchCard({
             ['引用证据', codeHits, 'text-cyan-200'],
             ['证据缺口', gapCount, 'text-amber-200'],
           ].map(([label, value, color]) => (
-            <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2 text-center'>
+            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
               <div className='text-label'>{label}</div>
               <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
             </div>
           ))}
         </div>
-        <div className='mt-3 rounded-md border border-slate-400/10 bg-slate-900/45 p-2'>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
           <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
             {evidenceBar.map((item, index) => (
               <span
@@ -3735,6 +3669,14 @@ function ReachabilityFlowWorkbench({
   rows,
   selectedId,
   onSelectDependency,
+  reachabilityFilter,
+  onReachabilityFilter,
+  severityFilter,
+  onSeverityFilter,
+  reachabilityOptions,
+  severityOptions,
+  filteredCount,
+  totalCount,
 }: {
   steps: ReachabilityWorkbenchStep[]
   activeEvidence: string
@@ -3743,78 +3685,71 @@ function ReachabilityFlowWorkbench({
   rows: ReachabilityMatrixRow[]
   selectedId: string
   onSelectDependency: (id: string) => void
+  reachabilityFilter: ReachabilityStatus | 'all'
+  onReachabilityFilter: (value: ReachabilityStatus | 'all') => void
+  severityFilter: SecuritySeverity | 'all'
+  onSeverityFilter: (value: SecuritySeverity | 'all') => void
+  reachabilityOptions: ReachabilityStatus[]
+  severityOptions: SecuritySeverity[]
+  filteredCount: number
+  totalCount: number
 }) {
-  const reducedMotion = useReducedMotion()
-  const activeIndex = Math.max(0, steps.findIndex((step) => step.id === activeEvidence))
-  const activeStep = steps[activeIndex] ?? steps[0]
+  const activeStep = steps.find((step) => step.id === activeEvidence) ?? steps[0]
 
   return (
-    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
-      <CardHeader className='pb-2'>
-        <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='text-section-title'>可达路径图</CardTitle>
-          <span className='meta-chip'>{selectedItem?.name || '-'}</span>
+    <Card className='flex h-full min-h-[420px] flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[520px]'>
+      <CardHeader className='pb-3'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-2'>
+              <CardTitle className='text-section-title'>依赖证据</CardTitle>
+              <span className='meta-chip'>{filteredCount}/{totalCount}</span>
+            </div>
+            <div className='mt-1 truncate text-xs text-muted-foreground'>
+              {selectedItem?.name || '-'}
+            </div>
+          </div>
+          <div className='flex flex-wrap items-center justify-end gap-2'>
+            <div className='flex flex-wrap gap-1.5'>
+              {(['all', ...reachabilityOptions] as const).map((value) => (
+                <button
+                  key={value}
+                  type='button'
+                  className={cn(
+                    'inline-flex h-7 items-center whitespace-nowrap rounded-full border px-2.5 text-[12px] font-bold transition-colors',
+                    reachabilityFilter === value
+                      ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
+                      : 'border-border bg-[color:var(--surface-inset)] text-muted-foreground hover:border-slate-300/30 hover:text-foreground'
+                  )}
+                  onClick={() => onReachabilityFilter(value)}
+                >
+                  {value === 'all' ? '全部' : reachabilityStatusLabel(value)}
+                </button>
+              ))}
+            </div>
+            <Select value={severityFilter} onValueChange={(value) => onSeverityFilter(value as SecuritySeverity | 'all')}>
+              <SelectTrigger size='sm' className='h-7 min-w-[104px] border-border bg-[color:var(--surface-inset)] text-foreground'>
+                <SelectValue placeholder='全部等级' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部等级</SelectItem>
+                {severityOptions.map((severity) => <SelectItem key={severity} value={severity}>{severityLabel(severity)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
-      <CardContent className='flex h-[calc(100%-3.75rem)] flex-col gap-3'>
-        <div className='relative flex flex-1 items-center justify-between gap-3 overflow-hidden rounded-md border border-slate-400/10 bg-slate-900/35 px-4 py-6'>
-          <div className='absolute left-10 right-10 top-1/2 h-px -translate-y-1/2 bg-slate-700/80' />
-          <div
-            className='absolute left-10 top-1/2 h-px -translate-y-1/2 bg-cyan-300/50 transition-all duration-300'
-            style={{ width: `calc((100% - 5rem) * ${Math.max(0, activeIndex) / Math.max(1, steps.length - 1)})` }}
+      <CardContent className='min-h-0 flex-1'>
+        <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+          <PathEvidenceCoverage
+            rows={rows}
+            activeEvidence={activeEvidence}
+            selectedId={selectedId}
+            onActiveEvidence={onActiveEvidence}
+            onSelectDependency={onSelectDependency}
+            activeLabel={activeStep?.label ?? '证据'}
           />
-          <motion.div
-            className='absolute left-10 top-1/2 h-px w-28 -translate-y-1/2 bg-gradient-to-r from-transparent via-cyan-300/75 to-transparent'
-            animate={reducedMotion ? undefined : { x: ['0%', '520%'] }}
-            transition={{ duration: 3.6, repeat: Infinity, ease: 'linear' }}
-          />
-          {steps.map((step, index) => (
-            <motion.button
-              key={step.id}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.25, delay: index * 0.04 }}
-              type='button'
-              title={`${step.label}: ${step.value}`}
-              onClick={() => onActiveEvidence(step.id)}
-              className={cn(
-                'group relative z-10 flex min-w-0 flex-1 flex-col items-center gap-2.5 rounded-md border px-2 py-4 transition-[border-color,background-color,box-shadow,transform] hover:-translate-y-0.5',
-                activeEvidence === step.id
-                  ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[0_0_26px_rgba(34,211,238,0.16)]'
-                  : 'border-slate-400/15 bg-slate-950/75 hover:border-slate-300/30'
-              )}
-            >
-              <span className={cn('grid size-11 place-items-center rounded-full border text-sm font-semibold tabular-nums', reachabilityNodeTone(step.tone))}>
-                {typeof step.value === 'number' ? step.value : step.value.slice(0, 2)}
-              </span>
-              <span className='text-center text-xs font-medium leading-4 text-slate-200'>{step.label}</span>
-            </motion.button>
-          ))}
         </div>
-        {activeStep ? (
-          <motion.div
-            key={`${selectedItem?.id}-${activeStep.id}`}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.22 }}
-            className='rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'
-          >
-            <div className='flex items-center justify-between gap-3'>
-              <div className='text-xs font-medium text-slate-300'>{activeStep.label}</div>
-              <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', reachabilityNodeTone(activeStep.tone))}>
-                {activeStep.value}
-              </span>
-            </div>
-          </motion.div>
-        ) : null}
-        <PathEvidenceCoverage
-          rows={rows}
-          activeEvidence={activeEvidence}
-          selectedId={selectedId}
-          onActiveEvidence={onActiveEvidence}
-          onSelectDependency={onSelectDependency}
-          activeLabel={activeStep?.label ?? '证据'}
-        />
       </CardContent>
     </Card>
   )
@@ -3827,19 +3762,19 @@ function DependencyDetailWorkbench({
 }) {
   return (
     <motion.div
-      className='h-full min-w-0'
+      className='h-full min-w-0 xl:h-[520px]'
       key={item?.id ?? 'empty-detail'}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.24 }}
     >
-    <Card className='h-full min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+    <Card className='flex h-full min-h-[420px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[520px]'>
       <CardHeader className='pb-3'>
-        <CardTitle className='min-w-0 truncate text-base text-slate-100'>
+        <CardTitle className='min-w-0 truncate text-base text-foreground'>
           {item ? `${item.name}@${item.currentVersion || '-'}` : '依赖详情'}
         </CardTitle>
       </CardHeader>
-      <CardContent className='min-w-0 space-y-3 overflow-hidden'>
+      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
         <div className='flex flex-wrap gap-2'>
           <ReachabilityStatePill state={item?.status ?? 'pending'} />
           <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
@@ -3848,11 +3783,15 @@ function DependencyDetailWorkbench({
           {item ? <ReachabilityGnnPill dependency={item.dependency} /> : null}
         </div>
         <div className='grid gap-2 text-sm'>
+          <DetailRow label='当前版本' value={item?.currentVersion || '-'} />
           <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
+          <DetailRow label='生态' value={item?.packageManager || '-'} />
           <DetailRow label='来源' value={<DependencySourceValue sources={item?.sourceFiles ?? []} />} />
           <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} />
           <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} />
           <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} />
+          <DetailRow label='外部告警' value={item?.evidence.externalAlerts ?? 0} />
+          <DetailRow label='攻击链关联' value={item?.evidence.attackChainLinks ?? 0} />
         </div>
         {item ? <ReachabilityGnnEvidence dependency={item.dependency} /> : null}
         {(item?.advisories.length ?? 0) > 0 ? (
@@ -3865,7 +3804,7 @@ function DependencyDetailWorkbench({
             </CollapsibleTrigger>
             <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
               {item?.advisories.slice(0, 6).map((id) => (
-                <span key={id} title={id} className='max-w-full truncate rounded-md border border-slate-400/15 bg-slate-900/70 px-2 py-1 font-mono text-[11px] text-slate-300'>
+                <span key={id} title={id} className='max-w-full truncate rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-1 font-mono text-[11px] text-muted-foreground'>
                   {id}
                 </span>
               ))}
@@ -3934,7 +3873,7 @@ function PathEvidenceCoverage({
     ['external', '外部'],
     ['graph', '关联'],
   ]
-  const visibleRows = rows.slice(0, 5)
+  const visibleRows = rows
   const activeColumnIndex = Math.max(0, columns.findIndex(([id]) => id === activeEvidence))
 
   return (
@@ -3943,10 +3882,10 @@ function PathEvidenceCoverage({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className='rounded-md border border-slate-400/10 bg-slate-950/45 p-3'
+      className='rounded-md border border-border bg-[color:var(--surface-inset)] p-3'
     >
       <div className='mb-3 flex items-center justify-between gap-3'>
-        <div className='text-xs font-medium text-slate-300'>{activeLabel}</div>
+        <div className='text-xs font-medium text-muted-foreground'>{activeLabel}</div>
         <div className='grid grid-cols-6 gap-1.5'>
           {columns.map(([id, label]) => (
             <button
@@ -3957,7 +3896,7 @@ function PathEvidenceCoverage({
                 'rounded-full border px-2 py-0.5 text-[11px] transition-[border-color,background-color,color,transform] hover:-translate-y-0.5',
                 activeEvidence === id
                   ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
-                  : 'border-slate-400/15 bg-slate-900/50 text-slate-500 hover:border-slate-300/25 hover:text-slate-300'
+                  : 'border-border bg-[color:var(--surface-inset)] text-muted-foreground hover:border-slate-300/25 hover:text-muted-foreground'
               )}
             >
               {label}
@@ -3972,11 +3911,11 @@ function PathEvidenceCoverage({
             type='button'
             onClick={() => onSelectDependency(row.id)}
             className={cn(
-              'grid w-full grid-cols-[minmax(0,1fr)_160px] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/35 px-2.5 py-2 text-left transition-[border-color,background-color] hover:border-slate-300/25 hover:bg-slate-900/55',
+              'grid w-full grid-cols-[minmax(0,1fr)_160px] items-center gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-2.5 py-2 text-left transition-[border-color,background-color] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
               row.id === selectedId && 'border-cyan-300/35 bg-cyan-400/10'
             )}
           >
-            <div className='truncate text-xs font-medium text-slate-300' title={row.signal}>
+            <div className='truncate text-xs font-medium text-muted-foreground' title={row.signal}>
               {row.signal}
             </div>
             <div className='grid grid-cols-6 gap-2'>
@@ -4011,9 +3950,9 @@ function PathEvidenceCoverage({
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   const isTextValue = typeof value === 'string' || typeof value === 'number'
   return (
-    <div className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/50 px-3 py-2'>
-      <span className='whitespace-nowrap text-label text-slate-400'>{label}</span>
-      <div className='min-w-0 overflow-hidden text-right font-medium text-slate-200' title={isTextValue ? String(value) : undefined}>
+    <div className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2'>
+      <span className='whitespace-nowrap text-label text-muted-foreground'>{label}</span>
+      <div className='min-w-0 overflow-hidden text-right font-medium text-[color:var(--type-body)]' title={isTextValue ? String(value) : undefined}>
         {isTextValue ? <span className='block truncate'>{value}</span> : value}
       </div>
     </div>
@@ -4247,7 +4186,7 @@ function formatReachabilityEvidence(evidence: unknown): string {
 }
 
 function buildUnifiedEvidenceRows(items: ReachabilityAnalysisItem[]): ReachabilityMatrixRow[] {
-  const rows = items.slice(0, 12).map((item) => {
+  const rows = items.map((item) => {
     return {
       id: item.id,
       signal: item.name,
@@ -6730,7 +6669,7 @@ function PipelinePanel({
 
   return (
     <div className='space-y-4'>
-      <section className='rounded-md border border-slate-400/15 bg-slate-950/70 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div className='min-w-0'>
             <div className='flex items-center gap-3'>
@@ -6824,18 +6763,18 @@ function PipelinePanel({
           onSelectCluster={selectCluster}
           onReset={resetCicdView}
         />
-        <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+        <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-inset)]'>
           <CardHeader className='pb-3'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
               <div className='flex flex-wrap items-center gap-2'>
-                <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', activeNodeId === 'all' ? 'border-slate-400/15 bg-slate-900/60 text-slate-300' : cicdNodeTone(selectedNode?.status ?? 'empty'))}>
+                <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
+                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', activeNodeId === 'all' ? 'border-border bg-[color:var(--surface-inset)] text-muted-foreground' : cicdNodeTone(selectedNode?.status ?? 'empty'))}>
                   {activeNodeId === 'all' ? '全部风险' : `当前节点：${selectedNodeLabel}`}
                 </span>
               </div>
               <div className='flex flex-wrap items-center gap-2'>
                 <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                  <SelectTrigger size='sm' className='w-[120px] rounded-md border-slate-400/15 bg-slate-900/60'>
+                  <SelectTrigger size='sm' className='w-[120px] rounded-md border-border bg-[color:var(--surface-inset)]'>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -6847,7 +6786,7 @@ function PipelinePanel({
                   </SelectContent>
                 </Select>
                 <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
-                  <SelectTrigger size='sm' className='w-[140px] rounded-md border-slate-400/15 bg-slate-900/60'>
+                  <SelectTrigger size='sm' className='w-[140px] rounded-md border-border bg-[color:var(--surface-inset)]'>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -6974,13 +6913,13 @@ function CicdConclusionStrip({
   const primary = clusters[0]?.title ?? conclusion.keyRisks[0] ?? '未发现高优先级风险'
   const priorities = clusters.flatMap((cluster) => cluster.findings.slice(0, 2)).map((finding) => finding.step_name || finding.job_name || compactWorkflowPath(finding.workflow))
   return (
-    <div className='mt-4 grid gap-2 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2.5 md:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(220px,1.35fr)]'>
+    <div className='mt-4 grid gap-2 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2.5 md:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(220px,1.35fr)]'>
       <div className='flex items-center gap-2'>
         <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2.5 py-1 text-xs font-semibold text-orange-100'>构建链可复现性风险</span>
       </div>
-      <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>主要风险</div><div className='truncate text-sm font-bold text-slate-100' title={primary}>{primary}</div></div>
-      <div><div className='text-[11px] font-medium text-slate-500'>影响范围</div><div className='text-sm font-semibold text-slate-200'>{audit.workflows?.length || audit.summary.workflow_count || 0} workflows / {audit.summary.total_steps || audit.summary.job_count || 0} steps</div></div>
-      <div className='min-w-0'><div className='text-[11px] font-medium text-slate-500'>优先处理</div><div className='truncate text-sm font-semibold text-orange-100' title={priorities.join(' / ')}>{priorities.slice(0, 3).join(' / ') || '-'}</div></div>
+      <div className='min-w-0'><div className='text-[11px] font-medium text-muted-foreground'>主要风险</div><div className='truncate text-sm font-bold text-foreground' title={primary}>{primary}</div></div>
+      <div><div className='text-[11px] font-medium text-muted-foreground'>影响范围</div><div className='text-sm font-semibold text-[color:var(--type-body)]'>{audit.workflows?.length || audit.summary.workflow_count || 0} workflows / {audit.summary.total_steps || audit.summary.job_count || 0} steps</div></div>
+      <div className='min-w-0'><div className='text-[11px] font-medium text-muted-foreground'>优先处理</div><div className='truncate text-sm font-semibold text-orange-100' title={priorities.join(' / ')}>{priorities.slice(0, 3).join(' / ') || '-'}</div></div>
     </div>
   )
 }
@@ -7007,10 +6946,10 @@ function CicdRiskOverviewCard({
   ]
   const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
   return (
-    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70 shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+    <Card className='h-full min-h-[390px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
       <CardContent className='flex h-full flex-col p-4'>
         <div className='flex items-center justify-between gap-3'>
-          <div className='flex items-center gap-2 text-section-title text-slate-100'><ShieldAlert className='size-5 text-orange-200' />风险总览</div>
+          <div className='flex items-center gap-2 text-section-title text-foreground'><ShieldAlert className='size-5 text-orange-200' />风险总览</div>
           <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>
             {severityLabel(audit?.summary.risk_level ?? 'low')}
           </span>
@@ -7019,11 +6958,11 @@ function CicdRiskOverviewCard({
           <div className='flex items-end justify-between gap-4'>
             <div>
               <div className='text-6xl font-extrabold leading-none text-orange-100 tabular-nums'>{displayTotal}</div>
-              <div className='mt-2 text-sm font-semibold text-slate-300'>风险总数</div>
+              <div className='mt-2 text-sm font-semibold text-muted-foreground'>风险总数</div>
             </div>
             <div className='grid gap-2 text-right text-sm'>
-              <span className='text-slate-400'>新增 <b className='text-orange-100 tabular-nums'>{audit?.summary.new ?? total}</b></span>
-              <span className='text-slate-400'>已修复 <b className='text-emerald-100 tabular-nums'>{audit?.summary.fixed ?? 0}</b></span>
+              <span className='text-muted-foreground'>新增 <b className='text-orange-100 tabular-nums'>{audit?.summary.new ?? total}</b></span>
+              <span className='text-muted-foreground'>已修复 <b className='text-emerald-100 tabular-nums'>{audit?.summary.fixed ?? 0}</b></span>
             </div>
           </div>
           <div className='mt-5 h-2.5 overflow-hidden rounded-full bg-slate-800/60'>
@@ -7044,8 +6983,8 @@ function CicdRiskOverviewCard({
               ['中危', audit?.summary.medium ?? 0, 'text-amber-100'],
               ['低危', audit?.summary.low ?? 0, 'text-cyan-100'],
             ].map(([label, value, color]) => (
-                <div key={label} className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2.5 text-center'>
-                <div className='text-xs font-medium text-slate-400'>{label}</div>
+                <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2.5 text-center'>
+                <div className='text-xs font-medium text-muted-foreground'>{label}</div>
                 <div className={cn('mt-1 text-2xl font-bold tabular-nums', color)}>{value}</div>
               </div>
             ))}
@@ -7067,27 +7006,27 @@ function BuildStepFlow({
   onSelectStep: (index: number) => void
 }) {
   const sevColors: Record<string, string> = {
-    critical: 'border-red-500/40 bg-red-950/30 text-red-300',
-    high: 'border-orange-500/40 bg-orange-950/30 text-orange-300',
-    medium: 'border-amber-500/40 bg-amber-950/30 text-amber-300',
-    low: 'border-slate-500/30 bg-slate-900/40 text-slate-300',
-    normal: 'border-slate-500/20 bg-slate-900/30 text-slate-400',
+    critical: 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-950/30 dark:text-red-300',
+    high: 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/40 dark:bg-orange-950/30 dark:text-orange-300',
+    medium: 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-300',
+    low: 'border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-500/30 dark:bg-slate-900/40 dark:text-muted-foreground',
+    normal: 'border-slate-200 bg-white/60 text-slate-500 dark:border-slate-500/20 dark:bg-slate-900/30 dark:text-muted-foreground',
   }
 
   return (
     <Card className='h-full min-h-[390px] surface-raised flex flex-col'>
       <CardHeader className='pb-2 shrink-0'>
-        <CardTitle className='flex items-center gap-2 text-sm font-bold'><GitBranch className='size-4 text-cyan-400' />构建链路图</CardTitle>
+        <CardTitle className='flex items-center gap-2 text-sm font-bold'><GitBranch className='size-4 text-cyan-600 dark:text-cyan-400' />构建链路图</CardTitle>
       </CardHeader>
       <CardContent className='flex-1 min-h-0 overflow-hidden px-3'>
         <div className='h-full overflow-x-auto pb-3 snap-x snap-mandatory [scrollbar-width:thin]'>
           <div className='relative flex items-stretch gap-3 min-w-max py-4 pl-1 pr-4'>
             {/* Connection line */}
-            <div className='absolute left-10 right-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-slate-700/40 via-slate-600/60 to-slate-700/40' />
+            <div className='absolute left-10 right-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200 dark:from-slate-700/40 dark:via-slate-600/60 dark:to-slate-700/40' />
             {/* Active progress line */}
             {activeStepIndex != null && (
               <div
-                className='absolute left-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-cyan-500/60 to-orange-400/50 transition-all duration-500'
+                className='absolute left-10 top-[calc(50%+2px)] h-0.5 -translate-y-1/2 bg-gradient-to-r from-cyan-400/50 to-orange-400/40 dark:from-cyan-500/60 dark:to-orange-400/50 transition-all duration-500'
                 style={{ width: `calc((100% - 5rem) * ${activeStepIndex / Math.max(1, steps.length - 1)})` }}
               />
             )}
@@ -7108,14 +7047,14 @@ function BuildStepFlow({
                         'relative z-10 flex shrink-0 flex-col items-center justify-center gap-2 rounded-xl border w-[148px] h-[130px] px-3 py-3 transition-all duration-300 snap-start',
                         'hover:-translate-y-1 hover:shadow-lg active:scale-[0.98]',
                         active
-                          ? 'border-cyan-400/50 bg-cyan-950/30 shadow-[0_0_20px_rgba(6,182,212,0.12)]'
-                          : `${s} hover:border-white/10`,
+                          ? 'border-cyan-300 bg-cyan-50 shadow-[0_0_20px_rgba(6,182,212,0.15)] dark:border-cyan-400/50 dark:bg-cyan-950/30 dark:shadow-[0_0_20px_rgba(6,182,212,0.12)]'
+                          : `${s} hover:border-slate-300 dark:hover:border-white/10`,
                       )}
                     >
                       {/* Step number */}
                       <span className={cn(
                         'grid size-8 shrink-0 place-items-center rounded-full text-[11px] font-black tabular-nums',
-                        active ? 'bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/30' : 'bg-slate-800/60 text-slate-400',
+                        active ? 'bg-cyan-100 text-cyan-700 ring-1 ring-cyan-300 dark:bg-cyan-500/20 dark:text-cyan-300 dark:ring-cyan-400/30' : 'bg-slate-100 text-slate-500 dark:bg-slate-800/60 dark:text-muted-foreground',
                       )}>
                         {step.index}
                       </span>
@@ -7123,7 +7062,7 @@ function BuildStepFlow({
                       <span
                         className={cn(
                           'w-full text-center text-[13px] font-bold leading-tight truncate',
-                          active ? 'text-foreground' : 'text-slate-300',
+                          active ? 'text-foreground' : 'text-muted-foreground',
                         )}
                         title={step.title}
                       >
@@ -7187,7 +7126,7 @@ function BuildStepDetail({
       <Card className='h-full min-h-[390px] surface-raised overflow-y-auto flex flex-col'>
         <CardHeader className='pb-3 shrink-0'>
           <div className='flex items-center gap-2.5'>
-            <span className='grid size-8 shrink-0 place-items-center rounded-lg bg-cyan-950/50 text-xs font-black text-cyan-300 ring-1 ring-cyan-500/20'>
+            <span className='grid size-8 shrink-0 place-items-center rounded-lg bg-cyan-100 text-xs font-black text-cyan-700 ring-1 ring-cyan-300 dark:bg-cyan-950/50 dark:text-cyan-300 dark:ring-cyan-500/20'>
               {step.index}
             </span>
             <div className='min-w-0'>
@@ -7201,15 +7140,15 @@ function BuildStepDetail({
           <div className='flex flex-wrap gap-1.5'>
             <span className={cn(
               'rounded-full border px-2 py-0.5 text-[10px] font-bold shrink-0',
-              step.riskLevel === 'critical' ? 'border-red-500/30 bg-red-950/30 text-red-300' :
-              step.riskLevel === 'high' ? 'border-orange-500/30 bg-orange-950/30 text-orange-300' :
-              step.riskLevel === 'medium' ? 'border-amber-500/30 bg-amber-950/30 text-amber-300' :
-              step.riskLevel === 'low' ? 'border-slate-500/30 bg-slate-900/30 text-slate-300' :
-              'border-emerald-500/20 bg-emerald-950/20 text-emerald-300'
+              step.riskLevel === 'critical' ? 'border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-950/30 dark:text-red-300' :
+              step.riskLevel === 'high' ? 'border-orange-300 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-950/30 dark:text-orange-300' :
+              step.riskLevel === 'medium' ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-300' :
+              step.riskLevel === 'low' ? 'border-slate-300 bg-slate-50 text-slate-600 dark:border-slate-500/30 dark:bg-slate-900/30 dark:text-muted-foreground' :
+              'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-950/20 dark:text-emerald-300'
             )}>
               {step.riskLevel === 'normal' ? '正常' : `${step.riskCount} 风险`}
             </span>
-            <span className='rounded-full border border-slate-500/20 bg-slate-900/30 px-2 py-0.5 text-[10px] text-slate-300 shrink-0'>
+            <span className='rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-600 dark:border-slate-500/20 dark:bg-slate-900/30 dark:text-muted-foreground shrink-0'>
               {step.status}
             </span>
           </div>
@@ -7233,15 +7172,15 @@ function BuildStepDetail({
           {/* Evidence summary — equal height cells */}
           <div className='grid grid-cols-3 gap-2 text-center text-xs'>
             <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
-              <div className='text-xl font-black text-cyan-400 tabular-nums'>{uniqueWorkflows.length}</div>
+              <div className='text-xl font-black text-cyan-600 dark:text-cyan-400 tabular-nums'>{uniqueWorkflows.length}</div>
               <div className='mt-0.5 text-[10px] text-muted-foreground'>Workflows</div>
             </div>
             <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
-              <div className='text-xl font-black text-orange-400 tabular-nums'>{uniqueJobs.length}</div>
+              <div className='text-xl font-black text-orange-600 dark:text-orange-400 tabular-nums'>{uniqueJobs.length}</div>
               <div className='mt-0.5 text-[10px] text-muted-foreground'>Jobs</div>
             </div>
             <div className='rounded-lg surface-inset p-2.5 flex flex-col items-center justify-center h-[64px]'>
-              <div className='text-xl font-black text-slate-300 tabular-nums'>{findings.length}</div>
+              <div className='text-xl font-black text-muted-foreground tabular-nums'>{findings.length}</div>
               <div className='mt-0.5 text-[10px] text-muted-foreground'>风险发现</div>
             </div>
           </div>
@@ -7251,7 +7190,7 @@ function BuildStepDetail({
             <div className='space-y-2'>
               <div className='text-[10px] uppercase tracking-wider text-muted-foreground'>关联风险发现</div>
               {findings.slice(0, 6).map(f => (
-                <div key={f.id} className='rounded-lg border border-border/40 bg-card/50 p-2.5'>
+                <div key={f.id} className='rounded-lg border border-border/40 bg-[color:var(--surface-panel)] p-2.5'>
                   <div className='flex items-start justify-between gap-2'>
                     <div className='min-w-0 flex-1'>
                       <div className='text-xs font-bold truncate' title={cicdFindingTitle(f)}>{cicdFindingTitle(f)}</div>
@@ -7295,11 +7234,11 @@ function CicdRiskClusterPanel({
   onReset: () => void
 }) {
   return (
-    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'>
+    <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-inset)]'>
       <CardHeader className='pb-3'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-section-title text-slate-100'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
-          <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-100'>全部</button>
+          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
+          <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-slate-800 hover:text-foreground'>全部</button>
         </div>
       </CardHeader>
       <CardContent className='flex flex-wrap gap-3 pt-0'>
@@ -7315,15 +7254,15 @@ function CicdRiskClusterPanel({
               onClick={() => onSelectCluster(cluster.id)}
               className={cn(
                 'min-h-[124px] min-w-[280px] flex-1 rounded-md border p-3 text-left transition-[border-color,background-color,box-shadow]',
-                selected ? 'border-orange-300/40 bg-orange-400/10 shadow-[0_0_22px_rgba(251,146,60,0.12)]' : 'border-slate-400/10 bg-slate-900/45 hover:border-slate-300/30'
+                selected ? 'border-orange-300/40 bg-orange-400/10 shadow-[0_0_22px_rgba(251,146,60,0.12)]' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/30'
               )}
             >
               <div className='flex items-start justify-between gap-3'>
                 <div className='min-w-0'>
-                  <div className='truncate text-[17px] font-bold leading-5 text-slate-100'>{cluster.title}</div>
+                  <div className='truncate text-[17px] font-bold leading-5 text-foreground'>{cluster.title}</div>
                   <div className='mt-2 flex flex-wrap items-center gap-1.5'>
                     <SeverityPill severity={cluster.severity} />
-                    <span className='text-xs font-medium text-slate-400'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
+                    <span className='text-xs font-medium text-muted-foreground'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
                   </div>
                 </div>
                 <span className='text-3xl font-extrabold leading-none text-orange-100 tabular-nums'>{cluster.count}</span>
@@ -7340,7 +7279,7 @@ function CicdRiskClusterPanel({
             </motion.button>
           )
         }) : (
-          <div className='w-full rounded-md border border-slate-400/10 bg-slate-900/35 p-4 text-sm text-slate-500'>未发现风险聚类</div>
+          <div className='w-full rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-4 text-sm text-muted-foreground'>未发现风险聚类</div>
         )}
       </CardContent>
     </Card>
@@ -7363,7 +7302,7 @@ function CicdFindingList({
   onIgnore: (finding: CicdFinding) => void
 }) {
   if (!findings.length) {
-    return <div className='rounded-md border border-slate-400/10 bg-slate-900/35 p-6 text-center text-sm text-slate-500'>无匹配风险</div>
+    return <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>无匹配风险</div>
   }
 
   return (
@@ -7374,7 +7313,7 @@ function CicdFindingList({
           <motion.div
             key={finding.fingerprint}
             layout
-            className={cn('overflow-hidden rounded-md border transition-colors', selected ? 'border-orange-300/35 bg-orange-400/10' : 'border-slate-400/10 bg-slate-900/35 hover:bg-slate-900/55')}
+            className={cn('overflow-hidden rounded-md border transition-colors', selected ? 'border-orange-300/35 bg-orange-400/10' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:bg-[color:var(--surface-inset)]')}
           >
             <button
               type='button'
@@ -7382,13 +7321,13 @@ function CicdFindingList({
               className='grid w-full grid-cols-[72px_minmax(160px,1fr)_130px_110px_120px_80px] items-center gap-3 px-3 py-2.5 text-left text-xs'
             >
               <SeverityPill severity={finding.severity} />
-              <span className='truncate text-sm font-bold text-slate-100' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
-              <span className='truncate font-medium text-slate-300' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
-              <span className='truncate font-medium text-slate-300' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
-              <span className='truncate font-medium text-slate-300' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
-              <span className='flex items-center justify-between gap-1 font-medium text-slate-400'>
+              <span className='truncate text-sm font-bold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
+              <span className='truncate font-medium text-muted-foreground' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
+              <span className='truncate font-medium text-muted-foreground' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
+              <span className='truncate font-medium text-muted-foreground' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
+              <span className='flex items-center justify-between gap-1 font-medium text-muted-foreground'>
                 未修复
-                {selected ? <ChevronUp className='size-4 text-slate-500' /> : <ChevronDown className='size-4 text-slate-500' />}
+                {selected ? <ChevronUp className='size-4 text-muted-foreground' /> : <ChevronDown className='size-4 text-muted-foreground' />}
               </span>
             </button>
             {selected ? (
@@ -7398,12 +7337,12 @@ function CicdFindingList({
                   <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
                   <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
                 </div>
-                <div className='mt-3 flex items-center justify-between gap-3 text-xs text-slate-400'>
+                <div className='mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground'>
                   <div className='flex min-w-0 flex-wrap items-center gap-2'>
-                    <span className='rounded-full border border-slate-400/10 bg-slate-950/55 px-2 py-1 font-semibold text-slate-300'>节点：{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
+                    <span className='rounded-full border border-border bg-[color:var(--surface-inset)] px-2 py-1 font-semibold text-muted-foreground'>节点：{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
                     <span className='truncate font-mono' title={`${finding.workflow}:${finding.line}`}>{compactWorkflowPath(finding.workflow)}:{finding.line}</span>
-                    {finding.job_id ? <span className='truncate font-medium text-slate-300' title={finding.job_id}>Job：{finding.job_id}</span> : null}
-                    {finding.step_name ? <span className='truncate font-medium text-slate-300' title={finding.step_name}>Step：{finding.step_name}</span> : null}
+                    {finding.job_id ? <span className='truncate font-medium text-muted-foreground' title={finding.job_id}>Job：{finding.job_id}</span> : null}
+                    {finding.step_name ? <span className='truncate font-medium text-muted-foreground' title={finding.step_name}>Step：{finding.step_name}</span> : null}
                   </div>
                   <Button variant='ghost' size='sm' disabled={disabled} onClick={(event) => { event.stopPropagation(); onIgnore(finding) }}>
                     <EyeOff className='size-4' />
@@ -7569,7 +7508,7 @@ function cicdNodeTone(status: CicdGraphNode['status']) {
   if (status === 'high') return 'border-orange-300/35 bg-orange-500/10 text-orange-100 shadow-[0_0_18px_rgba(251,146,60,0.13)]'
   if (status === 'gap') return 'border-amber-300/35 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.1)]'
   if (status === 'normal') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.1)]'
-  return 'border-slate-500/30 bg-slate-800/70 text-slate-400'
+  return 'border-slate-500/30 bg-slate-800/70 text-muted-foreground'
 }
 
 function cicdNodeStatusLabel(status: CicdGraphNode['status']) {
@@ -7631,8 +7570,8 @@ function CicdInfoBlock({
   tone?: 'default' | 'action'
 }) {
   return (
-    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'action-advice' : 'border-slate-400/10 bg-slate-950/55')}>
-      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', tone === 'action' ? 'text-orange-100' : 'text-slate-200')}>
+    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'action-advice' : 'border-border bg-[color:var(--surface-inset)]')}>
+      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', tone === 'action' ? 'text-orange-100' : 'text-[color:var(--type-body)]')}>
         {tone === 'action' ? <ShieldCheck className='size-4' /> : null}
         {title}
       </div>
@@ -8044,6 +7983,8 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   const [activeEvidence, setActiveEvidence] = useState<EvidenceKey>('artifact')
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
+  const [lastUploadedScanId, setLastUploadedScanId] = useState<string | null>(null)
+  const [lastUploadedMaterialKey, setLastUploadedMaterialKey] = useState('')
   const evidenceInputRef = useRef<HTMLDivElement>(null)
   const activeResult = result ?? (import.meta.env.DEV ? artifactTrustPreviewResult : undefined)
   const isPreview = !result && Boolean(activeResult)
@@ -8054,16 +7995,53 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   const passedChecks = checks.filter((check) => check.status === 'pass')
   const activeIssue = checks.find((check) => check.name === activeIssueId)
   const nodes = artifactTrustNodes(activeResult, score)
+  const requiredFilesReady = artifactTrustRequiredFilesReady({
+    artifactSelected: Boolean(artifactFile),
+    attestationSelected: Boolean(attestationFile),
+  })
+  const optionalConfigured = Boolean(
+    expectedRepo.trim() ||
+    expectedCommit.trim() ||
+    allowedWorkflows.trim() ||
+    allowedBuilders.trim() ||
+    requireSignature ||
+    allowSelfHostedRunner
+  )
+  const readinessMessage = artifactTrustGateReadinessMessage({
+    requiredReady: requiredFilesReady,
+    optionalConfigured,
+  })
+  const selectedMaterialKey = `${artifactFile?.name ?? ''}|${attestationFile?.name ?? ''}`
+  const currentScanId = activeResult?.scan_id ?? null
+  const scoreSource =
+    currentScanId && currentScanId === lastUploadedScanId && selectedMaterialKey === lastUploadedMaterialKey
+      ? 'fresh'
+      : requiredFilesReady
+        ? 'pending'
+        : isPreview
+          ? 'preview'
+          : activeResult?.scan_id
+            ? 'previous'
+            : 'empty'
+  const artifactMaterial = ARTIFACT_TRUST_REQUIRED_MATERIALS.find((material) => material.id === 'artifact')
+  const attestationMaterial = ARTIFACT_TRUST_REQUIRED_MATERIALS.find((material) => material.id === 'attestation')
+  const policyMaterial = ARTIFACT_TRUST_OPTIONAL_MATERIALS.find((material) => material.id === 'policy')
+  const signatureMaterial = ARTIFACT_TRUST_OPTIONAL_MATERIALS.find((material) => material.id === 'signature')
+  const releaseMaterial = ARTIFACT_TRUST_OPTIONAL_MATERIALS.find((material) => material.id === 'release')
 
   function handleEvidenceClick(key: EvidenceKey) { setActiveEvidence(key); setActiveIssueId(null) }
   function handleIssueClick(issueId: string) { setActiveIssueId((current) => current === issueId ? null : issueId) }
 
   async function verifyGate() {
+    if (!requiredFilesReady) {
+      toast.error('请先补充产物文件和来源证明')
+      return
+    }
     setScanning(true)
     try {
-      const next = artifactFile && attestationFile
-        ? await uploadArtifactTrustScan({ workspaceId, artifact: artifactFile, attestation: attestationFile, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
-        : await runArtifactTrustScan({ workspaceId, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
+      const next = await uploadArtifactTrustScan({ workspaceId, artifact: artifactFile, attestation: attestationFile, expectedRepo, expectedCommit, allowedWorkflows: splitPolicyList(allowedWorkflows), allowedBuilders: splitPolicyList(allowedBuilders), requireSignature, requireProvenance: true, allowSelfHostedRunner, maxAgeHours: 24 })
+      setLastUploadedScanId(next.scan_id ?? null)
+      setLastUploadedMaterialKey(selectedMaterialKey)
       await onScanned(next)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '产物可信验证失败')
@@ -8082,35 +8060,181 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
         </div>
       </div>
       <div className='flex flex-wrap gap-2'>
-        <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}重新验证</Button>
+        <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning || !requiredFilesReady}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}{scanning ? '正在执行门禁验证' : artifactTrustGateButtonLabel(requiredFilesReady)}</Button>
         <Button variant='outline' size='sm' onClick={() => evidenceInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Upload />{SUPPLEMENT_FILE_LABEL}</Button>
         <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
       </div>
     </section>
 
-    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,45fr)_minmax(250px,25fr)]'>
-      <div ref={evidenceInputRef} className='min-w-0'><Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
+    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(520px,3fr)_minmax(360px,2fr)]'>
+      <div ref={evidenceInputRef} className='min-w-0'><Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
         <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'><Upload className='size-5 text-cyan-300' />{SUPPLEMENT_FILE_INPUT_TITLE}</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待补充'}</span></div>
-        <div className='mt-5 grid gap-3'><Input type='file' className={fileInputClass} onChange={event => setArtifactFile(event.target.files?.[0] ?? null)} /><Input type='file' accept='.json,.jsonl,application/json' className={fileInputClass} onChange={event => setAttestationFile(event.target.files?.[0] ?? null)} /></div>
-        <div className='mt-4 flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'><span className='text-label'>策略摘要</span><span className='truncate text-value' title={expectedRepo || '未配置'}>{expectedRepo || '未配置'} · {requireSignature ? '要求签名' : '未要求签名'}</span></div>
+        <div className='mt-4 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-sm text-muted-foreground'>
+          {readinessMessage}
+        </div>
+        <div className='mt-4 space-y-3'>
+          {artifactMaterial ? (
+            <ArtifactTrustMaterialRow
+              material={artifactMaterial}
+              status={artifactFile ? '已选择' : activeResult?.artifact ? '已用于验证' : '待补充'}
+            />
+          ) : null}
+          {attestationMaterial ? (
+            <ArtifactTrustMaterialRow
+              material={attestationMaterial}
+              status={attestationFile ? '已选择' : activeResult?.attestation_path ? '已用于验证' : '待补充'}
+            />
+          ) : null}
+          {policyMaterial ? (
+            <ArtifactTrustMaterialRow
+              material={policyMaterial}
+              status={expectedRepo || expectedCommit || allowedWorkflows || allowedBuilders ? '已配置' : '未提供'}
+            />
+          ) : null}
+          {signatureMaterial ? (
+            <ArtifactTrustMaterialRow
+              material={signatureMaterial}
+              status={requireSignature ? '可增强判断' : '未提供'}
+            />
+          ) : null}
+          {releaseMaterial ? (
+            <ArtifactTrustMaterialRow
+              material={releaseMaterial}
+              status={expectedRepo || expectedCommit || allowedWorkflows || allowedBuilders ? '已配置' : '未提供'}
+            />
+          ) : null}
+        </div>
+        <div className='mt-5 grid gap-3'>
+          <div className='rounded-md border border-cyan-300/20 bg-cyan-400/5 p-3'>
+            <div className='flex flex-wrap items-center justify-between gap-2'>
+              <Label htmlFor='artifact-required-file' className='text-sm font-bold text-foreground'>Artifact 产物文件</Label>
+              <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-100'>必填</span>
+            </div>
+            <p className='mt-2 text-xs leading-5 text-muted-foreground'>Artifact 是待验证的发布/构建产物，例如 tar.gz、exe、zip、tgz，或记录 docker image digest 的文件；系统会用它计算 digest。</p>
+            <Input
+              id='artifact-required-file'
+              aria-label='Artifact 产物文件'
+              type='file'
+              className={cn(fileInputClass, 'mt-3')}
+              onChange={event => setArtifactFile(event.target.files?.[0] ?? null)}
+            />
+          </div>
+          <div className='rounded-md border border-amber-300/20 bg-amber-400/5 p-3'>
+            <div className='flex flex-wrap items-center justify-between gap-2'>
+              <Label htmlFor='attestation-required-file' className='text-sm font-bold text-foreground'>Attestation / Provenance 来源证明</Label>
+              <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-100'>必填</span>
+            </div>
+            <p className='mt-2 text-xs leading-5 text-muted-foreground'>Attestation / Provenance 是来源证明，不是产物本身；用于核对仓库、commit、workflow、builder，以及证明里声明的 subject digest。</p>
+            <Input
+              id='attestation-required-file'
+              aria-label='Attestation / Provenance 来源证明'
+              type='file'
+              accept='.json,.jsonl,application/json'
+              className={cn(fileInputClass, 'mt-3')}
+              onChange={event => setAttestationFile(event.target.files?.[0] ?? null)}
+            />
+          </div>
+        </div>
+        <Button className={cn('mt-4 w-full', actionButtonClass)} onClick={() => void verifyGate()} disabled={scanning || !requiredFilesReady}>
+          {scanning ? <Loader2 className='animate-spin' /> : <Upload />}
+          {scanning ? '正在上传并执行门禁' : requiredFilesReady ? '上传并执行门禁' : '补齐必填材料后验证'}
+        </Button>
+        <div className='mt-4 flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2'><span className='text-label'>策略摘要</span><span className='truncate text-value' title={expectedRepo || '未配置'}>{expectedRepo || '未配置'} · {requireSignature ? '要求签名' : '未要求签名'}</span></div>
         <Collapsible open={configOpen} onOpenChange={setConfigOpen}><CollapsibleTrigger asChild><Button variant='ghost' size='sm' className='mt-2 w-full justify-between'>展开配置<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='grid gap-2 pt-2'><Input placeholder='可信源码仓库（未配置）' value={expectedRepo} onChange={event => setExpectedRepo(event.target.value)} /><Input placeholder='预期 commit（未配置）' value={expectedCommit} onChange={event => setExpectedCommit(event.target.value)} /><Input placeholder='允许 workflow（未配置）' value={allowedWorkflows} onChange={event => setAllowedWorkflows(event.target.value)} /><Input placeholder='可信 builder（未配置）' value={allowedBuilders} onChange={event => setAllowedBuilders(event.target.value)} /></CollapsibleContent></Collapsible>
-        <div className='mt-4 grid grid-cols-2 gap-2'>{nodes.slice(0, 6).map(node => <button key={node.id} type='button' onClick={() => handleEvidenceClick(node.id as EvidenceKey)} className={cn('rounded-md border p-2 text-left transition hover:-translate-y-0.5', activeEvidence === node.id && !activeIssue ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-slate-900/55')}><div className='flex items-center justify-between gap-2'><span className='text-sm font-bold text-slate-100'>{node.label}</span><node.icon className={cn('size-4', node.className)} /></div><span className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</span></button>)}</div>
+        <div className='mt-4 grid grid-cols-2 gap-2'>{nodes.slice(0, 6).map(node => <button key={node.id} type='button' onClick={() => handleEvidenceClick(node.id as EvidenceKey)} className={cn('rounded-md border p-2 text-left transition hover:-translate-y-0.5', activeEvidence === node.id && !activeIssue ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-[color:var(--surface-inset)]')}><div className='flex items-center justify-between gap-2'><span className='text-sm font-bold text-foreground'>{node.label}</span><node.icon className={cn('size-4', node.className)} /></div><span className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</span></button>)}</div>
       </CardContent></Card></div>
-      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
+      <div className='grid min-w-0 gap-4'>
+      <Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='space-y-4 p-5'>
         <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>发布门禁</span><ArtifactGateBadge score={score} /></div>
-        <div className='flex flex-1 flex-col justify-center'><div className={cn('text-metric', score >= 90 ? 'text-emerald-200' : 'text-red-200')}>{displayedScore}<span className='ml-2 text-xl text-slate-400'>/ 100</span></div><div className='mt-4 h-3 overflow-hidden rounded-full border border-white/10 bg-slate-900/80'><motion.div className={cn('h-full rounded-full', score >= 90 ? 'bg-emerald-400' : 'bg-gradient-to-r from-red-500 to-orange-300')} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.85, ease: 'easeOut' }} /></div><div className='mt-4 text-body'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div></div>
-        <div className='mt-4 grid grid-cols-4 gap-2 text-center'><GateMetric label='检查' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败' value={failedChecks.length} /><GateMetric label='警告' value={checks.filter(check => check.status === 'warn').length} /></div>
+        <ArtifactTrustScoreSourceBar
+          result={activeResult}
+          source={scoreSource}
+          artifactName={artifactFile?.name}
+          attestationName={attestationFile?.name}
+        />
+        <div><div className={cn('text-metric', score >= 90 ? 'text-emerald-200' : 'text-red-200')}>{displayedScore}<span className='ml-2 text-xl text-muted-foreground'>/ 100</span></div><div className='mt-4 h-3 overflow-hidden rounded-full border border-white/10 bg-[color:var(--surface-inset)]'><motion.div className={cn('h-full rounded-full', score >= 90 ? 'bg-emerald-400' : 'bg-gradient-to-r from-red-500 to-orange-300')} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.85, ease: 'easeOut' }} /></div><div className='mt-4 text-body'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div></div>
+        <div className='grid grid-cols-2 gap-2 text-center sm:grid-cols-4 xl:grid-cols-4'><GateMetric label='检查' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败' value={failedChecks.length} /><GateMetric label='警告' value={checks.filter(check => check.status === 'warn').length} /></div>
       </CardContent></Card>
-      <Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='space-y-3 p-5'>
+      <Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='space-y-3 p-5'>
         <ArtifactDetailPanel detail={activeIssue ? getIssueDetail(activeIssue) : getEvidenceDetail(activeEvidence, activeResult, { artifactName: artifactFile?.name, attestationName: attestationFile?.name, expectedRepo, expectedCommit, allowedWorkflows, allowedBuilders, requireSignature, allowSelfHostedRunner, score })} />
       </CardContent></Card>
+      </div>
     </div>
 
-    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardHeader><CardTitle className='text-section-title'><ShieldAlert className='size-5 text-amber-300' />失败与缺失项</CardTitle></CardHeader><CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>{failedChecks.length ? failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} />) : <div className='text-body'>未发现阻断项</div>}</CardContent></Card>
-
-    <Card className='rounded-md border-slate-400/15 bg-slate-950/55'><CardContent className='p-0'><Collapsible><CollapsibleTrigger asChild><Button variant='ghost' className='w-full justify-between px-5 py-6'>全部检查项 <span className='meta-chip-dark'>{checks.length}</span><ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='space-y-2 px-5 pb-5'>{failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} />)}{passedChecks.length ? <div className='pt-3 text-label'>已通过 {passedChecks.length} 项</div> : null}{passedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} compact />)}</CollapsibleContent></Collapsible></CardContent></Card>
+    <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-inset)]'><CardHeader><CardTitle className='text-section-title'><ShieldAlert className='size-5 text-amber-300' />失败与缺失项</CardTitle></CardHeader><CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>{failedChecks.length ? failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} />) : <div className='text-body'>未发现阻断项</div>}</CardContent></Card>
 
   </div>
+}
+
+type ArtifactTrustScoreSource = 'fresh' | 'pending' | 'previous' | 'preview' | 'empty'
+
+function ArtifactTrustScoreSourceBar({
+  result,
+  source,
+  artifactName,
+  attestationName,
+}: {
+  result?: ArtifactTrustResult
+  source: ArtifactTrustScoreSource
+  artifactName?: string
+  attestationName?: string
+}) {
+  const sourceLabel =
+    source === 'fresh'
+      ? '评分来源：刚刚上传验证'
+      : source === 'pending'
+        ? '已选择新材料，当前分数仍来自上次扫描'
+        : source === 'preview'
+          ? '评分来源：预览数据'
+          : source === 'previous'
+            ? '评分来源：上次扫描结果'
+            : '评分来源：暂无门禁评分'
+  const sourceClass =
+    source === 'fresh'
+      ? 'border-emerald-300/30 bg-emerald-400/10 text-emerald-100'
+      : source === 'pending'
+        ? 'border-amber-300/30 bg-amber-400/10 text-amber-100'
+        : 'border-slate-300/20 bg-[color:var(--surface-inset)] text-muted-foreground'
+  const rows = [
+    ['scan_id', result?.scan_id || '-'],
+    ['Artifact', artifactName || artifactTrustDisplayName(result?.artifact || result?.artifact_path) || '-'],
+    ['Attestation', attestationName || artifactTrustDisplayName(result?.attestation_path) || '-'],
+    ['生成时间', formatArtifactTrustGeneratedAt(result?.generated_at)],
+  ]
+
+  return (
+    <div className={cn('rounded-md border px-3 py-3', sourceClass)}>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <span className='text-sm font-bold'>{sourceLabel}</span>
+        <span className='rounded-md border border-current/20 px-2 py-1 text-xs font-bold'>
+          {result?.trust_score ?? result?.trustScore ?? result?.summary?.trust_score ?? 0}/100
+        </span>
+      </div>
+      <div className='mt-3 grid gap-2 text-xs sm:grid-cols-2'>
+        {rows.map(([label, value]) => (
+          <div key={label} className='min-w-0 rounded-md border border-current/10 bg-background/10 px-2 py-1.5'>
+            <span className='mr-2 text-muted-foreground'>{label}</span>
+            <span className='break-all font-medium text-foreground'>{value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function artifactTrustDisplayName(value?: string | null) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  const parts = text.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts.at(-1) || text
+}
+
+function formatArtifactTrustGeneratedAt(value?: string | null) {
+  const text = String(value || '').trim()
+  if (!text) return '-'
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return text.slice(0, 19).replace('T', ' ')
+  return parsed.toLocaleString('zh-CN', { hour12: false })
 }
 
 const artifactTrustPreviewResult: ArtifactTrustResult = { scan_id: 'preview', artifact: 'preview-release.tar.gz', digest: 'sha256:preview-digest-not-a-real-value', trust_score: 72, level: 'block', checks: [{ name: 'signature_verified', status: 'fail', severity: 'high', evidence: '签名材料未提供' }, { name: 'attestation_max_age', status: 'warn', severity: 'medium', evidence: 'attestation 超出策略时效' }, { name: 'provenance_predicate_type_slsa', status: 'pass', evidence: 'SLSA provenance 已解析' }], findings: [], provenance: {}, policy: {}, tools: [], summary: { check_count: 3, finding_count: 2, trust_score: 72, level: 'block', risk_score: 72, risk_level: 'high', passed: 1, failed: 1, warnings: 1, missing: 0, skipped: 0 }, report: '', warnings: [] }
@@ -8128,11 +8252,46 @@ function getEvidenceDetail(key: EvidenceKey, result: ArtifactTrustResult | undef
   return { title: '当前证据 · Policy', rows: [['要求签名', input.requireSignature ? '已启用' : '未启用'], ['Self-hosted runner', input.allowSelfHostedRunner ? '允许' : '禁止'], ['允许 workflow', input.allowedWorkflows || '未配置'], ['可信 builder', input.allowedBuilders || '未配置'], ['门禁结论', input.score >= 90 ? '允许发布' : '建议阻断']] }
 }
 function getIssueDetail(check: ArtifactTrustCheck): ArtifactDetail { const detail = artifactCheckExplanation(check); return { title: artifactCheckTitle(check.name), rows: [['状态', artifactCheckLabel(check.status)], ['风险等级', check.severity ? severityLabel(check.severity as SecuritySeverity) : '信息'], ['关联检查', check.name]], evidence: check.evidence || '未提供', advice: detail.action, severity: check.severity as SecuritySeverity } }
-function ArtifactDetailPanel({ detail }: { detail: ArtifactDetail }) { return <><h2 className='text-section-title !text-[20px]'>{detail.title}</h2><div className='space-y-2'>{detail.rows.map(([label, value]) => <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2.5'><span className='whitespace-nowrap text-label font-bold'>{label}</span><span className='min-w-0 truncate text-right text-value' title={value}>{value}</span></div>)}</div>{detail.evidence ? <div className='code-evidence mt-4 truncate px-3 py-2.5' title={detail.evidence}>{detail.evidence}</div> : null}{detail.advice ? <div className='action-advice mt-4 p-4'><div className='font-bold'>建议修复</div><div className='mt-1 line-clamp-2 leading-6' title={detail.advice}>{detail.advice}</div></div> : null}</> }
+function ArtifactDetailPanel({ detail }: { detail: ArtifactDetail }) { return <><h2 className='text-section-title !text-[20px]'>{detail.title}</h2><div className='space-y-2'>{detail.rows.map(([label, value]) => <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2.5'><span className='whitespace-nowrap text-label font-bold'>{label}</span><span className='min-w-0 truncate text-right text-value' title={value}>{value}</span></div>)}</div>{detail.evidence ? <div className='code-evidence mt-4 truncate px-3 py-2.5' title={detail.evidence}>{detail.evidence}</div> : null}{detail.advice ? <div className='action-advice mt-4 p-4'><div className='font-bold'>建议修复</div><div className='mt-1 line-clamp-2 leading-6' title={detail.advice}>{detail.advice}</div></div> : null}</> }
+
+function ArtifactTrustMaterialRow({
+  material,
+  status,
+}: {
+  material: ArtifactTrustMaterial
+  status: '待补充' | '已选择' | '已用于验证' | '缺失' | '未提供' | '已配置' | '可增强判断' | '已纳入说明'
+}) {
+  const statusClass = status === '待补充' || status === '缺失'
+    ? 'border-amber-400/35 bg-amber-500/10 text-amber-200'
+    : status === '未提供' || status === '可增强判断'
+      ? 'border-slate-400/25 bg-slate-500/10 text-muted-foreground'
+      : 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
+  return (
+    <div className='rounded-md border border-slate-400/12 bg-[color:var(--surface-inset)] p-3'>
+      <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
+        <div className='min-w-0'>
+          <div className='flex flex-wrap items-center gap-2'>
+            <span className='text-sm font-bold text-foreground'>{material.label}</span>
+            <span className={cn('inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-bold', material.required ? 'border-cyan-400/35 text-cyan-200' : 'border-slate-400/25 text-muted-foreground')}>
+              {material.required ? '必填' : '选填'}
+            </span>
+          </div>
+          <div className='mt-2 line-clamp-2 break-words text-xs leading-5 text-muted-foreground' title={material.examples.join(' / ')}>
+            示例：{material.examples.join(' / ')}
+          </div>
+          <div className='mt-2 text-xs leading-5 text-muted-foreground'>{material.note}</div>
+        </div>
+        <span className={cn('shrink-0 rounded-full border px-2 py-1 text-xs font-bold', statusClass)}>
+          {status}
+        </span>
+      </div>
+    </div>
+  )
+}
 
 function ArtifactGateBadge({ score }: { score: number }) { const blocked = score < 90; return <span className={cn('inline-flex h-7 items-center rounded-full border px-3 text-sm font-bold', blocked ? 'border-red-400/35 bg-red-500/10 text-red-200' : 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200')}>{blocked ? '建议阻断' : '允许发布'}</span> }
-function GateMetric({ label, value }: { label: string; value: number }) { return <div className='rounded-md border border-slate-400/10 bg-slate-900/55 px-2 py-2'><div className='text-label'>{label}</div><div className='mt-1 text-xl font-extrabold text-slate-100'>{value}</div></div> }
-function ArtifactGateCheck({ check, selected, onSelect, compact = false }: { check: ArtifactTrustCheck; selected: boolean; onSelect: () => void; compact?: boolean }) { const detail = artifactCheckExplanation(check); return <button type='button' onClick={onSelect} className={cn('w-full rounded-md border p-5 text-left transition hover:-translate-y-0.5', selected ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-slate-900/45 hover:border-slate-300/30')}><div className='flex items-center justify-between gap-3'><div className='min-w-0'><span className='text-card-title !text-[17px]'>{artifactCheckTitle(check.name)}</span><div className='mt-3 truncate code-evidence px-3 py-2' title={check.evidence}>{check.evidence || '未提供'}</div></div><span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span></div>{selected && !compact ? <div className='action-advice mt-4 p-4'><span className='font-bold'>建议修复</span><div className='mt-1 line-clamp-2 leading-6' title={detail.action}>{detail.action}</div></div> : null}</button> }
+function GateMetric({ label, value }: { label: string; value: number }) { return <div className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2'><div className='text-label'>{label}</div><div className='mt-1 text-xl font-extrabold text-foreground'>{value}</div></div> }
+function ArtifactGateCheck({ check, selected, onSelect, compact = false }: { check: ArtifactTrustCheck; selected: boolean; onSelect: () => void; compact?: boolean }) { const detail = artifactCheckExplanation(check); return <button type='button' onClick={onSelect} className={cn('w-full rounded-md border p-5 text-left transition hover:-translate-y-0.5', selected ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-[color:var(--surface-inset)] hover:border-slate-300/30')}><div className='flex items-center justify-between gap-3'><div className='min-w-0'><span className='text-card-title !text-[17px]'>{artifactCheckTitle(check.name)}</span><div className='mt-3 truncate code-evidence px-3 py-2' title={check.evidence}>{check.evidence || '未提供'}</div></div><span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span></div>{selected && !compact ? <div className='action-advice mt-4 p-4'><span className='font-bold'>建议修复</span><div className='mt-1 line-clamp-2 leading-6' title={detail.action}>{detail.action}</div></div> : null}</button> }
 function artifactTrustNodes(result: ArtifactTrustResult | undefined, score: number) { const check = (name: string) => result?.checks.find(item => item.name === name); const node = (id: string, label: string, icon: LucideIcon, status: string, className: string, badgeClass: string) => ({ id, label, icon, status, className, badgeClass }); const signature = check('signature_verified'); const attestation = check('attestation_max_age'); return [node('artifact', 'Artifact', Archive, result?.artifact ? '已识别' : '待上传', 'text-cyan-200', 'border-cyan-400/30 text-cyan-200'), node('digest', 'Digest', Fingerprint, check('artifact_digest_matches_subject')?.status === 'fail' ? '失败' : '通过', 'text-emerald-200', 'border-emerald-400/30 text-emerald-200'), node('signature', 'Signature', KeyRound, artifactCheckLabel(signature?.status || 'missing'), 'text-red-200', artifactCheckClass(signature?.status || 'missing')), node('attestation', 'Attestation', FileText, artifactCheckLabel(attestation?.status || 'missing'), 'text-amber-200', artifactCheckClass(attestation?.status || 'missing')), node('provenance', 'Provenance', GitBranch, result?.provenance.commit ? '通过' : '缺失', 'text-cyan-200', 'border-cyan-400/30 text-cyan-200'), node('policy', 'Policy', ShieldCheck, '已加载', 'text-amber-200', 'border-amber-400/30 text-amber-200'), node('gate', 'Release Gate', ShieldAlert, score >= 90 ? '允许' : '阻断', score >= 90 ? 'text-emerald-200' : 'text-red-200', score >= 90 ? 'border-emerald-400/30 text-emerald-200' : 'border-red-400/30 text-red-200')] }
 
 function ArtifactConfigSummary({ label, value }: { label: string; value?: string }) {
@@ -8547,7 +8706,7 @@ function LogTrendChart({ trend }: { trend: RealtimeLogTrendPoint[] }) {
   }, [trend])
 
   return (
-    <div className='rounded-md border border-slate-400/15 bg-slate-950/65 p-4'>
+    <div className='rounded-md border border-border bg-[color:var(--surface-card)] p-4'>
       <div className='flex items-center justify-between'>
         <span className='text-section-title !text-[20px]'>异常趋势与风险峰值</span>
         {peak ? (
@@ -8850,7 +9009,7 @@ function LogsPanel({
             <div className='grid gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,50fr)_minmax(220px,20fr)]'>
               <div className='rounded-md border border-red-400/25 bg-red-950/20 p-5'><div className='text-section-title !text-[20px]'>运行期风险结论</div><div className='mt-4 text-metric text-red-200'>{realtime?.summary.risk_score ?? audit?.summary.risk_score ?? 0}</div><div className='mt-3 text-body'>发现敏感路径访问与异常外联 IP，可作为攻击链运行期印证证据。</div><div className='mt-4 flex flex-wrap gap-2'><span className='meta-chip-dark'>GET /admin/export</span><span className='meta-chip-dark'>异常外联 IP</span></div></div>
               <LogTrendChart trend={trend ?? []} />
-              <div className='rounded-md border border-slate-400/15 bg-slate-900/50 p-5'><div className='text-section-title !text-[20px]'>实时管道</div>{['实时接入','本地缓冲','规则引擎','风险趋势'].map(item => <div key={item} className='mt-3 flex items-center justify-between text-body'><span>{item}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>)}</div>
+              <div className='rounded-md border border-border bg-[color:var(--surface-inset)] p-5'><div className='text-section-title !text-[20px]'>实时管道</div>{['实时接入','本地缓冲','规则引擎','风险趋势'].map(item => <div key={item} className='mt-3 flex items-center justify-between text-body'><span>{item}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>)}</div>
             </div>
             <div className='grid gap-3 md:grid-cols-4'>
               <AuditMetric label='实时事件' value={realtime?.summary.event_count ?? 0} tone='cyan' />
@@ -8906,15 +9065,15 @@ function LogsPanel({
               </TableHeader>
               <TableBody>
                 {filteredLogs.map((log) => (
-                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`} onClick={() => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)} className={cn('cursor-pointer transition-colors hover:bg-slate-900/55', activeLog === log && 'bg-cyan-400/10')}>
-                    <TableCell className='w-[170px] whitespace-nowrap font-mono text-xs text-slate-300'>{log.time}</TableCell>
+                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`} onClick={() => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)} className={cn('cursor-pointer transition-colors hover:bg-[color:var(--surface-inset)]', activeLog === log && 'bg-cyan-400/10')}>
+                    <TableCell className='w-[170px] whitespace-nowrap font-mono text-xs text-muted-foreground'>{log.time}</TableCell>
                     <TableCell>
                       <Badge variant='outline' className='rounded-md'>
                         {log.source}
                       </Badge>
                     </TableCell>
-                    <TableCell className='max-w-0'><div className='truncate text-base font-semibold text-slate-100' title={log.event}>{log.event}</div><div className='mt-1'><Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(log)])}>{log.signal}</Badge></div></TableCell>
-                    <TableCell className='w-[90px] text-right text-lg font-bold text-slate-100'>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
+                    <TableCell className='max-w-0'><div className='truncate text-base font-semibold text-foreground' title={log.event}>{log.event}</div><div className='mt-1'><Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(log)])}>{log.signal}</Badge></div></TableCell>
+                    <TableCell className='w-[90px] text-right text-lg font-bold text-foreground'>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
                   </TableRow>
                 ))}
                 {!filteredLogs.length ? (
@@ -10556,7 +10715,7 @@ function KnowledgeGraph({ workspace }: { workspace: SecurityWorkspace }) {
                           }}
                         >
                           {filter.label}
-                          <Badge variant='outline' className='ml-1 rounded-md bg-background/70'>
+                          <Badge variant='outline' className='ml-1 rounded-md bg-[color:var(--surface-panel)]'>
                             {filter.count}
                           </Badge>
                         </Button>
@@ -10809,7 +10968,7 @@ function CompactPathSelector({
             >
               {mode.icon}
               {mode.label}
-              <Badge variant='outline' className='ml-1 rounded-md bg-background/70'>
+              <Badge variant='outline' className='ml-1 rounded-md bg-[color:var(--surface-panel)]'>
                 {mode.count}
               </Badge>
             </Button>
@@ -11056,7 +11215,7 @@ function EvidenceHeatmap({
       </div>
 
       <div className='grid gap-3 lg:grid-cols-2'>
-        <div className='rounded-md border border-dashed bg-background/70 p-4'>
+        <div className='rounded-md border border-dashed bg-[color:var(--surface-panel)] p-4'>
           <div className='mb-2 flex items-center gap-2 text-sm font-semibold'>
             <AlertTriangle className='size-4 text-amber-600' />
             证据缺口
@@ -11321,7 +11480,7 @@ function EvidenceGapPanel({
   const gaps = pathEvidenceGaps(path)
 
   return (
-    <div className={cn('rounded-md border border-dashed bg-background/70', compact ? 'p-3' : 'p-4')}>
+    <div className={cn('rounded-md border border-dashed bg-[color:var(--surface-panel)]', compact ? 'p-3' : 'p-4')}>
       <div className='mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground'>
         <AlertTriangle className='size-3.5 text-amber-600' />
         证据缺口
@@ -14137,7 +14296,7 @@ function ReportMetricCard({
     cyan: 'text-cyan-600',
     orange: 'text-orange-600',
     emerald: 'text-emerald-600',
-    slate: 'text-slate-600 dark:text-slate-300',
+    slate: 'text-slate-600 dark:text-muted-foreground',
   }[tone]
 
   return (
@@ -14612,5 +14771,3 @@ function escapeHtml(value: string) {
 function tabFromHash(hash: string): PlatformTab {
   return canonicalWorkspaceTab(normalizeWorkbenchHash(hash))
 }
-
-

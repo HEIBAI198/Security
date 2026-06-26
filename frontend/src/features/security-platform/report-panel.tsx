@@ -107,18 +107,18 @@ function AnimatedNumber({target,ready,className}:{target:number;ready:boolean;cl
 function GlowKpi({metric,delay,ready}:{metric:ReportMetric;delay:number;ready:boolean}){
   const rm=useReducedMotion()
   const toneMap:Record<string,{text:string;glow:string;bg:string}> = {
-    red:{text:'text-red-400',glow:'rgba(239,68,68,0.15)',bg:'rgba(239,68,68,0.04)'},
-    cyan:{text:'text-cyan-400',glow:'rgba(6,182,212,0.15)',bg:'rgba(6,182,212,0.04)'},
-    orange:{text:'text-orange-400',glow:'rgba(249,115,22,0.15)',bg:'rgba(249,115,22,0.04)'},
-    emerald:{text:'text-emerald-400',glow:'rgba(52,211,153,0.15)',bg:'rgba(52,211,153,0.04)'},
-    slate:{text:'text-slate-300',glow:'rgba(148,163,184,0.08)',bg:'rgba(148,163,184,0.02)'},
+    red:{text:'text-console-red',glow:'rgba(239,68,68,0.15)',bg:'rgba(239,68,68,0.04)'},
+    cyan:{text:'text-console-cyan',glow:'rgba(6,182,212,0.15)',bg:'rgba(6,182,212,0.04)'},
+    orange:{text:'text-console-orange',glow:'rgba(249,115,22,0.15)',bg:'rgba(249,115,22,0.04)'},
+    emerald:{text:'text-console-emerald',glow:'rgba(52,211,153,0.15)',bg:'rgba(52,211,153,0.04)'},
+    slate:{text:'text-muted-foreground',glow:'rgba(148,163,184,0.08)',bg:'rgba(148,163,184,0.02)'},
   }
   const t=toneMap[metric.tone]
   // Extract numeric value for animation
   const numVal=parseInt(metric.value)||0
   return(
     <motion.div
-      className="group relative overflow-hidden rounded-2xl border border-white/5 bg-card/80 p-5 cursor-default"
+      className="group relative overflow-hidden rounded-2xl border border-border bg-[color:var(--surface-card)] p-5 cursor-default"
       initial={rm?{}:{opacity:0,y:20,scale:.95}}
       animate={ready?{opacity:1,y:0,scale:1}:{}}
       transition={{duration:.55,delay,ease:[.16,1,.3,1]}}
@@ -159,7 +159,7 @@ function RiskRing({score,level,ready}:{score:number;level:string;ready:boolean})
         <defs>
           <filter id="ringGlow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
         </defs>
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" strokeWidth={9} className="text-white/5"/>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke="currentColor" strokeWidth={9} className="text-border/60"/>
         <motion.circle cx={cx} cy={cy} r={r} fill="none" stroke={tone} strokeWidth={9} strokeLinecap="round"
           strokeDasharray={circ} style={{strokeDashoffset:spr}} filter="url(#ringGlow)"/>
       </svg>
@@ -202,8 +202,8 @@ function StageCard({stage,index,ready,onClick}:{stage:ReportPathStage;index:numb
       animate={ready?{opacity:1,y:0,scale:1}:{}}
       transition={{delay:.12+index*.07,duration:.45,ease:[.16,1,.3,1]}}
       onClick={onClick}
-      className="group relative overflow-hidden rounded-2xl border border-white/5 bg-card/80 p-4 text-left
-        transition-all duration-500 hover:-translate-y-1.5 hover:shadow-2xl hover:border-white/10
+      className="group relative overflow-hidden rounded-lg border border-border bg-[color:var(--surface-card)] p-4 text-left
+        transition-all duration-500 hover:-translate-y-1 hover:shadow-lg hover:border-ring/35
         active:translate-y-0 active:scale-[0.98]"
     >
       {/* Hover glow beam */}
@@ -223,7 +223,7 @@ function StageCard({stage,index,ready,onClick}:{stage:ReportPathStage;index:numb
         <div className="text-sm font-bold leading-snug line-clamp-2 mb-2.5 group-hover:text-foreground transition-colors duration-300">{stage.title}</div>
         <div className="flex flex-wrap gap-1.5 mb-2">
           {stage.evidenceGroups.slice(0,3).map(g=>(
-            <span key={g} className="rounded-md bg-white/[0.03] border border-white/5 px-2 py-0.5 text-[10px] font-medium text-muted-foreground group-hover:border-white/10 transition-colors duration-300">{g}</span>
+            <span key={g} className="rounded-md surface-inset px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors duration-300">{g}</span>
           ))}
         </div>
         <div className="flex items-center gap-1 text-[11px] opacity-0 group-hover:opacity-100 transition-all duration-300"
@@ -241,7 +241,7 @@ function StageDrawer({stage,open,onClose}:{stage:ReportPathStage|null;open:boole
   return(
     <Sheet open={open} onOpenChange={v=>{if(!v)onClose()}}>
       <SheetContent side="right" className="!w-[65vw] !max-w-[740px] overflow-hidden flex flex-col p-0">
-        <div className="shrink-0 border-b border-white/5 px-8 py-5">
+        <div className="shrink-0 border-b border-border/50 px-8 py-5">
           <SheetHeader><SheetTitle className="text-lg font-black tracking-tight">{stage.title}</SheetTitle></SheetHeader>
           <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
             <Badge variant="outline" className="text-[10px]">{Math.round(stage.confidence*100)}% 置信度</Badge>
@@ -329,7 +329,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
       {/* ════════════════════════════════════════════════
          HERO — beam background, glow aura, spotlight
          ════════════════════════════════════════════════ */}
-      <div className="relative overflow-hidden rounded-3xl border border-white/5 bg-card/50 p-8 lg:p-10">
+      <div className="relative overflow-hidden rounded-lg border border-border bg-[color:var(--surface-panel)] p-8 lg:p-10">
         {/* Animated background beams */}
         <div className="absolute inset-0 pointer-events-none">
           {/* Radial glow centers */}
@@ -352,7 +352,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
         <div className="relative grid gap-8 lg:grid-cols-[1fr_260px] items-center">
           <div className="space-y-5">
             <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-3xl font-black tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white via-white to-white/70">
+              <h1 className="text-page-title">
                 APT 供应链攻击溯源报告
               </h1>
               <Badge variant="outline" className="text-xs px-2.5 py-0.5 font-bold" style={{borderColor:`${levelColor}50`,color:levelColor,background:`${levelColor}10`}}>
@@ -366,8 +366,8 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
               <Button size="sm" className="gap-1.5 bg-cyan-700 hover:bg-cyan-600 shadow-[0_0_20px_rgba(6,182,212,0.15)]" onClick={exportEvidence} disabled={exporting}>
                 {exporting?<Loader2 className="size-3.5 animate-spin"/>:<PackageCheck className="size-3.5"/>}导出证据包
               </Button>
-              <Button variant="outline" size="sm" className="gap-1.5 border-white/10 hover:border-cyan-500/30" onClick={expMd}><Download className="size-3.5"/>Markdown</Button>
-              <Button variant="outline" size="sm" className="gap-1.5 border-white/10 hover:border-cyan-500/30" onClick={expHtml}><FileText className="size-3.5"/>HTML</Button>
+              <Button variant="outline" size="sm" className="gap-1.5 hover:border-ring/40" onClick={expMd}><Download className="size-3.5"/>Markdown</Button>
+              <Button variant="outline" size="sm" className="gap-1.5 hover:border-ring/40" onClick={expHtml}><FileText className="size-3.5"/>HTML</Button>
               <span className="text-[10px] text-muted-foreground ml-2">
                 生成于 {workspace.graph?.generated_at?.slice(0,19).replace('T',' ')||workspace.generated_at?.slice(0,19).replace('T',' ')||'—'}
               </span>
@@ -425,16 +425,16 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><ClipboardList className="size-4 text-cyan-400"/>证据覆盖矩阵</CardTitle></CardHeader>
                 <CardContent className="overflow-x-auto">
                   <table className="w-full text-xs min-w-[540px]">
-                    <thead><tr className="[&>th]:px-2 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-medium [&>th]:text-muted-foreground border-b border-white/5"><th>阶段</th>{['组件','CI/CD','产物','日志','告警','代码'].map(t=><th key={t}>{t}</th>)}</tr></thead>
+                    <thead><tr className="[&>th]:px-2 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-medium [&>th]:text-muted-foreground border-b border-border/50"><th>阶段</th>{['组件','CI/CD','产物','日志','告警','代码'].map(t=><th key={t}>{t}</th>)}</tr></thead>
                     <tbody>{stages.slice(0,6).map(stage=>(
-                      <tr key={stage.id} className="border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors">
+                      <tr key={stage.id} className="border-b border-border/30 hover:bg-[color:var(--surface-inset)] transition-colors">
                         <td className="px-2 py-2.5 font-medium truncate max-w-[100px]">{stage.title?.slice(0,18)}</td>
                         {['组件','CI/CD','产物','日志','外部告警','代码'].map(type=>{
                           const hit=stage.evidenceGroups.includes(type)||(type==='告警'&&stage.evidenceGroups.includes('外部告警'))
                           return(
                             <td key={type} className="px-2 py-2.5">
                               <button onClick={()=>hit&&setHeatCell({stage,type:type==='告警'?'外部告警':type})} className={cn('rounded-lg px-2.5 py-1 text-[10px] font-bold transition-all duration-200',
-                                hit?'bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/60 hover:shadow-[0_0_12px_rgba(52,211,153,0.15)] hover:-translate-y-0.5 cursor-pointer shadow-[0_0_6px_rgba(52,211,153,0.08)]':'text-white/10',
+                                hit?'bg-console-emerald-soft text-console-emerald hover:-translate-y-0.5 cursor-pointer shadow-[0_0_6px_rgba(52,211,153,0.08)]':'text-muted-foreground/40',
                               )}>{hit?stage.evidenceCount:'—'}</button>
                             </td>
                           )
@@ -478,7 +478,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
               </div>
             </CardHeader>
             <CardContent>
-              <div className="rounded-xl bg-black/60 border border-white/5 p-5 font-mono text-xs leading-relaxed max-h-[70vh] overflow-y-auto">
+              <div className="rounded-lg surface-inset p-5 font-mono text-xs leading-relaxed max-h-[70vh] overflow-y-auto">
                 {mdSearch?mdLines.filter(l=>l.toLowerCase().includes(mdSearch.toLowerCase())).map((l,i)=>(<div key={i} className="py-0.5">{l}</div>)):<pre className="whitespace-pre-wrap break-all text-muted-foreground">{report}</pre>}
               </div>
             </CardContent>
@@ -514,7 +514,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
                   <div className="rounded-lg surface-inset p-3 text-sm font-bold">{Math.round(heatCell.stage.confidence*100)}%</div>
                 </div>
               </div>
-              <div className="rounded-xl border border-border/40 bg-card/50 p-5 text-sm leading-relaxed text-muted-foreground">
+              <div className="rounded-xl border border-border/40 bg-[color:var(--surface-panel)] p-5 text-sm leading-relaxed text-muted-foreground">
                 该阶段覆盖了 <strong className="text-foreground">{heatCell.type}</strong> 类证据，关系类型为 <strong className="text-foreground">{heatCell.stage.relationship}</strong>，
                 来源 <code className="text-xs bg-muted/30 px-1 py-0.5 rounded">{heatCell.stage.source}</code>，目标 <code className="text-xs bg-muted/30 px-1 py-0.5 rounded">{heatCell.stage.target}</code>。
               </div>

@@ -38,9 +38,9 @@ import { ThemeSwitch } from '@/components/theme-switch'
 type BusyState = DemoPresetKey | 'upload' | 'git' | 'local' | null
 
 const actionButtonClass =
-  'border-cyan-500/35 bg-cyan-950/80 text-cyan-50 shadow-sm shadow-cyan-950/20 hover:border-cyan-400/70 hover:bg-cyan-900 hover:text-white disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none'
+  'border-primary/70 bg-primary text-primary-foreground shadow-sm hover:border-ring hover:bg-primary/90 hover:shadow-[var(--shadow-interactive)] disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none'
 const fileInputClass =
-  'h-11 cursor-pointer text-sm file:mr-4 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-cyan-400/45 file:bg-cyan-700 file:px-4 file:text-sm file:font-semibold file:text-white file:shadow-sm file:transition-colors hover:file:bg-cyan-600'
+  'h-11 cursor-pointer bg-[color:var(--surface-inset)] text-sm file:mr-4 file:h-8 file:cursor-pointer file:rounded-md file:border file:border-primary/60 file:bg-primary file:px-4 file:text-sm file:font-semibold file:text-primary-foreground file:shadow-sm file:transition-colors hover:file:bg-primary/90'
 
 export function ProjectImportPage() {
   const navigate = useNavigate()
@@ -150,7 +150,7 @@ export function ProjectImportPage() {
 
   return (
     <div className='min-h-svh bg-background'>
-      <Header fixed>
+      <Header fixed className='border-b bg-[color:var(--surface-shell)]/95 shadow-[var(--shadow-soft)] backdrop-blur'>
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
           <div className='min-w-0'>
             <div className='truncate text-sm font-semibold'>选择调查对象</div>
@@ -187,13 +187,13 @@ export function ProjectImportPage() {
             <Card
               key={key}
               className={cn(
-                'rounded-md transition hover:border-cyan-300 hover:shadow-sm',
-                busy === key && 'border-cyan-300 bg-cyan-50/60 dark:bg-cyan-950/20'
+                'rounded-md transition hover:border-ring/50 hover:shadow-[var(--shadow-interactive)]',
+                busy === key && 'border-ring bg-[color:var(--surface-hover)]'
               )}
             >
               <CardHeader>
                 <div className='flex items-start justify-between gap-3'>
-                  <div className='grid size-11 place-items-center rounded-md bg-cyan-50 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300'>
+                  <div className='grid size-11 place-items-center rounded-md border border-primary/25 bg-[color:var(--surface-inset)] text-primary'>
                     <ShieldCheck className='size-5' />
                   </div>
                   <Badge variant='outline' className='rounded-md border-emerald-200 bg-emerald-50 text-emerald-700'>
@@ -211,9 +211,9 @@ export function ProjectImportPage() {
             </Card>
           ))}
 
-          <Card className='rounded-md transition hover:border-cyan-300 hover:shadow-sm xl:col-span-1'>
+          <Card className='rounded-md transition hover:border-ring/50 hover:shadow-[var(--shadow-interactive)] xl:col-span-1'>
             <CardHeader>
-              <div className='grid size-11 place-items-center rounded-md bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-200'>
+              <div className='grid size-11 place-items-center rounded-md border bg-[color:var(--surface-inset)] text-[color:var(--type-value)]'>
                 <FolderOpen className='size-5' />
               </div>
               <CardTitle className='text-lg'>自定义项目</CardTitle>
@@ -228,7 +228,7 @@ export function ProjectImportPage() {
                 />
               </div>
 
-              <div className='rounded-md border p-3'>
+              <div className='surface-inset p-3'>
                 <div className='mb-2 flex items-center gap-2 text-sm font-medium'>
                   <Archive className='size-4 text-cyan-600' />
                   压缩包
@@ -249,7 +249,7 @@ export function ProjectImportPage() {
                 </Button>
               </div>
 
-              <div className='rounded-md border p-3'>
+              <div className='surface-inset p-3'>
                 <div className='mb-2 flex items-center gap-2 text-sm font-medium'>
                   <GitBranch className='size-4 text-cyan-600' />
                   Git 仓库
@@ -276,7 +276,7 @@ export function ProjectImportPage() {
                 </Button>
               </div>
 
-              <div className='rounded-md border p-3'>
+              <div className='surface-inset p-3'>
                 <div className='mb-2 flex items-center gap-2 text-sm font-medium'>
                   <FolderOpen className='size-4 text-cyan-600' />
                   本地目录

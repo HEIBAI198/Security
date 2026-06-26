@@ -339,9 +339,9 @@ export function Component() {
   }
 
   return (
-    <main className='min-h-dvh bg-slate-950 text-slate-50'>
+    <main className='min-h-dvh bg-background text-foreground'>
       <div className='grid min-h-dvh lg:grid-cols-[1.08fr_0.92fr]'>
-        <section className='relative hidden overflow-hidden border-r border-white/10 bg-[radial-gradient(circle_at_20%_20%,rgba(14,165,233,0.18),transparent_28%),linear-gradient(135deg,#07111f,#0f172a_48%,#101827)] px-12 py-10 lg:flex lg:flex-col'>
+        <section className='relative hidden overflow-hidden border-r border-border bg-[linear-gradient(135deg,var(--surface-shell),var(--background)_48%,var(--surface-inset))] px-12 py-10 lg:flex lg:flex-col'>
           <div className='relative z-10 flex items-center gap-3'>
             <div className='grid size-10 place-items-center rounded-lg border border-cyan-300/25 bg-cyan-300/10'>
               <ShieldCheck className='size-5 text-cyan-200' />
@@ -361,7 +361,7 @@ export function Component() {
           </div>
         </section>
 
-        <section className='flex items-center justify-center bg-[linear-gradient(180deg,#020617,#0f172a)] px-5 py-10 sm:px-8'>
+        <section className='flex items-center justify-center bg-[linear-gradient(180deg,var(--background),var(--surface-shell))] px-5 py-10 sm:px-8'>
           <div className='w-full max-w-[440px]'>
             <div className='mb-10 flex items-center gap-3 lg:hidden'>
               <div className='grid size-10 place-items-center rounded-lg border border-cyan-300/25 bg-cyan-300/10'>
@@ -370,23 +370,23 @@ export function Component() {
               <div className='font-semibold'>SupplyGuard KG</div>
             </div>
 
-            <div className='rounded-2xl border border-white/10 bg-slate-900/70 p-6 shadow-2xl shadow-black/30 backdrop-blur sm:p-8'>
+            <div className='surface-raised rounded-2xl p-6 backdrop-blur sm:p-8'>
               <div className='mb-7'>
                 <h2 className='text-2xl font-semibold'>
                   {mode === 'login' ? '登录账号' : '注册账号'}
                 </h2>
               </div>
 
-              <div className='mb-5 grid grid-cols-2 rounded-lg bg-slate-950/70 p-1'>
+              <div className='mb-5 grid grid-cols-2 rounded-lg border border-border bg-[color:var(--surface-inset)] p-1'>
                 {(['login', 'register'] as const).map((item) => (
                   <Button
                     key={item}
                     type='button'
                     variant='ghost'
                     className={cn(
-                      'h-10 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white',
+                      'h-10 rounded-md text-[color:var(--type-label)] hover:bg-[color:var(--surface-hover)] hover:text-foreground',
                       mode === item &&
-                        'bg-cyan-300 text-slate-950 hover:bg-cyan-300 hover:text-slate-950'
+                        'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground'
                     )}
                     onClick={() => {
                       setMode(item)
@@ -400,7 +400,7 @@ export function Component() {
 
               <form className='space-y-5' onSubmit={handleSubmit}>
                 <div className='space-y-2'>
-                  <Label className='text-slate-200'>登录方式</Label>
+                  <Label>登录方式</Label>
                   <div className='grid grid-cols-3 gap-2'>
                     {authMethods.map((item) => {
                       const Icon = item.icon
@@ -411,9 +411,9 @@ export function Component() {
                           variant='outline'
                           aria-label={authMethodLabels[item.id]}
                           className={cn(
-                            'h-11 border-white/10 bg-slate-950/60 px-0 text-slate-300 hover:bg-slate-800 hover:text-white',
+                            'h-11 border-input bg-[color:var(--surface-inset)] px-0 text-[color:var(--type-label)] hover:bg-[color:var(--surface-hover)] hover:text-foreground',
                             method === item.id &&
-                              'border-cyan-300/60 bg-cyan-300/10 text-cyan-100'
+                              'border-ring bg-[color:var(--surface-hover)] text-primary'
                           )}
                           onClick={() => {
                             setMethod(item.id)
@@ -429,7 +429,7 @@ export function Component() {
 
                 {mode === 'register' && (
                   <div className='space-y-2'>
-                    <Label htmlFor='displayName' className='text-slate-200'>
+                    <Label htmlFor='displayName'>
                       昵称
                     </Label>
                     <Input
@@ -437,17 +437,17 @@ export function Component() {
                       value={displayName}
                       onChange={(event) => setDisplayName(event.target.value)}
                       placeholder='安全分析员'
-                      className='h-12 border-white/10 bg-slate-950/60 text-slate-100 placeholder:text-slate-600'
+                      className='h-12'
                     />
                   </div>
                 )}
 
                 <div className='space-y-2'>
-                  <Label htmlFor='identifier' className='text-slate-200'>
+                  <Label htmlFor='identifier'>
                     {authMethodLabels[method]}账号
                   </Label>
                   <div className='relative'>
-                    <ActiveMethodIcon className='absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500' />
+                    <ActiveMethodIcon className='absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground' />
                     <Input
                       id='identifier'
                       type={methodInputType(method)}
@@ -456,18 +456,18 @@ export function Component() {
                       onFocus={() => setTyping(true)}
                       onBlur={() => setTyping(false)}
                       placeholder={activeMethod.placeholder}
-                      className='h-12 border-white/10 bg-slate-950/60 pl-10 text-slate-100 placeholder:text-slate-600'
+                      className='h-12 pl-10'
                       autoComplete={method === 'phone' ? 'tel' : 'username'}
                     />
                   </div>
                 </div>
 
                 <div className='space-y-2'>
-                  <Label htmlFor='password' className='text-slate-200'>
+                  <Label htmlFor='password'>
                     密码
                   </Label>
                   <div className='relative'>
-                    <KeyRound className='absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500' />
+                    <KeyRound className='absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground' />
                     <Input
                       id='password'
                       type={showPassword ? 'text' : 'password'}
@@ -482,14 +482,14 @@ export function Component() {
                         setPasswordActive(false)
                       }}
                       placeholder='至少 6 位'
-                      className='h-12 border-white/10 bg-slate-950/60 px-10 text-slate-100 placeholder:text-slate-600'
+                      className='h-12 px-10'
                       autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                     />
                     <button
                       type='button'
                       aria-label={showPassword ? '隐藏密码' : '显示密码'}
                       onClick={() => setShowPassword((value) => !value)}
-                      className='absolute right-3 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-md text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-100'
+                      className='absolute right-3 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-[color:var(--surface-hover)] hover:text-foreground'
                     >
                       {showPassword ? <EyeOff className='size-4' /> : <Eye className='size-4' />}
                     </button>
@@ -498,7 +498,7 @@ export function Component() {
 
                 {mode === 'register' && (
                   <div className='space-y-2'>
-                    <Label htmlFor='confirmPassword' className='text-slate-200'>
+                    <Label htmlFor='confirmPassword'>
                       确认密码
                     </Label>
                     <Input
@@ -509,18 +509,18 @@ export function Component() {
                       onFocus={() => setPasswordActive(true)}
                       onBlur={() => setPasswordActive(false)}
                       placeholder='再次输入密码'
-                      className='h-12 border-white/10 bg-slate-950/60 text-slate-100 placeholder:text-slate-600'
+                      className='h-12'
                       autoComplete='new-password'
                     />
                   </div>
                 )}
 
                 <div className='flex items-center justify-between gap-4 text-sm'>
-                  <label className='flex items-center gap-2 text-slate-400'>
+                  <label className='flex items-center gap-2 text-muted-foreground'>
                     <Checkbox
                       checked={remember}
                       onCheckedChange={(value) => setRemember(Boolean(value))}
-                      className='border-slate-600 data-[state=checked]:border-cyan-300 data-[state=checked]:bg-cyan-300 data-[state=checked]:text-slate-950'
+                      className='border-input data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground'
                     />
                     记住我
                   </label>
@@ -538,7 +538,7 @@ export function Component() {
                 <Button
                   type='submit'
                   disabled={busy}
-                  className='h-12 w-full bg-cyan-300 text-base font-semibold text-slate-950 hover:bg-cyan-200'
+                  className='h-12 w-full text-base font-semibold'
                 >
                   {busy && <Loader2 className='size-4 animate-spin' />}
                   {mode === 'login' ? '登录' : '注册'}

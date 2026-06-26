@@ -301,7 +301,7 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
   const conf = Math.round((selectedPath?.confidence ?? graphSummary?.average_path_confidence ?? 0) * 100)
 
   const bar = (
-    <div className={cn('flex items-center gap-2 shrink-0 rounded-xl surface-raised px-3 py-1.5 text-xs', fullscreen && 'bg-black/60 backdrop-blur border border-white/5')}>
+    <div className={cn('flex items-center gap-2 shrink-0 rounded-lg surface-raised px-3 py-1.5 text-xs', fullscreen && 'bg-[color:var(--surface-overlay)] backdrop-blur border border-border')}>
       <span className="text-muted-foreground">风险</span>
       <span className="text-base font-black tabular-nums" style={{ color: sc }}>{score}</span>
       <span className="w-px h-4 bg-border/30" />
@@ -315,7 +315,7 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
         {attackPaths.map(p => (
           <button key={p.id} onClick={() => setSelectedPathId(p.id === selectedPathId ? null : p.id)} className={cn(
             'flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium shrink-0 transition-all duration-200 hover:-translate-y-0.5',
-            p.id === selectedPathId ? 'border-cyan-400/40 bg-cyan-950/40' : 'border-white/5 bg-white/[0.02] hover:border-cyan-500/20',
+            p.id === selectedPathId ? 'border-cyan-400/40 bg-console-cyan-soft text-console-cyan' : 'border-border bg-[color:var(--surface-inset)] hover:border-ring/30',
           )}>
             <span className="size-1.5 rounded-full" style={{ background: p.severity === 'critical' ? '#ef4444' : p.severity === 'high' ? '#f97316' : '#f59e0b' }} />
             {p.title?.slice(0, 18)} <span className="font-bold">{p.score}</span>
@@ -331,7 +331,7 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
   )
 
   const canvas = (
-    <div ref={containerRef} className="flex-1 min-h-0 rounded-2xl overflow-hidden border border-white/5"
+    <div ref={containerRef} className="flex-1 min-h-0 rounded-lg overflow-hidden border border-border"
       style={{ background: 'radial-gradient(ellipse at 25% 50%, rgba(6,182,212,0.04) 0%, transparent 55%), radial-gradient(ellipse at 70% 50%, rgba(239,68,68,0.03) 0%, transparent 55%), var(--background)' }}>
       <ReactFlow
         nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
@@ -342,9 +342,9 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
         proOptions={{ hideAttribution: true }}
       >
         <Background color="var(--border)" gap={48} size={0.6} />
-        <Controls className="!border-white/6 !bg-black/70 !rounded-xl !overflow-hidden backdrop-blur"
-          buttonClassName="!bg-transparent !border-white/5 !text-slate-400 hover:!bg-white/10" />
-        <MiniMap pannable zoomable className="!border-white/6 !bg-black/80 !rounded-xl backdrop-blur"
+        <Controls className="!border-border !bg-[color:var(--surface-overlay)] !rounded-lg !overflow-hidden backdrop-blur"
+          buttonClassName="!bg-transparent !border-border !text-muted-foreground hover:!bg-[color:var(--surface-hover)]" />
+        <MiniMap pannable zoomable className="!border-border !bg-[color:var(--surface-overlay)] !rounded-lg backdrop-blur"
           maskColor="color-mix(in oklch, var(--background) 95%, black)"
           nodeColor={n => {
             const d = (n as any)?.data
@@ -407,7 +407,7 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
                       const isOut = e.source === detailNode.id
                       const other = connNodes.find(n => n.id === (isOut ? e.target : e.source))
                       const oc = other ? nc(other) : null
-                      return (<div key={e.id} className="flex items-center gap-3 rounded-xl border border-border/40 bg-card/50 p-3">
+                      return (<div key={e.id} className="flex items-center gap-3 rounded-xl border border-border/40 bg-[color:var(--surface-panel)] p-3">
                         <ArrowRight className={cn('size-4 shrink-0', !isOut && 'rotate-180')} style={{ color: isOut ? '#ef4444' : '#06b6d4' }} />
                         <div className="min-w-0 flex-1">{other ? <><div className="text-sm font-bold truncate">{other.label}</div><div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">{oc && <span style={{ color: oc.color }}>{oc.label}</span>}<span>·</span><span>{e.type || e.label}</span>{e.confidence != null && <span>· {Math.round(e.confidence * 100)}%</span>}</div></> : <span className="text-sm font-mono text-muted-foreground">{(isOut ? e.target : e.source)}</span>}</div>
                       </div>)})}

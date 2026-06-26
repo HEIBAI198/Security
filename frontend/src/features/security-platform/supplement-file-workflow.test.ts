@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import platformSource from './index.tsx?raw'
 import {
+  ARTIFACT_TRUST_OPTIONAL_MATERIALS,
+  ARTIFACT_TRUST_REQUIRED_MATERIALS,
   SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT,
   SUPPLEMENT_FILE_INPUT_TITLE,
   SUPPLEMENT_FILE_LABEL,
+  artifactTrustGateButtonLabel,
+  artifactTrustGateReadinessMessage,
+  artifactTrustRequiredFilesReady,
   isSupplementProjectArchive,
   supplementFileSuccessMessage,
 } from './supplement-file-workflow'
@@ -33,6 +38,26 @@ describe('supplement file workflow copy', () => {
   it('describes artifact supplement processing as the same trust-gate verification path', () => {
     expect(supplementFileSuccessMessage('artifact', { score: 88 })).toBe('补充文件已完成产物可信验证，评分 88 / 100')
   })
+  it('defines artifact trust gate required and optional material groups', () => {
+    expect(ARTIFACT_TRUST_REQUIRED_MATERIALS.map((item) => item.id)).toEqual(['artifact', 'attestation'])
+    expect(ARTIFACT_TRUST_OPTIONAL_MATERIALS.map((item) => item.id)).toEqual(['policy', 'signature', 'release'])
+    expect(ARTIFACT_TRUST_REQUIRED_MATERIALS.every((item) => item.required)).toBe(true)
+    expect(ARTIFACT_TRUST_OPTIONAL_MATERIALS.every((item) => !item.required)).toBe(true)
+  })
+
+  it('blocks gate verification until artifact and provenance files are selected', () => {
+    expect(artifactTrustRequiredFilesReady({ artifactSelected: false, attestationSelected: true })).toBe(false)
+    expect(artifactTrustRequiredFilesReady({ artifactSelected: true, attestationSelected: false })).toBe(false)
+    expect(artifactTrustRequiredFilesReady({ artifactSelected: true, attestationSelected: true })).toBe(true)
+    expect(artifactTrustGateButtonLabel(false)).toBe('补齐必填材料后验证')
+    expect(artifactTrustGateButtonLabel(true)).toBe('执行门禁验证')
+  })
+
+  it('describes incomplete required materials and missing optional enhancement materials', () => {
+    expect(artifactTrustGateReadinessMessage({ requiredReady: false, optionalConfigured: false })).toBe('材料不完整，暂不能执行可信验证')
+    expect(artifactTrustGateReadinessMessage({ requiredReady: true, optionalConfigured: false })).toBe('未提供选填增强材料，验证将基于 artifact 与 provenance 执行')
+    expect(artifactTrustGateReadinessMessage({ requiredReady: true, optionalConfigured: true })).toBe('门禁材料已准备，可执行可信验证')
+  })
 })
 
 describe('security platform supplement-file integration', () => {
@@ -53,5 +78,57 @@ describe('security platform supplement-file integration', () => {
   it('keeps artifact supplement as a file-input affordance instead of immediate verification', () => {
     expect(platformSource).toContain('evidenceInputRef.current?.scrollIntoView')
     expect(platformSource).toContain('uploadArtifactTrustScan')
+  })
+
+  it('renders artifact trust material checklist affordances', () => {
+    expect(platformSource).toContain('ArtifactTrustMaterialRow')
+    expect(platformSource).toContain('ARTIFACT_TRUST_REQUIRED_MATERIALS')
+    expect(platformSource).toContain('ARTIFACT_TRUST_OPTIONAL_MATERIALS')
+    expect(platformSource).toContain('artifactTrustGateButtonLabel(requiredFilesReady)')
+    expect(platformSource).toContain("id='artifact-required-file'")
+    expect(platformSource).toContain("id='attestation-required-file'")
+    expect(platformSource).toContain('上传并执行门禁')
+    expect(platformSource).toContain('Artifact 是待验证的发布/构建产物')
+    expect(platformSource).toContain('Attestation / Provenance 是来源证明')
+    expect(platformSource).toContain('ArtifactTrustScoreSourceBar')
+    expect(platformSource).toContain('lastUploadedScanId')
+    expect(platformSource).toContain('评分来源：刚刚上传验证')
+    expect(platformSource).toContain('评分来源：上次扫描结果')
+    expect(platformSource).toContain('已选择新材料，当前分数仍来自上次扫描')
+    expect(platformSource).toContain('artifactTrustDisplayName')
+    expect(platformSource).toContain('formatArtifactTrustGeneratedAt')
+    expect(platformSource).toContain('xl:grid-cols-[minmax(520px,3fr)_minmax(360px,2fr)]')
+    expect(platformSource).toContain("className='grid min-w-0 gap-4 xl:grid-cols-[minmax(520px,3fr)_minmax(360px,2fr)]'")
+    expect(platformSource).toContain("className='grid min-w-0 gap-4'")
+    expect(platformSource).not.toContain('xl:grid-cols-[minmax(420px,42fr)_minmax(260px,26fr)_minmax(320px,32fr)]')
+    expect(platformSource).toContain('请先补充产物文件和来源证明')
+  })
+})
+
+describe('security platform reachability layout', () => {
+  it('folds the high-risk dependency table into the dependency evidence workbench', () => {
+    expect(platformSource).not.toContain("<CardTitle className='text-section-title text-foreground'>高风险依赖</CardTitle>")
+    expect(platformSource).not.toContain('展开全部 ${filteredRows.length} 条')
+    expect(platformSource).toContain('buildUnifiedEvidenceRows(filteredRows)')
+    expect(platformSource).not.toContain('items.slice(0, 12)')
+  })
+
+  it('uses every workspace dependency as dependency evidence before filtering', () => {
+    expect(platformSource).toContain('buildReachabilityItems(dependencies')
+    expect(platformSource).not.toContain('buildReachabilityItems(riskDependencies')
+    expect(platformSource).not.toContain('const riskDependencies')
+  })
+
+  it('keeps the three reachability workbench cards fixed while dependency evidence and detail scroll internally', () => {
+    expect(platformSource).toContain('xl:h-[520px]')
+    expect(platformSource).toContain('overflow-y-auto overscroll-contain')
+    expect(platformSource).toContain('xl:[scrollbar-gutter:stable]')
+    expect(platformSource).toContain("className='h-full min-w-0 xl:h-[520px]'")
+    expect(platformSource).toContain("className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'")
+    expect(platformSource).not.toContain('xl:min-h-[520px]')
+    expect(platformSource).not.toContain('overflow-visible rounded-md border-border')
+    expect(platformSource).not.toContain("className='min-w-0 flex-1 space-y-3 overflow-visible'")
+    expect(platformSource).not.toContain('xl:max-h-[260px]')
+    expect(platformSource).not.toContain('max-h-[360px] overflow-auto')
   })
 })

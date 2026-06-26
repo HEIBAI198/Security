@@ -182,7 +182,7 @@ export function ProjectPreflightPage() {
 
   return (
     <div className='min-h-svh bg-background'>
-      <Header fixed>
+      <Header fixed className='border-b bg-[color:var(--surface-shell)]/95 shadow-[var(--shadow-soft)] backdrop-blur'>
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
           <div className='min-w-0'>
             <div className='truncate text-sm font-semibold'>预检资产</div>
@@ -210,17 +210,17 @@ export function ProjectPreflightPage() {
           </p>
         </div>
 
-        <section className='rounded-md border border-cyan-200 bg-cyan-50/60 p-4 dark:border-cyan-900 dark:bg-cyan-950/20'>
+        <section className='surface-panel p-4'>
           <div className='grid gap-5 xl:grid-cols-[minmax(0,1fr)_220px_320px]'>
             <div className='space-y-4'>
               <div className='flex flex-wrap items-center gap-2'>
                 <Badge variant='outline' className='rounded-md border-emerald-200 bg-emerald-50 text-emerald-700'>
                   预检完成
                 </Badge>
-                <Badge variant='outline' className='rounded-md bg-background'>
+                <Badge variant='outline' className='rounded-md bg-[color:var(--surface-inset)]'>
                   {presetKey ? '比赛案例' : '自定义项目'}
                 </Badge>
-                <Badge variant='outline' className='rounded-md bg-background'>
+                <Badge variant='outline' className='rounded-md bg-[color:var(--surface-inset)]'>
                   {sourceTypeLabel(record.sourceType)}
                 </Badge>
               </div>
@@ -230,7 +230,7 @@ export function ProjectPreflightPage() {
               </div>
               <div className='grid gap-2 sm:grid-cols-3'>
                 {readiness.map((item) => (
-                  <div key={item.label} className='rounded-md border bg-background p-3'>
+                  <div key={item.label} className='surface-inset p-3'>
                     <div className='flex items-center gap-2 text-sm font-medium'>
                       <item.icon className={cn('size-4', item.ok ? 'text-emerald-600' : 'text-orange-600')} />
                       {item.label}
@@ -243,7 +243,7 @@ export function ProjectPreflightPage() {
 
             <ReadinessRing score={completeness.score} passed={completeness.passed} total={completeness.total} />
 
-            <div className='rounded-md border bg-background p-4'>
+            <div className='surface-inset p-4'>
               <div className='text-card-title'>建议下一步</div>
               <p className='mt-2 text-body'>
                 先生成 SBOM 与 VEX，确认组件风险；随后检查 CI/CD、产物可信和运行日志是否能互相印证。
@@ -383,7 +383,7 @@ function ReadinessRing({
     { name: '缺口', value: Math.max(0, 100 - score) },
   ]
   return (
-    <div className='rounded-md border bg-background p-4'>
+    <div className='surface-inset p-4'>
       <div className='text-sm font-medium'>预检完整度</div>
       <div className='relative mt-3 h-36'>
         <ResponsiveContainer width='100%' height='100%'>
@@ -485,7 +485,7 @@ function ScanFunnel({ items }: { items: Array<{ label: string; value: number; de
       {items.map((item, index) => {
         const width = Math.max(18, (item.value / max) * 100)
         return (
-          <div key={item.label} className='rounded-md border p-3'>
+          <div key={item.label} className='surface-inset p-3'>
             <div className='flex items-center justify-between gap-3 text-sm'>
               <div className='font-medium'>{item.label}</div>
               <div className='text-muted-foreground'>{formatNumber(item.value)}</div>
@@ -512,8 +512,8 @@ function ScanFunnel({ items }: { items: Array<{ label: string; value: number; de
 
 function CoverageMatrix({ rows }: { rows: CoverageRow[] }) {
   return (
-    <div className='overflow-hidden rounded-md border'>
-      <div className='grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr_1.4fr] bg-muted/60 px-3 py-2 text-xs font-medium text-muted-foreground'>
+    <div className='overflow-hidden rounded-md border bg-[color:var(--surface-panel)]'>
+      <div className='grid grid-cols-[1.2fr_0.8fr_0.8fr_0.8fr_1.4fr] bg-[color:var(--surface-inset)] px-3 py-2 text-xs font-medium text-muted-foreground'>
         <div>材料</div>
         <div>已发现</div>
         <div>可用于溯源</div>
@@ -579,7 +579,7 @@ function KeyFilePurposeList({ files }: { files: KeyFilePurpose[] }) {
   return (
     <div className='space-y-2'>
       {files.map((item) => (
-        <div key={`${item.type}-${item.file}`} className='grid gap-3 rounded-md border p-3 md:grid-cols-[180px_minmax(0,1fr)_220px]'>
+        <div key={`${item.type}-${item.file}`} className='surface-inset grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_220px]'>
           <div className='flex items-center gap-2 text-sm font-medium'>
             <item.icon className='size-4 text-cyan-600' />
             {item.type}
@@ -594,7 +594,7 @@ function KeyFilePurposeList({ files }: { files: KeyFilePurpose[] }) {
 
 function ActionableEmpty({ title, description }: { title: string; description: string }) {
   return (
-    <div className='rounded-md border border-dashed p-6 text-center'>
+    <div className='surface-inset border-dashed p-6 text-center'>
       <div className='mx-auto grid size-10 place-items-center rounded-md bg-muted'>
         <ScanSearch className='size-5 text-muted-foreground' />
       </div>

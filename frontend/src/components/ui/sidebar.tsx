@@ -311,8 +311,8 @@ function SidebarInset({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot='sidebar-inset'
       className={cn(
-        'relative flex w-full flex-1 flex-col bg-background',
-        'md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ms-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-2',
+        'relative flex w-full flex-1 flex-col bg-[color:var(--surface-shell)]',
+        'md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ms-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:border md:peer-data-[variant=inset]:border-border md:peer-data-[variant=inset]:shadow-[var(--shadow-soft)] md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-2',
         className
       )}
       {...props}
@@ -328,7 +328,7 @@ function SidebarInput({
     <Input
       data-slot='sidebar-input'
       data-sidebar='input'
-      className={cn('h-8 w-full bg-background shadow-none', className)}
+      className={cn('h-8 w-full bg-[color:var(--surface-inset)] shadow-none', className)}
       {...props}
     />
   )
@@ -483,7 +483,7 @@ const sidebarMenuButtonVariants = cva(
         default:
           'text-sidebar-foreground/60 before:absolute before:inset-0 before:rounded-md before:bg-sidebar-accent/30 before:opacity-100 before:transition-opacity before:duration-500 hover:before:opacity-0 hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground',
         outline:
-          'bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] before:absolute before:inset-0 before:rounded-md before:bg-sidebar-accent/30 before:opacity-100 before:transition-opacity before:duration-500 hover:before:opacity-0 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]',
+          'border border-sidebar-border/70 bg-sidebar-accent/20 shadow-sm before:absolute before:inset-0 before:rounded-md before:bg-sidebar-accent/25 before:opacity-100 before:transition-opacity before:duration-500 hover:before:opacity-0 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[var(--shadow-soft)]',
       },
       size: {
         default: 'h-8 text-sm',

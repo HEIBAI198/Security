@@ -1,6 +1,6 @@
 services:
   mongo:
-    image: mongo:7
+    image: docker.m.daocloud.io/library/mongo:7
     restart: unless-stopped
     ports:
       - "27017:27017"
