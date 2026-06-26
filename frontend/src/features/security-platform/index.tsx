@@ -1,4 +1,4 @@
-﻿import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useRef } from 'react'
 import {
   Area,
@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import type { ReactNode } from 'react'
+import type { ChangeEvent, ReactNode } from 'react'
 import {
   motion,
   useMotionValue,
@@ -244,6 +244,13 @@ import {
 import { MultimodalEvidencePanel } from './multimodal-evidence-panel'
 import { AttackChainGraph } from './attack-chain-graph'
 import { ReportPanel } from './report-panel'
+import {
+  SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT,
+  SUPPLEMENT_FILE_INPUT_TITLE,
+  SUPPLEMENT_FILE_LABEL,
+  isSupplementProjectArchive,
+  supplementFileSuccessMessage,
+} from './supplement-file-workflow'
 type KnowledgeGraphNode = NonNullable<
   NonNullable<SecurityWorkspace['graph']>['nodes']
 >[number]
@@ -1044,7 +1051,10 @@ export function SecurityPlatform() {
     }
   }
 
-  async function bindImportToConversation(record: ProjectImportRecord) {
+  async function bindImportToConversation(
+    record: ProjectImportRecord,
+    options: { targetTab?: PlatformTab; successMessage?: string } = {}
+  ) {
     const nextWorkspace = await createSecurityWorkspace({
       importId: record.importId,
       name: record.projectName,
@@ -1062,10 +1072,20 @@ export function SecurityPlatform() {
       nextConversation,
       ...items.filter((item) => item.conversationId !== nextConversation.conversationId),
     ])
-    setOpenTabs(defaultWorkspaceTabs('overview'))
-    setActiveTabId('overview')
+    const targetTab = options.targetTab ?? 'overview'
+    setOpenTabs(defaultWorkspaceTabs(targetTab))
+    setActiveTabId(targetTab)
+    window.history.replaceState(null, '', `#${targetTab}`)
     setWorkspaceScanState(getWorkspaceId(nextWorkspace), freshScanState())
-    toast.success('项目已导入，对话已创建')
+    toast.success(options.successMessage ?? '项目已导入，对话已创建')
+  }
+
+  async function supplementProjectArchive(file: File, targetTab: PlatformTab) {
+    const record = await uploadProjectArchive(file)
+    await bindImportToConversation(record, {
+      targetTab,
+      successMessage: '补充文件已按项目材料导入',
+    })
   }
 
   async function startFullAnalysis() {
@@ -1366,8 +1386,9 @@ export function SecurityPlatform() {
                   },
                 }
                 })
-                toast.success(`依赖扫描完成，生成 ${audit.summary.vex?.statement_count ?? 0} 条 VEX statement`)
+                toast.success(supplementFileSuccessMessage('reachability'))
               }}
+              onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'supply')}
               animationKey={moduleViewKey}
             />
             </WorkbenchMotionLayer>
@@ -1410,8 +1431,9 @@ export function SecurityPlatform() {
                     risk_score: Math.max(workspace.summary.risk_score, audit.summary.risk_score),
                   },
                 })
-                toast.success(`CI/CD 扫描完成，发现 ${audit.summary.finding_count} 项风险`)
+                toast.success(supplementFileSuccessMessage('cicd', { count: audit.summary.finding_count }))
               }}
+              onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'pipeline')}
             />
             </WorkbenchMotionLayer>
           </TabsContent>
@@ -1425,7 +1447,7 @@ export function SecurityPlatform() {
                 setWorkspace(applyArtifactTrustToWorkspace(workspace, result))
                 const nextWorkspace = await loadSecurityWorkspace()
                 setWorkspace(nextWorkspace)
-                toast.success(`产物可信验证完成，评分 ${artifactTrustScore(result)} / 100`)
+                toast.success(supplementFileSuccessMessage('artifact', { score: artifactTrustScore(result) }))
               }}
             />
             </WorkbenchMotionLayer>
@@ -3086,12 +3108,14 @@ function SupplyReachabilityPanel({
   importId,
   onCodeScanned,
   onDependencyScanned,
+  onSupplementProjectArchive,
 }: {
   workspace: SecurityWorkspace
   workspaceId?: string
   importId?: string
   onCodeScanned: (audit: CodeAuditResult) => void
   onDependencyScanned: (audit: DependencyAuditResult) => void
+  onSupplementProjectArchive: (file: File) => Promise<void>
   animationKey: number
 }) {
   const dependencies = useMemo(
@@ -3120,6 +3144,8 @@ function SupplyReachabilityPanel({
   const [selectedDependencyId, setSelectedDependencyId] = useState('')
   const [activeEvidence, setActiveEvidence] = useState('dependency')
   const [scanning, setScanning] = useState(false)
+  const [supplementing, setSupplementing] = useState(false)
+  const supplementInputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!reachabilityItems.length) return
     if (!selectedDependencyId || !reachabilityItems.some((item) => item.id === selectedDependencyId)) {
@@ -3204,6 +3230,24 @@ function SupplyReachabilityPanel({
     }
   }
 
+  async function handleSupplementFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!isSupplementProjectArchive(file.name)) {
+      toast.error('请选择 .zip、.tar.gz 或 .tgz 项目压缩包')
+      return
+    }
+    setSupplementing(true)
+    try {
+      await onSupplementProjectArchive(file)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '补充文件处理失败')
+    } finally {
+      setSupplementing(false)
+    }
+  }
+
   return (
     <div className='space-y-4'>
       <section className='rounded-md border border-slate-400/15 bg-slate-950/70 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
@@ -3227,9 +3271,10 @@ function SupplyReachabilityPanel({
               {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
               重新研判
             </Button>
-            <Button size='sm' variant='outline' onClick={() => jumpToPlatformTab('logs')}>
-              <Upload className='size-4' />
-              上传证据
+            <input ref={supplementInputRef} type='file' accept={SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT} className='hidden' onChange={(event) => void handleSupplementFileChange(event)} />
+            <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
+              {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+              {SUPPLEMENT_FILE_LABEL}
             </Button>
             <Button size='sm' variant='outline' onClick={() => downloadReport(getWorkspaceReport(workspace))}>
               <Download className='size-4' />
@@ -6521,14 +6566,17 @@ function PipelinePanel({
   workspaceId,
   importId,
   onScanned,
+  onSupplementProjectArchive,
 }: {
   pipeline: SecurityPipelineStep[]
   audit?: CICDAuditResult | null
   workspaceId?: string
   importId?: string
   onScanned: (audit: CICDAuditResult) => void
+  onSupplementProjectArchive: (file: File) => Promise<void>
 }) {
   const [scanning, setScanning] = useState(false)
+  const [supplementing, setSupplementing] = useState(false)
   const [mutating, setMutating] = useState(false)
   const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null)
   const [activeNodeId, setActiveNodeId] = useState('all')
@@ -6536,6 +6584,7 @@ function PipelinePanel({
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState('all')
   const [workflowFilter, setWorkflowFilter] = useState('all')
+  const supplementInputRef = useRef<HTMLInputElement>(null)
   const findings = audit?.findings ?? []
   const workflows = audit?.workflows ?? []
   const corePipeline = useMemo(() => buildCoreCicdPipeline(pipeline), [pipeline])
@@ -6604,6 +6653,24 @@ function PipelinePanel({
       toast.error(error instanceof Error ? error.message : 'CI/CD 扫描失败')
     } finally {
       setScanning(false)
+    }
+  }
+
+  async function handleSupplementFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!isSupplementProjectArchive(file.name)) {
+      toast.error('请选择 .zip、.tar.gz 或 .tgz 项目压缩包')
+      return
+    }
+    setSupplementing(true)
+    try {
+      await onSupplementProjectArchive(file)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '补充文件处理失败')
+    } finally {
+      setSupplementing(false)
     }
   }
 
@@ -6685,9 +6752,10 @@ function PipelinePanel({
               {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
               重新扫描
             </Button>
-            <Button size='sm' variant='outline' onClick={() => jumpToPlatformTab('logs')}>
-              <Upload className='size-4' />
-              上传证据
+            <input ref={supplementInputRef} type='file' accept={SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT} className='hidden' onChange={(event) => void handleSupplementFileChange(event)} />
+            <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
+              {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+              {SUPPLEMENT_FILE_LABEL}
             </Button>
             <Button
               variant='outline'
@@ -8015,14 +8083,14 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
       </div>
       <div className='flex flex-wrap gap-2'>
         <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}重新验证</Button>
-        <Button variant='outline' size='sm' onClick={() => evidenceInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Upload />上传证据</Button>
+        <Button variant='outline' size='sm' onClick={() => evidenceInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Upload />{SUPPLEMENT_FILE_LABEL}</Button>
         <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
       </div>
     </section>
 
     <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,45fr)_minmax(250px,25fr)]'>
       <div ref={evidenceInputRef} className='min-w-0'><Card className='min-w-0 overflow-hidden rounded-md border-slate-400/15 bg-slate-950/70'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
-        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'><Upload className='size-5 text-cyan-300' />证据输入</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待上传'}</span></div>
+        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'><Upload className='size-5 text-cyan-300' />{SUPPLEMENT_FILE_INPUT_TITLE}</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待补充'}</span></div>
         <div className='mt-5 grid gap-3'><Input type='file' className={fileInputClass} onChange={event => setArtifactFile(event.target.files?.[0] ?? null)} /><Input type='file' accept='.json,.jsonl,application/json' className={fileInputClass} onChange={event => setAttestationFile(event.target.files?.[0] ?? null)} /></div>
         <div className='mt-4 flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-slate-900/45 px-3 py-2'><span className='text-label'>策略摘要</span><span className='truncate text-value' title={expectedRepo || '未配置'}>{expectedRepo || '未配置'} · {requireSignature ? '要求签名' : '未要求签名'}</span></div>
         <Collapsible open={configOpen} onOpenChange={setConfigOpen}><CollapsibleTrigger asChild><Button variant='ghost' size='sm' className='mt-2 w-full justify-between'>展开配置<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='grid gap-2 pt-2'><Input placeholder='可信源码仓库（未配置）' value={expectedRepo} onChange={event => setExpectedRepo(event.target.value)} /><Input placeholder='预期 commit（未配置）' value={expectedCommit} onChange={event => setExpectedCommit(event.target.value)} /><Input placeholder='允许 workflow（未配置）' value={allowedWorkflows} onChange={event => setAllowedWorkflows(event.target.value)} /><Input placeholder='可信 builder（未配置）' value={allowedBuilders} onChange={event => setAllowedBuilders(event.target.value)} /></CollapsibleContent></Collapsible>
