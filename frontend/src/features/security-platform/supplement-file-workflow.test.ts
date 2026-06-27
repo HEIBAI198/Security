@@ -80,6 +80,14 @@ describe('security platform supplement-file integration', () => {
     expect(platformSource).toContain('uploadArtifactTrustScan')
   })
 
+  it('does not render the report shortcut button on the investigation home', () => {
+    expect(platformSource).not.toContain("onClick={() => jumpToPlatformTab('report')}")
+  })
+
+  it('does not include the report tab in the investigation home module cards', () => {
+    expect(platformSource).toContain("module !== 'report'")
+  })
+
   it('renders artifact trust material checklist affordances', () => {
     expect(platformSource).toContain('ArtifactTrustMaterialRow')
     expect(platformSource).toContain('ARTIFACT_TRUST_REQUIRED_MATERIALS')
@@ -119,16 +127,48 @@ describe('security platform reachability layout', () => {
     expect(platformSource).not.toContain('const riskDependencies')
   })
 
+  it('does not render the duplicated top dependency selector rail', () => {
+    expect(platformSource).not.toContain('<DependencySelectorRail')
+    expect(platformSource).not.toContain('function DependencySelectorRail')
+    expect(platformSource).not.toContain('dependency-rail-active')
+  })
+
   it('keeps the three reachability workbench cards fixed while dependency evidence and detail scroll internally', () => {
-    expect(platformSource).toContain('xl:h-[520px]')
+    expect(platformSource).toContain('xl:h-[420px]')
     expect(platformSource).toContain('overflow-y-auto overscroll-contain')
     expect(platformSource).toContain('xl:[scrollbar-gutter:stable]')
-    expect(platformSource).toContain("className='h-full min-w-0 xl:h-[520px]'")
+    expect(platformSource).toContain("className='h-full min-w-0 xl:h-[420px]'")
     expect(platformSource).toContain("className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'")
-    expect(platformSource).not.toContain('xl:min-h-[520px]')
+    expect(platformSource).not.toContain('min-h-[420px] overflow-hidden rounded-md border-border')
+    expect(platformSource).not.toContain('xl:min-h-[420px]')
     expect(platformSource).not.toContain('overflow-visible rounded-md border-border')
     expect(platformSource).not.toContain("className='min-w-0 flex-1 space-y-3 overflow-visible'")
     expect(platformSource).not.toContain('xl:max-h-[260px]')
     expect(platformSource).not.toContain('max-h-[360px] overflow-auto')
+  })
+})
+
+describe('security platform CI/CD risk layout', () => {
+  it('moves the risk modules into the central CI/CD workbench and removes the build-chain graph', () => {
+    expect(platformSource).not.toContain('<BuildStepFlow')
+    expect(platformSource).not.toContain('<BuildStepDetail')
+    expect(platformSource).toContain("xl:grid-cols-[minmax(280px,28fr)_minmax(0,72fr)]")
+    expect(platformSource).toContain("className='grid min-w-0 gap-4 xl:grid-rows-[auto_minmax(0,1fr)]'")
+    expect(platformSource).toContain('<CicdRiskClusterPanel')
+    expect(platformSource).toContain('<CicdFindingList')
+  })
+
+  it('uses the reachability-style score presentation for the CI/CD risk overview', () => {
+    expect(platformSource).toContain('riskScoreWorkbenchCard')
+    expect(platformSource).toContain('CI/CD 风险评分')
+    expect(platformSource).toContain('displayScore')
+    expect(platformSource).not.toContain('text-6xl font-extrabold leading-none text-orange-100 tabular-nums')
+  })
+
+  it('feeds artifact trust and pipeline evidence into the CI/CD display model', () => {
+    expect(platformSource).toContain('buildCicdDisplayModel({ audit, pipeline, artifactTrust })')
+    expect(platformSource).toContain('artifactTrust={workspace.artifact_trust}')
+    expect(platformSource).toContain('CicdRiskOverviewCard model={displayModel}')
+    expect(platformSource).toContain('displayModel.source.artifactFindings + displayModel.source.pipelineRisks')
   })
 })
