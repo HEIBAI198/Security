@@ -30,6 +30,7 @@ storage/*.log
 tmp/
 datasets/
 .tmp-shadcn-admin/
+.worktrees/
 frontend/node_modules/
 frontend/dist/
 mcp/node_modules/
