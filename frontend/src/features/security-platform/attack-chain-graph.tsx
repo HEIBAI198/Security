@@ -6,7 +6,7 @@ import {
   Handle, Position, BaseEdge, getBezierPath,
 } from '@xyflow/react'
 import {
-  AlertTriangle, ArrowRight, Box, Code2, Container, Cpu, Eye,
+  AlertTriangle, ArrowRight, Box, Code2, Container, Cpu, Eye, EyeOff,
   FileText, Fingerprint, Globe, Layers, Maximize2, Minimize2,
   Network, Package, Radio, Route, Server, Shield, ShieldAlert,
   Siren, Terminal, Upload, X,
@@ -175,6 +175,7 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
   const [selectedPathId, setSelectedPathId] = useState<string | null>(attackPaths[0]?.id ?? null)
   const [detailNode, setDetailNode] = useState<GNode | null>(null)
   const [fullscreen, setFullscreen] = useState(false)
+  const [pathOnlyMode, setPathOnlyMode] = useState(false)
   const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -221,47 +222,55 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
   const layoutNodesOut = layoutResult.nodes
   const nodeW = layoutResult.nodeW
 
-  // ReactFlow nodes — all visible, no clusters, no hidden bubbles
+  // ReactFlow nodes — filter hidden in pathOnlyMode
   const rfNodes: Node[] = useMemo(() => {
-    return layoutNodesOut.map(n => {
-      const onPath = pathNodeIds.has(n.id)
-      const semi = semiNodeIds.has(n.id)
-      const dimmed = !isAllMode && selectedPath && !onPath && !semi
-      const pos = (n as any)._x != null ? { x: (n as any)._x, y: (n as any)._y } : { x: 0, y: 0 }
-      return {
-        id: n.id, type: 'graphNode', position: pos,
-        data: { label: n.label, raw: n, highlighted: onPath, semi, dimmed, _w: nodeW },
-        draggable: false, selectable: true,
-      }
-    })
-  }, [layoutNodesOut, pathNodeIds, semiNodeIds, selectedPath, isAllMode, nodeW])
-
-  // Edges: all visible, tiered opacity
-  const rfEdges: Edge[] = useMemo(() => {
-    if (isAllMode) {
-      return rawEdges.map(e => {
-        const trust = e.type?.includes('TRUST_') || e.type?.includes('ATTESTATION_') || e.type?.includes('PROVENANCE')
+    return layoutNodesOut
+      .filter(n => {
+        if (!pathOnlyMode || !selectedPath) return true
+        return pathNodeIds.has(n.id)
+      })
+      .map(n => {
+        const onPath = pathNodeIds.has(n.id)
+        const semi = semiNodeIds.has(n.id)
+        const dimmed = !isAllMode && selectedPath && !onPath && !semi
+        const pos = (n as any)._x != null ? { x: (n as any)._x, y: (n as any)._y } : { x: 0, y: 0 }
         return {
-          id: e.id, source: e.source, target: e.target, type: 'bezier',
-          style: { opacity: 1 },
-          data: { isPath: false, isSemi: true, isTrust: trust, label: e.label, bundleCount: 1 },
+          id: n.id, type: 'graphNode', position: pos,
+          data: { label: n.label, raw: n, highlighted: onPath, semi, dimmed, _w: nodeW },
+          draggable: false, selectable: true,
         }
       })
-    }
-    // Path mode: path edges bright, evidence edges semi, rest dim
-    return rawEdges.map(e => {
-      const onPath = pathEdgeIds.has(e.id)
-      const trust = e.type?.includes('TRUST_') || e.type?.includes('ATTESTATION_') || e.type?.includes('PROVENANCE')
-      const isEv = e.type?.includes('LOG_') || e.type?.includes('FINDING_') || e.type?.includes('MULTIMODAL_') || e.type?.includes('ENTITY_') || e.type?.includes('HAS_VULNERABILITY')
-      const connectedToPath = pathNodeIds.has(e.source) || pathNodeIds.has(e.target)
-      const dimmed = selectedPath && !onPath && !connectedToPath
-      return {
-        id: e.id, source: e.source, target: e.target, type: 'bezier',
-        style: { opacity: dimmed ? 0.28 : 1 },
-        data: { isPath: onPath, isSemi: (connectedToPath || isAllMode) && !onPath, isTrust: trust, label: e.label, bundleCount: 1 },
-      }
-    })
-  }, [rawEdges, pathEdgeIds, pathNodeIds, selectedPath, isAllMode])
+  }, [layoutNodesOut, pathNodeIds, semiNodeIds, selectedPath, isAllMode, pathOnlyMode, nodeW])
+
+  // Edges: filter non-path in pathOnlyMode
+  const rfEdges: Edge[] = useMemo(() => {
+    const pathOnlyVisible = pathOnlyMode && selectedPath
+    return rawEdges
+      .filter(e => {
+        if (isAllMode) return true
+        if (!pathOnlyVisible) return true
+        return pathEdgeIds.has(e.id)
+      })
+      .map(e => {
+        if (isAllMode) {
+          const trust = e.type?.includes('TRUST_') || e.type?.includes('ATTESTATION_') || e.type?.includes('PROVENANCE')
+          return {
+            id: e.id, source: e.source, target: e.target, type: 'bezier',
+            style: { opacity: 1 },
+            data: { isPath: false, isSemi: true, isTrust: trust, label: e.label, bundleCount: 1 },
+          }
+        }
+        const onPath = pathEdgeIds.has(e.id)
+        const trust = e.type?.includes('TRUST_') || e.type?.includes('ATTESTATION_') || e.type?.includes('PROVENANCE')
+        const connectedToPath = pathNodeIds.has(e.source) || pathNodeIds.has(e.target)
+        const dimmed = selectedPath && !onPath && !connectedToPath
+        return {
+          id: e.id, source: e.source, target: e.target, type: 'bezier',
+          style: { opacity: dimmed ? 0.28 : 1 },
+          data: { isPath: onPath, isSemi: (connectedToPath || isAllMode) && !onPath, isTrust: trust, label: e.label, bundleCount: 1 },
+        }
+      })
+  }, [rawEdges, pathEdgeIds, pathNodeIds, selectedPath, isAllMode, pathOnlyMode])
 
   // FitView: simple, covers all visible nodes
   useEffect(() => {
@@ -323,7 +332,16 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
         ))}
       </div>
       <div className="flex-1" />
-      {selectedPathId && <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setSelectedPathId(null)}><X className="size-3" /> 全部</Button>}
+      {pathOnlyMode && selectedPath ? (
+        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPathOnlyMode(false)}>
+          <EyeOff className="size-3" /> 显示全部
+        </Button>
+      ) : selectedPath ? (
+        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPathOnlyMode(true)}>
+          <Eye className="size-3" /> 只看当前链路
+        </Button>
+      ) : null}
+      {selectedPathId && <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => { setSelectedPathId(null); setPathOnlyMode(false) }}><X className="size-3" /> 全部</Button>}
       <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setFullscreen(!fullscreen)}>
         {fullscreen ? <><Minimize2 className="size-3" /> 退出</> : <><Maximize2 className="size-3" /> 全屏</>}
       </Button>
@@ -342,9 +360,32 @@ export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }
         proOptions={{ hideAttribution: true }}
       >
         <Background color="var(--border)" gap={48} size={0.6} />
-        <Controls className="!border-border !bg-[color:var(--surface-overlay)] !rounded-lg !overflow-hidden backdrop-blur"
-          buttonClassName="!bg-transparent !border-border !text-muted-foreground hover:!bg-[color:var(--surface-hover)]" />
-        <MiniMap pannable zoomable className="!border-border !bg-[color:var(--surface-overlay)] !rounded-lg backdrop-blur"
+        <div
+          style={{
+            ['--xy-controls-button-background-color' as string]: 'transparent',
+            ['--xy-controls-button-background-color-hover' as string]: 'var(--surface-hover)',
+            ['--xy-controls-button-color' as string]: 'var(--muted-foreground)',
+            ['--xy-controls-button-color-hover' as string]: 'var(--foreground)',
+            ['--xy-controls-button-border-color' as string]: 'var(--border)',
+          }}
+        >
+          <Controls
+            className="!rounded-lg !overflow-hidden backdrop-blur"
+            style={{
+              border: '1px solid var(--border)',
+              background: 'var(--surface-overlay)',
+              boxShadow: 'var(--shadow-soft)',
+            }}
+          />
+        </div>
+        <MiniMap
+          pannable zoomable
+          className="!rounded-lg backdrop-blur"
+          style={{
+            border: '1px solid var(--border)',
+            background: 'var(--surface-overlay)',
+            boxShadow: 'var(--shadow-soft)',
+          }}
           maskColor="color-mix(in oklch, var(--background) 95%, black)"
           nodeColor={n => {
             const d = (n as any)?.data

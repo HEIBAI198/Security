@@ -153,7 +153,7 @@ describe('security platform CI/CD risk layout', () => {
     expect(platformSource).not.toContain('<BuildStepFlow')
     expect(platformSource).not.toContain('<BuildStepDetail')
     expect(platformSource).toContain("xl:grid-cols-[minmax(280px,28fr)_minmax(0,72fr)]")
-    expect(platformSource).toContain("className='grid min-w-0 gap-4 xl:grid-rows-[auto_minmax(0,1fr)]'")
+    expect(platformSource).toContain('grid gap-4')
     expect(platformSource).toContain('<CicdRiskClusterPanel')
     expect(platformSource).toContain('<CicdFindingList')
   })

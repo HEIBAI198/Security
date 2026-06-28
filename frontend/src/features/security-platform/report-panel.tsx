@@ -325,7 +325,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
   const fadeIn=rm?{}:{initial:{opacity:0,y:16},animate:{opacity:1,y:0},transition:{duration:.5,ease:[.16,1,.3,1]}}
 
   return(
-    <motion.div className="space-y-8 pb-24" {...fadeIn}>
+    <motion.div className="max-w-full space-y-8 pb-24" {...fadeIn}>
       {/* ════════════════════════════════════════════════
          HERO — beam background, glow aura, spotlight
          ════════════════════════════════════════════════ */}
@@ -419,7 +419,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
           )}
 
           {/* ══ Heatmap + Breakpoints ══ */}
-          <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] max-w-full">
             {stages.length>0&&(
               <Card className="surface-raised">
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><ClipboardList className="size-4 text-cyan-400"/>证据覆盖矩阵</CardTitle></CardHeader>

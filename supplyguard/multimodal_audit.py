@@ -1,4 +1,4 @@
-"""Multimodal evidence intake for audio, image, and video files."""
+"""Multimodal evidence intake for image files (OCR-based recognition)."""
 
 from __future__ import annotations
 
@@ -24,25 +24,18 @@ from .config import ROOT
 
 
 MULTIMODAL_STORAGE_DIR = ROOT / "storage" / "multimodal"
-MULTIMODAL_DERIVED_DIR = MULTIMODAL_STORAGE_DIR / "derived"
 MULTIMODAL_INDEX_PATH = MULTIMODAL_STORAGE_DIR / "evidence-index.json"
-MULTIMODAL_MODEL_DIR = ROOT / "storage" / "models"
 MULTIMODAL_RULES_DIR = ROOT / "supplyguard" / "rules" / "multimodal"
 MAX_MULTIMODAL_FILES = 20
 MAX_MULTIMODAL_FILE_BYTES = 100 * 1024 * 1024
 MAX_INDEX_EVIDENCE = 500
 TOOL_TIMEOUT_SECONDS = 30
-ASR_MODEL_NAME = os.environ.get("SUPPLYGUARD_WHISPER_MODEL", "tiny")
-ASR_DEVICE = os.environ.get("SUPPLYGUARD_WHISPER_DEVICE", "cpu")
-ASR_COMPUTE_TYPE = os.environ.get("SUPPLYGUARD_WHISPER_COMPUTE_TYPE", "int8")
 OCR_LANG = os.environ.get("SUPPLYGUARD_OCR_LANG", "ch")
 TESSERACT_LANG = os.environ.get("SUPPLYGUARD_TESSERACT_LANG", "chi_sim+eng")
 
-AUDIO_EXTENSIONS = {".aac", ".aiff", ".flac", ".m4a", ".mp3", ".oga", ".ogg", ".opus", ".wav", ".weba", ".wma"}
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
-VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm", ".wmv"}
 PADDLEOCR_IMAGE_EXTENSIONS = {".bmp", ".dib", ".jpeg", ".jpg", ".png", ".webp", ".pbm", ".pgm", ".ppm", ".pnm", ".sr", ".ras", ".tiff", ".tif", ".pdf"}
-VALID_SOURCE_TYPES = {"audio", "image", "video"}
+VALID_SOURCE_TYPES = {"image"}
 
 
 @dataclass(frozen=True)
@@ -59,7 +52,7 @@ class MultimodalTextInput:
     evidence_type: str = "visual_ocr"
     source_name: str = "manual-recognized-text.txt"
     confidence: float = 0.9
-    engine: str = "manual-asr-ocr-text"
+    engine: str = "manual-ocr-text"
     language: str | None = "zh-CN"
 
 
@@ -170,7 +163,7 @@ def run_multimodal_audit(files: list[MultimodalFileInput]) -> MultimodalAuditRes
     warnings: list[str] = []
 
     if not files:
-        raise ValueError("Upload at least one audio, image, or video file.")
+        raise ValueError("Upload at least one image file.")
     if len(files) > MAX_MULTIMODAL_FILES:
         raise ValueError(f"Upload at most {MAX_MULTIMODAL_FILES} files per scan.")
 
@@ -211,7 +204,7 @@ def run_multimodal_text_audit(records: list[MultimodalTextInput]) -> MultimodalA
     generated_at = datetime.now(UTC).isoformat()
     warnings: list[str] = []
     if not records:
-        raise ValueError("Provide at least one ASR/OCR recognized text record.")
+        raise ValueError("Provide at least one OCR recognized text record.")
 
     evidence: list[MultimodalEvidence] = []
     for record in records[:MAX_MULTIMODAL_FILES]:
@@ -295,8 +288,8 @@ def save_text_evidence(record: MultimodalTextInput, warnings: list[str]) -> Mult
         source_type=source_type,
         recognized_text=text,
         confidence=normalize_confidence(record.confidence),
-        evidence_type=record.evidence_type or ("audio_asr" if source_type == "audio" else "visual_ocr"),
-        engine=record.engine or "manual-asr-ocr-text",
+        evidence_type=record.evidence_type or "visual_ocr",
+        engine=record.engine or "manual-ocr-text",
         source_path=relative_path(path),
         language=record.language,
         segments=[{"text": text, "confidence": normalize_confidence(record.confidence)}],
@@ -331,34 +324,18 @@ def save_text_evidence(record: MultimodalTextInput, warnings: list[str]) -> Mult
 
 def infer_source_type(filename: str, content_type: str | None, content: bytes) -> str:
     mime = (content_type or "").split(";", 1)[0].strip().lower()
-    if mime.startswith("audio/"):
-        return "audio"
     if mime.startswith("image/"):
         return "image"
-    if mime.startswith("video/"):
-        return "video"
 
     extension = Path(filename or "").suffix.lower()
-    if extension in AUDIO_EXTENSIONS:
-        return "audio"
     if extension in IMAGE_EXTENSIONS:
         return "image"
-    if extension in VIDEO_EXTENSIONS:
-        return "video"
 
     header = content[:64]
     if header.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a")):
         return "image"
     if header.startswith(b"RIFF") and header[8:12] == b"WEBP":
         return "image"
-    if header.startswith(b"RIFF") and header[8:12] == b"WAVE":
-        return "audio"
-    if header.startswith((b"ID3", b"fLaC", b"OggS")):
-        return "audio"
-    if len(header) > 12 and header[4:8] == b"ftyp":
-        return "video"
-    if header.startswith(b"\x1a\x45\xdf\xa3"):
-        return "video"
     return "unknown"
 
 
@@ -369,11 +346,9 @@ def normalize_mime_type(filename: str, content_type: str | None, source_type: st
     guessed, _ = mimetypes.guess_type(filename)
     if guessed:
         return guessed
-    return {
-        "audio": "audio/octet-stream",
-        "image": "image/octet-stream",
-        "video": "video/octet-stream",
-    }.get(source_type, "application/octet-stream")
+    if source_type == "image":
+        return "image/octet-stream"
+    return "application/octet-stream"
 
 
 def build_metadata(
@@ -388,20 +363,13 @@ def build_metadata(
         "extension": path.suffix.lower(),
         "content_type": item.content_type or mime_type,
     }
-    dimensions = image_dimensions(path) if source_type == "image" else {}
+    dimensions = image_dimensions(path)
     if dimensions:
         metadata.update(dimensions)
 
-    ffprobe = tools.get("ffprobe")
-    if ffprobe and ffprobe.available and ffprobe.state != "fallback":
-        probed = ffprobe_metadata(path, ffprobe.command, warnings)
-        if probed:
-            metadata["ffprobe"] = probed
-            metadata.update(primary_media_metadata(probed))
-
     opencv = tools.get("opencv")
-    if opencv and opencv.available and source_type in {"image", "video"}:
-        opencv_meta = opencv_metadata(path, source_type, warnings)
+    if opencv and opencv.available:
+        opencv_meta = opencv_metadata(path, "image", warnings)
         if opencv_meta:
             metadata["opencv"] = opencv_meta
             metadata.update({key: value for key, value in opencv_meta.items() if key not in metadata})
@@ -415,102 +383,18 @@ def create_derived_artifacts(
     tools: dict[str, MultimodalToolStatus],
     warnings: list[str],
 ) -> list[MultimodalDerivedArtifact]:
-    ffmpeg = tools.get("ffmpeg")
-    if not ffmpeg or not ffmpeg.available:
-        if source_type in {"audio", "video"}:
-            warnings.append("FFmpeg is not available; audio wav normalization and video frame extraction were skipped.")
-        return []
-
-    MULTIMODAL_DERIVED_DIR.mkdir(parents=True, exist_ok=True)
-    if source_type == "audio":
-        output = MULTIMODAL_DERIVED_DIR / f"{evidence_id}-audio.wav"
-        command = [ffmpeg.command, "-y", "-i", str(path), "-vn", "-ac", "1", "-ar", "16000", str(output)]
-        kind = "normalized-audio-wav"
-        mime_type = "audio/wav"
-    elif source_type == "video":
-        output = MULTIMODAL_DERIVED_DIR / f"{evidence_id}-frame.jpg"
-        command = [ffmpeg.command, "-y", "-i", str(path), "-frames:v", "1", str(output)]
-        kind = "video-preview-frame"
-        mime_type = "image/jpeg"
-    else:
-        return []
-
-    result = run_command(command, TOOL_TIMEOUT_SECONDS)
-    if result.returncode != 0 or not output.exists():
-        warnings.append(f"FFmpeg failed to create {kind} for {path.name}: {short_text(result.stderr or result.stdout, 220)}")
-        return []
-
-    return [
-        MultimodalDerivedArtifact(
-            kind=kind,
-            path=str(output),
-            relative_path=relative_path(output),
-            mime_type=mime_type,
-            size_bytes=output.stat().st_size,
-            created_at=datetime.now(UTC).isoformat(),
-            tool="FFmpeg",
-        )
-    ]
+    # Derived artifacts are only needed for audio/video preprocessing.
+    # Image OCR works directly on the uploaded file — no derived artifacts required.
+    _ = (path, evidence_id, source_type, tools, warnings)
+    return []
 
 
 def detect_tools() -> list[MultimodalToolStatus]:
     return [
-        ffmpeg_tool_status(),
-        ffprobe_tool_status(),
         opencv_tool_status(),
-        python_import_tool_status("faster-whisper", "faster_whisper", "from faster_whisper import WhisperModel"),
-        python_import_tool_status("Whisper", "whisper", "import whisper"),
         python_import_tool_status("PaddleOCR", "paddleocr", "from paddleocr import PaddleOCR"),
         command_tool_status("Tesseract OCR", "tesseract", ["--version"]),
     ]
-
-
-def ffmpeg_tool_status() -> MultimodalToolStatus:
-    status = command_tool_status("FFmpeg", "ffmpeg", ["-version"])
-    if status.available:
-        return status
-    fallback = imageio_ffmpeg_exe()
-    if not fallback:
-        return status
-    result = run_command([fallback, "-version"], 8)
-    version = first_line(result.stdout or result.stderr)
-    return MultimodalToolStatus(
-        name="FFmpeg",
-        available=True,
-        command=fallback,
-        state="ok" if result.returncode == 0 else "partial",
-        version=f"{version or 'ffmpeg'} (imageio-ffmpeg)",
-        error=None if result.returncode == 0 else short_text(result.stderr or result.stdout, 160),
-    )
-
-
-def ffprobe_tool_status() -> MultimodalToolStatus:
-    status = command_tool_status("FFprobe", "ffprobe", ["-version"])
-    if status.available:
-        return status
-    fallback = imageio_ffmpeg_exe()
-    if not fallback:
-        return status
-    result = run_command([fallback, "-version"], 8)
-    version = first_line(result.stdout or result.stderr)
-    return MultimodalToolStatus(
-        name="FFprobe",
-        available=True,
-        command=fallback,
-        state="fallback",
-        version=f"{version or 'ffmpeg'} (metadata probe fallback)",
-        error=None,
-    )
-
-
-def imageio_ffmpeg_exe() -> str | None:
-    try:
-        import imageio_ffmpeg  # type: ignore[import-not-found]
-
-        path = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception:
-        return None
-    return path if path and Path(path).exists() else None
 
 
 def tool_key(name: str) -> str:
@@ -587,23 +471,10 @@ def recognize_text_evidence(
     tools: dict[str, MultimodalToolStatus],
     warnings: list[str],
 ) -> list[MultimodalRecognition]:
-    if source_type == "audio":
-        wav_artifact = next((item for item in derived if item.kind == "normalized-audio-wav"), None)
-        audio_path = Path(wav_artifact.path) if wav_artifact else path
-        recognition = recognize_audio(audio_path, source_type, tools, warnings)
-        return [recognition] if recognition is not None else []
-
+    _ = derived
     if source_type == "image":
         recognition = recognize_image(path, source_type, tools, warnings)
         return [recognition] if recognition is not None else []
-
-    if source_type == "video":
-        frame = next((item for item in derived if item.kind == "video-preview-frame"), None)
-        if frame is None:
-            return []
-        recognition = recognize_image(Path(frame.path), source_type, tools, warnings)
-        return [recognition] if recognition is not None else []
-
     return []
 
 
@@ -867,7 +738,7 @@ def fallback_multimodal_rules() -> list[dict[str, Any]]:
     return [
         {
             "id": "multimodal-postinstall-egress",
-            "title": "截图或语音中出现安装脚本外联",
+            "title": "截图中出现安装脚本外联",
             "severity": "critical",
             "score": 96,
             "match": {"keywords": ["postinstall", "curl"], "entity_types": ["ip"]},
@@ -1022,135 +893,6 @@ def severity_from_score(score: int) -> str:
     if score >= 55:
         return "medium"
     return "low"
-
-
-def recognize_audio(
-    path: Path,
-    source_type: str,
-    tools: dict[str, MultimodalToolStatus],
-    warnings: list[str],
-) -> MultimodalRecognition | None:
-    attempted = False
-    faster_whisper = tools.get("faster-whisper")
-    if faster_whisper and faster_whisper.available:
-        attempted = True
-        recognition = recognize_audio_with_faster_whisper(path, source_type, warnings)
-        if recognition is not None:
-            return recognition
-
-    whisper = tools.get("whisper")
-    if whisper and whisper.available:
-        attempted = True
-        recognition = recognize_audio_with_openai_whisper(path, source_type, warnings)
-        if recognition is not None:
-            return recognition
-
-    if attempted:
-        warnings.append(f"ASR engines ran for {path.name}, but no transcript was produced.")
-    else:
-        warnings.append("No ASR engine is available; install faster-whisper or openai-whisper to transcribe audio evidence.")
-    return None
-
-
-def recognize_audio_with_faster_whisper(
-    path: Path,
-    source_type: str,
-    warnings: list[str],
-) -> MultimodalRecognition | None:
-    try:
-        from faster_whisper import WhisperModel  # type: ignore[import-not-found]
-
-        model_reference = faster_whisper_model_reference()
-        model = WhisperModel(model_reference, device=ASR_DEVICE, compute_type=ASR_COMPUTE_TYPE)
-        raw_segments, info = model.transcribe(str(path), vad_filter=True)
-        segments: list[dict[str, Any]] = []
-        texts: list[str] = []
-        confidences: list[float] = []
-        for segment in raw_segments:
-            text = str(getattr(segment, "text", "") or "").strip()
-            if not text:
-                continue
-            confidence = confidence_from_avg_logprob(getattr(segment, "avg_logprob", None))
-            confidences.append(confidence)
-            texts.append(text)
-            segments.append(
-                {
-                    "start": round(float(getattr(segment, "start", 0) or 0), 2),
-                    "end": round(float(getattr(segment, "end", 0) or 0), 2),
-                    "text": text,
-                    "confidence": confidence,
-                }
-            )
-        recognized_text = normalize_recognized_text(" ".join(texts))
-        if not recognized_text:
-            return None
-        return MultimodalRecognition(
-            source_type=source_type,
-            recognized_text=recognized_text,
-            confidence=average(confidences) or 0.78,
-            evidence_type="audio_asr",
-            engine=f"faster-whisper/{Path(model_reference).name if Path(model_reference).exists() else ASR_MODEL_NAME}",
-            source_path=relative_path(path),
-            language=getattr(info, "language", None),
-            segments=segments,
-        )
-    except Exception as exc:  # pragma: no cover - depends on optional model files.
-        warnings.append(f"faster-whisper ASR failed for {path.name}: {short_text(exc, 220)}")
-        return None
-
-
-def faster_whisper_model_reference() -> str:
-    configured = Path(ASR_MODEL_NAME)
-    if configured.exists():
-        return str(configured)
-    local_model = MULTIMODAL_MODEL_DIR / f"faster-whisper-{ASR_MODEL_NAME}"
-    if (local_model / "model.bin").exists() and (local_model / "config.json").exists():
-        return str(local_model)
-    return ASR_MODEL_NAME
-
-
-def recognize_audio_with_openai_whisper(
-    path: Path,
-    source_type: str,
-    warnings: list[str],
-) -> MultimodalRecognition | None:
-    try:
-        import whisper  # type: ignore[import-not-found]
-
-        model = whisper.load_model(ASR_MODEL_NAME)
-        result = model.transcribe(str(path), fp16=False)
-        recognized_text = normalize_recognized_text(str(result.get("text") or ""))
-        if not recognized_text:
-            return None
-        raw_segments = result.get("segments") if isinstance(result.get("segments"), list) else []
-        segments: list[dict[str, Any]] = []
-        confidences: list[float] = []
-        for segment in raw_segments:
-            if not isinstance(segment, dict):
-                continue
-            confidence = confidence_from_avg_logprob(segment.get("avg_logprob"))
-            confidences.append(confidence)
-            segments.append(
-                {
-                    "start": round(float(segment.get("start") or 0), 2),
-                    "end": round(float(segment.get("end") or 0), 2),
-                    "text": normalize_recognized_text(str(segment.get("text") or "")),
-                    "confidence": confidence,
-                }
-            )
-        return MultimodalRecognition(
-            source_type=source_type,
-            recognized_text=recognized_text,
-            confidence=average(confidences) or 0.76,
-            evidence_type="audio_asr",
-            engine=f"openai-whisper/{ASR_MODEL_NAME}",
-            source_path=relative_path(path),
-            language=str(result.get("language") or "") or None,
-            segments=[item for item in segments if item["text"]],
-        )
-    except Exception as exc:  # pragma: no cover - depends on optional model files.
-        warnings.append(f"OpenAI Whisper ASR failed for {path.name}: {short_text(exc, 220)}")
-        return None
 
 
 def recognize_image(
@@ -1438,57 +1180,6 @@ def column_value(columns: list[str], indexes: dict[str, int], name: str) -> str:
     return columns[index]
 
 
-def ffprobe_metadata(path: Path, command: str, warnings: list[str]) -> dict[str, Any]:
-    result = run_command(
-        [
-            command,
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration,bit_rate:stream=codec_type,codec_name,width,height,duration,sample_rate,channels",
-            "-of",
-            "json",
-            str(path),
-        ],
-        TOOL_TIMEOUT_SECONDS,
-    )
-    if result.returncode != 0:
-        warnings.append(f"FFprobe failed for {path.name}: {short_text(result.stderr or result.stdout, 180)}")
-        return {}
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        warnings.append(f"FFprobe returned invalid JSON for {path.name}.")
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def primary_media_metadata(payload: dict[str, Any]) -> dict[str, Any]:
-    metadata: dict[str, Any] = {}
-    format_info = payload.get("format") if isinstance(payload.get("format"), dict) else {}
-    duration = safe_float(format_info.get("duration"))
-    bit_rate = safe_int(format_info.get("bit_rate"))
-    if duration is not None:
-        metadata["duration_seconds"] = round(duration, 3)
-    if bit_rate is not None:
-        metadata["bit_rate"] = bit_rate
-
-    streams = payload.get("streams") if isinstance(payload.get("streams"), list) else []
-    for stream in streams:
-        if not isinstance(stream, dict):
-            continue
-        codec_type = stream.get("codec_type")
-        if codec_type == "video":
-            metadata.setdefault("width", safe_int(stream.get("width")))
-            metadata.setdefault("height", safe_int(stream.get("height")))
-            metadata.setdefault("video_codec", stream.get("codec_name"))
-        elif codec_type == "audio":
-            metadata.setdefault("audio_codec", stream.get("codec_name"))
-            metadata.setdefault("sample_rate", safe_int(stream.get("sample_rate")))
-            metadata.setdefault("channels", safe_int(stream.get("channels")))
-    return {key: value for key, value in metadata.items() if value not in (None, "")}
-
-
 def opencv_metadata(path: Path, source_type: str, warnings: list[str]) -> dict[str, Any]:
     try:
         import cv2  # type: ignore[import-not-found]
@@ -1496,29 +1187,12 @@ def opencv_metadata(path: Path, source_type: str, warnings: list[str]) -> dict[s
         return {}
 
     try:
-        if source_type == "image":
-            image = cv2.imread(str(path))
-            if image is None:
-                return {}
-            height, width = image.shape[:2]
-            channels = image.shape[2] if len(image.shape) > 2 else 1
-            return {"width": int(width), "height": int(height), "channels": int(channels), "preprocess_ready": True}
-
-        capture = cv2.VideoCapture(str(path))
-        if not capture.isOpened():
+        image = cv2.imread(str(path))
+        if image is None:
             return {}
-        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
-        capture.release()
-        return {
-            "width": width or None,
-            "height": height or None,
-            "frame_count": frame_count or None,
-            "fps": round(fps, 3) if fps else None,
-            "preprocess_ready": True,
-        }
+        height, width = image.shape[:2]
+        channels = image.shape[2] if len(image.shape) > 2 else 1
+        return {"width": int(width), "height": int(height), "channels": int(channels), "preprocess_ready": True}
     except Exception as exc:  # pragma: no cover - optional dependency behavior.
         warnings.append(f"OpenCV metadata extraction failed for {path.name}: {short_text(exc, 180)}")
         return {}
@@ -1621,12 +1295,9 @@ def empty_multimodal_payload() -> dict[str, Any]:
         "tools": [asdict(tool) for tool in detect_tools()],
         "summary": {
             "evidence_count": 0,
-            "audio": 0,
             "image": 0,
-            "video": 0,
             "derived_count": 0,
             "recognition_count": 0,
-            "asr_count": 0,
             "ocr_count": 0,
             "entity_count": 0,
             "finding_count": 0,
@@ -1680,12 +1351,11 @@ def build_summary(evidence: list[MultimodalEvidence], *, duration_seconds: float
 
 
 def build_summary_from_dicts(evidence: list[dict[str, Any]]) -> dict[str, Any]:
-    counts = {"audio": 0, "image": 0, "video": 0}
+    image_count = 0
     severities = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     total_size = 0
     derived_count = 0
     recognition_count = 0
-    asr_count = 0
     ocr_count = 0
     entity_count = 0
     finding_count = 0
@@ -1694,8 +1364,8 @@ def build_summary_from_dicts(evidence: list[dict[str, Any]]) -> dict[str, Any]:
     by_rule: dict[str, int] = {}
     for item in evidence:
         source_type = str(item.get("source_type") or "")
-        if source_type in counts:
-            counts[source_type] += 1
+        if source_type == "image":
+            image_count += 1
         total_size += int(item.get("size_bytes") or 0)
         risk_score = max(risk_score, int(item.get("risk_score") or 0))
         derived = item.get("derived") if isinstance(item.get("derived"), list) else []
@@ -1720,16 +1390,13 @@ def build_summary_from_dicts(evidence: list[dict[str, Any]]) -> dict[str, Any]:
             if not isinstance(recognition, dict):
                 continue
             evidence_type = str(recognition.get("evidence_type") or "")
-            if evidence_type == "audio_asr":
-                asr_count += 1
             if evidence_type == "visual_ocr":
                 ocr_count += 1
     return {
         "evidence_count": len(evidence),
-        **counts,
+        "image": image_count,
         "derived_count": derived_count,
         "recognition_count": recognition_count,
-        "asr_count": asr_count,
         "ocr_count": ocr_count,
         "entity_count": entity_count,
         "finding_count": finding_count,
@@ -1791,9 +1458,7 @@ Scan ID: {scan_id}
 ## Summary
 
 - Evidence count: {summary.get('evidence_count', 0)}
-- Audio: {summary.get('audio', 0)}
 - Image: {summary.get('image', 0)}
-- Video: {summary.get('video', 0)}
 - Derived artifacts: {summary.get('derived_count', 0)}
 - Text recognitions: {summary.get('recognition_count', 0)}
 - Security entities: {summary.get('entity_count', 0)}
@@ -1837,10 +1502,7 @@ Scan ID: {scan_id}
 
 ## Open-source references
 
-- FFmpeg: https://www.ffmpeg.org/index.html
 - OpenCV: https://opencv.org/about/
-- Whisper: https://github.com/openai/whisper
-- faster-whisper: https://github.com/SYSTRAN/faster-whisper
 - PaddleOCR: https://www.paddleocr.ai/
 - Tesseract OCR: https://tesseractocr.org/
 """
@@ -2008,15 +1670,6 @@ def normalize_confidence(value: Any) -> float:
     if numeric > 1:
         numeric = numeric / 100
     return round(max(0.0, min(1.0, numeric)), 3)
-
-
-def confidence_from_avg_logprob(value: Any) -> float:
-    numeric = safe_float(value)
-    if numeric is None:
-        return 0.78
-    # Whisper avg_logprob is usually <= 0. Map a practical range [-2, 0] to [0.35, 0.98].
-    normalized = 0.35 + max(0.0, min(2.0, numeric + 2.0)) / 2.0 * 0.63
-    return round(max(0.0, min(0.98, normalized)), 3)
 
 
 def normalize_recognized_text(value: str) -> str:

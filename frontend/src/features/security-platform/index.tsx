@@ -37,6 +37,7 @@ import {
   Boxes,
   BrainCircuit,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CheckCircle2,
   ClipboardList,
@@ -1092,10 +1093,21 @@ export function SecurityPlatform() {
 
   async function supplementProjectArchive(file: File, targetTab: PlatformTab) {
     const record = await uploadProjectArchive(file)
-    await bindImportToConversation(record, {
-      targetTab,
-      successMessage: '补充文件已按项目材料导入',
-    })
+    if (!workspace) return
+    const workspaceId = getWorkspaceId(workspace)
+    const newImportId = record.importId
+
+    if (targetTab === 'supply') {
+      const audit = await runDependencyAuditScan({ workspaceId, importId: newImportId })
+      const nextWorkspace = await loadSecurityWorkspace()
+      setWorkspace(nextWorkspace)
+      toast.success(supplementFileSuccessMessage('reachability'))
+    } else if (targetTab === 'pipeline') {
+      const audit = await runCICDAuditScan({ workspaceId, importId: newImportId })
+      const nextWorkspace = await loadSecurityWorkspace()
+      setWorkspace(nextWorkspace)
+      toast.success(supplementFileSuccessMessage('cicd', { count: audit.summary.finding_count }))
+    }
   }
 
   async function startFullAnalysis() {
@@ -1337,6 +1349,7 @@ export function SecurityPlatform() {
                       setQuestion={setQuestion}
                       answer={assistantAnswer}
                       busy={assistantBusy}
+                      animationKey={moduleViewKey}
                       onSubmit={() => void submitQuestion()}
                       onStartAnalysis={() => void startFullAnalysis()}
                       onOpenModule={(module) => openWorkspaceTab(module)}
@@ -1359,11 +1372,13 @@ export function SecurityPlatform() {
               workspace={workspace}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
               importId={workspace.dependency_audit?.target?.importId ?? workspace.code_audit?.target?.importId}
-              onCodeScanned={(audit) => {
+              onCodeScanned={async (audit) => {
                 setWorkspace((current) => current ? { ...current, code_audit: audit } : { ...workspace, code_audit: audit })
+                const nextWorkspace = await loadSecurityWorkspace()
+                setWorkspace(nextWorkspace)
                 toast.success(`可达性研判完成，发现 ${audit.summary.total} 项风险`)
               }}
-              onDependencyScanned={(audit) => {
+              onDependencyScanned={async (audit) => {
                 setWorkspace((current) => {
                   const base = current ?? workspace
                   return {
@@ -1396,6 +1411,8 @@ export function SecurityPlatform() {
                   },
                 }
                 })
+                const nextWorkspace = await loadSecurityWorkspace()
+                setWorkspace(nextWorkspace)
                 toast.success(supplementFileSuccessMessage('reachability'))
               }}
               onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'supply')}
@@ -1417,7 +1434,7 @@ export function SecurityPlatform() {
               artifactTrust={workspace.artifact_trust}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
               importId={workspace.cicd_audit?.target?.importId ?? workspace.code_audit?.target?.importId}
-              onScanned={(audit) => {
+              onScanned={async (audit) => {
                 setWorkspace({
                   ...workspace,
                   cicd_audit: audit,
@@ -1442,6 +1459,8 @@ export function SecurityPlatform() {
                     risk_score: Math.max(workspace.summary.risk_score, audit.summary.risk_score),
                   },
                 })
+                const nextWorkspace = await loadSecurityWorkspace()
+                setWorkspace(nextWorkspace)
                 toast.success(supplementFileSuccessMessage('cicd', { count: audit.summary.finding_count }))
               }}
               onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'pipeline')}
@@ -1479,8 +1498,10 @@ export function SecurityPlatform() {
                 const nextWorkspace = await loadSecurityWorkspace()
                 setWorkspace(nextWorkspace)
               }}
-              onScanned={(audit) => {
+              onScanned={async (audit) => {
                 setWorkspace(applyLogAuditToWorkspace(workspace, audit))
+                const nextWorkspace = await loadSecurityWorkspace()
+                setWorkspace(nextWorkspace)
                 toast.success(`日志扫描完成，发现 ${audit.summary.finding_count} 项运行期风险`)
               }}
             />
@@ -1991,6 +2012,33 @@ function EmbeddedProjectImportPanel({
   )
 }
 
+function PersistentReportCard({ workspace, animationKey, onOpenReport }: { workspace: SecurityWorkspace; animationKey: number; onOpenReport: () => void }) {
+  const summary = workspace.graph?.summary
+  if (!summary) return null
+  return (
+    <Card className="rounded-md border border-dashed bg-muted/10">
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-lg bg-cyan-100 dark:bg-cyan-950/40">
+              <FileText className="size-5 text-cyan-600 dark:text-cyan-400" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold">安全研判报告</div>
+              <div className="text-xs text-muted-foreground">
+                {summary.node_count} 节点 · {summary.edge_count} 关系 · 风险 {workspace.graph?.risk_score ?? summary.risk_score ?? '-'}
+              </div>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" className="rounded-md" onClick={onOpenReport}>
+            查看报告
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function AgentConversationHome({
   workspace,
   analysisStarted,
@@ -2000,6 +2048,7 @@ function AgentConversationHome({
   setQuestion,
   answer,
   busy,
+  animationKey,
   onSubmit,
   onStartAnalysis,
   onOpenModule,
@@ -2012,6 +2061,7 @@ function AgentConversationHome({
   setQuestion: (value: string) => void
   answer: SecurityAssistantResponse | null
   busy: boolean
+  animationKey: number
   onSubmit: () => void
   onStartAnalysis: () => void
   onOpenModule: (module: PlatformTab) => void
@@ -2020,6 +2070,7 @@ function AgentConversationHome({
   const visibleModules = agentModuleTabs.filter((module) => module !== 'copilot' && module !== 'report')
 
   const [thinkOpen, setThinkOpen] = useState(true)
+  const [reportOpen, setReportOpen] = useState(false)
   const hasAnalysisResult = !!(answer?.answer || assistant.answer || answer?.graph_rag || assistant.graph_rag)
 
   return (
@@ -2077,6 +2128,41 @@ function AgentConversationHome({
             onStart={onStartAnalysis}
             onOpenModule={onOpenModule}
           />
+        </CopilotMessage>
+
+        <CopilotMessage
+          role='assistant'
+          title='溯源报告助手'
+          icon={<FileText className='size-4 text-cyan-600' />}
+        >
+          <Collapsible open={reportOpen} onOpenChange={setReportOpen} className='min-w-0'>
+            <div className='flex items-center justify-between gap-4'>
+              <p className='text-sm leading-7 text-foreground/90'>
+                <strong>溯源报告已生成</strong>
+              </p>
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  className='group flex items-center gap-2 rounded-md border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground shrink-0'
+                >
+                  <FileText className='size-4' />
+                  <span className='font-medium'>
+                    {reportOpen ? '收起报告' : '查看报告'}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      'size-4 transition-transform duration-200',
+                      reportOpen && 'rotate-180'
+                    )}
+                  />
+                </Button>
+              </CollapsibleTrigger>
+            </div>
+            <CollapsibleContent className='mt-4 min-w-0 overflow-x-auto'>
+              <ReportPanel workspace={workspace} animationKey={animationKey} />
+            </CollapsibleContent>
+          </Collapsible>
         </CopilotMessage>
 
         {busy ? (
@@ -6635,29 +6721,34 @@ function PipelinePanel({
     }
   }
 
+  const totalBuildChainRisks = displayModel.source.artifactFindings + displayModel.source.pipelineRisks
+
   return (
     <div className='space-y-4'>
       <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
-        <div className='flex flex-wrap items-start justify-between gap-4'>
-          <div className='min-w-0'>
-            <div className='flex items-center gap-3'>
-              <span className='grid size-9 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
-                <GitBranch className='size-5' />
-              </span>
-              <h2 className='text-page-title text-page-title-on-dark'>CI/CD 构建链研判</h2>
-            </div>
-            <div className='mt-2 h-px w-64 bg-gradient-to-r from-orange-300/50 via-cyan-300/20 to-transparent' />
-            <div className='mt-3 flex flex-wrap items-center gap-2'>
-              <span className='meta-chip-dark'>GitHub Actions</span>
-              <span className='meta-chip-dark'>{displayModel.summary.workflow_count} workflows</span>
-              <span className='meta-chip-dark'>{displayModel.summary.total_steps} steps</span>
-              <span className='meta-chip-dark border-cyan-300/20 bg-cyan-400/10 text-cyan-100'>
-                CI {displayModel.source.cicdFindings} / 构建链 {displayModel.source.artifactFindings + displayModel.source.pipelineRisks}
-              </span>
-              <span className='meta-chip-dark max-w-[220px] truncate' title={displayModel.targetLabel}>{compactWorkflowPath(displayModel.targetLabel)}</span>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <div className='flex items-center gap-3 min-w-0'>
+            <span className='grid size-8 shrink-0 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
+              <GitBranch className='size-4' />
+            </span>
+            <div className='min-w-0'>
+              <h2 className='text-lg font-bold text-foreground truncate'>CI/CD 构建链研判</h2>
+              <div className='mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground'>
+                <span>GitHub Actions</span>
+                <span className='opacity-40'>·</span>
+                <span>{displayModel.summary.workflow_count} workflows</span>
+                <span className='opacity-40'>·</span>
+                <span>{displayModel.summary.total_steps} steps</span>
+                {totalBuildChainRisks > 0 && (
+                  <>
+                    <span className='opacity-40'>·</span>
+                    <span className='text-orange-300 font-semibold'>{totalBuildChainRisks} 风险</span>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-          <div className='flex flex-wrap gap-2'>
+          <div className='flex items-center gap-1.5'>
             <Button size='sm' className={actionButtonClass} onClick={() => void startCICDScan()} disabled={scanning}>
               {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
               重新扫描
@@ -6667,14 +6758,6 @@ function PipelinePanel({
               {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
               {SUPPLEMENT_FILE_LABEL}
             </Button>
-            <Button
-              variant='outline'
-              size='sm'
-              onClick={() => downloadReport(audit?.report || artifactTrust?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}
-            >
-              <Download className='size-4' />
-              导出报告
-            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant='outline' size='sm'>
@@ -6682,26 +6765,23 @@ function PipelinePanel({
                   <ChevronDown className='size-4' />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align='end' className='w-56'>
-                <DropdownMenuItem disabled={!audit || mutating} onClick={() => void establishBaseline()}>
-                  <ShieldCheck className='size-4' />
-                  建立基线
+              <DropdownMenuContent align='end' className='w-48'>
+                <DropdownMenuItem onClick={() => downloadReport(audit?.report || artifactTrust?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}>
+                  <Download className='size-4' />
+                  导出报告
                 </DropdownMenuItem>
                 <DropdownMenuItem disabled={!audit} onClick={() => void downloadSarif()}>
                   <Download className='size-4' />
                   导出 SARIF
                 </DropdownMenuItem>
+                <DropdownMenuItem disabled={!audit || mutating} onClick={() => void establishBaseline()}>
+                  <ShieldCheck className='size-4' />
+                  建立基线
+                </DropdownMenuItem>
                 <DropdownMenuItem disabled={!audit || mutating} onClick={() => void uploadGithubCodeScanning()}>
                   <IconGithub className='size-4' />
                   Code Scanning
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className='text-xs font-medium text-muted-foreground'>Workflow</DropdownMenuLabel>
-                {workflows.slice(0, 3).map((workflow) => (
-                  <DropdownMenuLabel key={workflow} className='truncate font-mono text-[11px] font-normal text-muted-foreground' title={workflow}>
-                    {workflow}
-                  </DropdownMenuLabel>
-                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -6711,16 +6791,17 @@ function PipelinePanel({
         ) : null}
       </section>
 
-      <div className='grid items-stretch gap-4 xl:grid-cols-[minmax(280px,28fr)_minmax(0,72fr)]'>
-        <CicdRiskOverviewCard model={displayModel} />
-        <div className='grid min-w-0 gap-4 xl:grid-rows-[auto_minmax(0,1fr)]'>
-        <CicdRiskClusterPanel
-          clusters={riskClusters}
-          activeClusterId={activeClusterId}
-          onSelectCluster={selectCluster}
-          onReset={resetCicdView}
-        />
-        <Card className='h-full rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <div className='grid gap-4'>
+        <div className='grid items-stretch gap-4 xl:grid-cols-[minmax(280px,28fr)_minmax(0,72fr)]'>
+          <CicdRiskOverviewCard model={displayModel} />
+          <CicdRiskClusterPanel
+            clusters={riskClusters}
+            activeClusterId={activeClusterId}
+            onSelectCluster={selectCluster}
+            onReset={resetCicdView}
+          />
+        </div>
+        <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
           <CardHeader className='pb-3'>
             <div className='flex flex-wrap items-center justify-between gap-3'>
               <div className='flex flex-wrap items-center gap-2'>
@@ -6770,7 +6851,6 @@ function PipelinePanel({
             />
           </CardContent>
         </Card>
-      </div>
       </div>
 
     </div>
@@ -6869,15 +6949,17 @@ function CicdConclusionStrip({
   clusters: CicdRiskCluster[]
 }) {
   const primary = clusters[0]?.title ?? conclusion.keyRisks[0] ?? '未发现高优先级风险'
-  const priorities = clusters.flatMap((cluster) => cluster.findings.slice(0, 2)).map((finding) => finding.step_name || finding.job_name || compactWorkflowPath(finding.workflow))
+  const topClusterCount = clusters.slice(0, 2).reduce((sum, c) => sum + c.count, 0)
   return (
-    <div className='mt-4 grid gap-2 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2.5 md:grid-cols-[auto_minmax(190px,1.2fr)_minmax(170px,1fr)_minmax(220px,1.35fr)]'>
-      <div className='flex items-center gap-2'>
-        <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2.5 py-1 text-xs font-semibold text-orange-100'>构建链可复现性风险</span>
-      </div>
-      <div className='min-w-0'><div className='text-[11px] font-medium text-muted-foreground'>主要风险</div><div className='truncate text-sm font-bold text-foreground' title={primary}>{primary}</div></div>
-      <div><div className='text-[11px] font-medium text-muted-foreground'>影响范围</div><div className='text-sm font-semibold text-[color:var(--type-body)]'>{audit.workflows?.length || audit.summary.workflow_count || 0} workflows / {audit.summary.total_steps || audit.summary.job_count || 0} steps</div></div>
-      <div className='min-w-0'><div className='text-[11px] font-medium text-muted-foreground'>优先处理</div><div className='truncate text-sm font-semibold text-orange-100' title={priorities.join(' / ')}>{priorities.slice(0, 3).join(' / ') || '-'}</div></div>
+    <div className='mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-xs'>
+      <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2 py-0.5 text-[11px] font-semibold text-orange-100 shrink-0'>构建链风险</span>
+      <span className='text-muted-foreground truncate min-w-0'>
+        主要风险：<span className='font-semibold text-foreground'>{primary}</span>
+        {clusters.length > 1 && <span className='text-muted-foreground'> +{clusters.length - 1} 类</span>}
+      </span>
+      <span className='text-muted-foreground shrink-0'>
+        {audit.workflows?.length || audit.summary.workflow_count || 0} workflows · {audit.summary.total_steps || audit.summary.job_count || 0} steps · <span className='font-semibold text-orange-100'>{topClusterCount}</span> 条风险
+      </span>
     </div>
   )
 }
@@ -6890,18 +6972,17 @@ function CicdRiskOverviewCard({
   const total = model.summary.finding_count
   const riskScore = model.summary.risk_score
   const riskLevel = model.summary.risk_level
-  const radius = 48
+  const radius = 38
   const circumference = 2 * Math.PI * radius
   const reducedMotion = useReducedMotion()
-  const { value: displayScore, spring } = useAnimatedNumber(riskScore, {
+  const { value: displayScore } = useAnimatedNumber(riskScore, {
     stiffness: 90,
     damping: 18,
     delayMs: 120,
-    durationMs: 1800,
+    durationMs: 1500,
     respectReducedMotion: false,
     resetKey: model.scanKey,
   })
-  const dashOffset = useTransform(spring, (latest) => circumference * (1 - Math.max(0, Math.min(100, latest)) / 100))
   const tone = riskGaugeTone(riskLevel)
   const severityData = [
     { label: '严重', value: model.summary.critical, color: 'bg-red-400' },
@@ -6911,72 +6992,67 @@ function CicdRiskOverviewCard({
   ]
   const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
   return (
-    <Card className='riskScoreWorkbenchCard h-full min-h-[390px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
-      <CardContent className='relative flex h-full flex-col p-4'>
-        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
-        <div className='relative flex items-center justify-between gap-3'>
-          <div className='flex items-center gap-2 text-section-title text-foreground'><ShieldAlert className='size-5 text-orange-200' />CI/CD 风险评分</div>
-          <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs text-orange-100'>
+    <Card className='h-full surface-raised overflow-hidden rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardContent className='p-4'>
+        <div className='flex items-center justify-between gap-2 mb-3'>
+          <div className='flex items-center gap-2 text-sm font-bold text-foreground'><ShieldAlert className='size-4 text-orange-200' />风险评分</div>
+          <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-[11px] font-semibold text-orange-100'>
             {severityLabel(riskLevel)}
           </span>
         </div>
-        <div className='flex flex-1 flex-col justify-center'>
-          <div className='flex items-center justify-between gap-4'>
-            <div className='relative size-36 shrink-0'>
-              <motion.div
-                className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
-                animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
-                transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+        <div className='flex flex-col items-center gap-4'>
+          <div className='relative size-28 shrink-0'>
+            <svg viewBox='0 0 96 96' className='relative size-full -rotate-90'>
+              <circle cx='48' cy='48' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='7' />
+              <motion.circle
+                cx='48'
+                cy='48'
+                r={radius}
+                className={cn('fill-none', tone.stroke)}
+                strokeWidth='7'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                initial={{ strokeDashoffset: circumference }}
+                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - Math.max(0, Math.min(100, riskScore)) / 100) }}
+                transition={{ duration: 1.2, ease: 'easeOut' }}
               />
-              <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
-                <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
-                <motion.circle
-                  cx='56'
-                  cy='56'
-                  r={radius}
-                  className={cn('fill-none', tone.stroke)}
-                  strokeWidth='8'
-                  strokeLinecap='round'
-                  strokeDasharray={circumference}
-                  style={{ strokeDashoffset: dashOffset }}
-                />
-              </svg>
-              <div className='absolute inset-0 grid place-items-center'>
-                <div className='text-center'>
-                  <div className={cn('text-metric text-4xl', tone.text)}>{displayScore}</div>
-                  <div className='mt-1 text-label'>/100</div>
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className={cn('text-4xl font-black tabular-nums', tone.text)}>{displayScore}</div>
+                <div className='text-[10px] text-muted-foreground'>/100</div>
+              </div>
+            </div>
+          </div>
+          <div className='w-full min-w-0 flex-1 space-y-2'>
+            <div className='flex items-baseline gap-2'>
+              <span className='text-xl font-black text-orange-100 tabular-nums'>{total}</span>
+              <span className='text-xs text-muted-foreground'>项发现</span>
+            </div>
+            <div className='h-2 overflow-hidden rounded-full bg-slate-800/60'>
+              {severityData.map((item) => {
+                const pct = Math.max(item.value > 0 ? 2 : 0, (item.value / riskTotal) * 100)
+                return (
+                  <span
+                    key={item.label}
+                    className={cn('inline-block h-full transition-all duration-500', item.color)}
+                    style={{ width: `${pct}%`, minWidth: item.value > 0 ? '6px' : '0' }}
+                  />
+                )
+              })}
+            </div>
+            <div className='grid grid-cols-3 gap-1.5'>
+              {[
+                ['高危', model.summary.high, 'text-orange-100'],
+                ['中危', model.summary.medium, 'text-amber-100'],
+                ['低危', model.summary.low, 'text-cyan-100'],
+              ].map(([label, value, color]) => (
+                <div key={label} className='rounded border border-border bg-[color:var(--surface-inset)] px-1.5 py-1.5 text-center'>
+                  <div className='text-[10px] text-muted-foreground'>{label}</div>
+                  <div className={cn('mt-0.5 text-lg font-bold tabular-nums', color)}>{value}</div>
                 </div>
-              </div>
+              ))}
             </div>
-            <div className='grid gap-2 text-right text-sm'>
-              <span className='text-muted-foreground'>发现 <b className='text-orange-100 tabular-nums'>{total}</b></span>
-              <span className='text-muted-foreground'>CI <b className='text-cyan-100 tabular-nums'>{model.source.cicdFindings}</b></span>
-              <span className='text-muted-foreground'>构建链 <b className='text-orange-100 tabular-nums'>{model.source.artifactFindings + model.source.pipelineRisks}</b></span>
-            </div>
-          </div>
-          <div className='mt-5 h-2.5 overflow-hidden rounded-full bg-slate-800/60'>
-            {severityData.map((item) => {
-              const pct = Math.max(item.value > 0 ? 2 : 0, (item.value / riskTotal) * 100)
-              return (
-                <span
-                  key={item.label}
-                  className={cn('inline-block h-full transition-all duration-500', item.color)}
-                  style={{ width: `${pct}%`, minWidth: item.value > 0 ? '8px' : '0' }}
-                />
-              )
-            })}
-          </div>
-          <div className='mt-4 grid grid-cols-3 gap-2'>
-            {[
-              ['高危', model.summary.high, 'text-orange-100'],
-              ['中危', model.summary.medium, 'text-amber-100'],
-              ['低危', model.summary.low, 'text-cyan-100'],
-            ].map(([label, value, color]) => (
-                <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2.5 text-center'>
-                <div className='text-xs font-medium text-muted-foreground'>{label}</div>
-                <div className={cn('mt-1 text-2xl font-bold tabular-nums', color)}>{value}</div>
-              </div>
-            ))}
           </div>
         </div>
       </CardContent>
@@ -7223,52 +7299,46 @@ function CicdRiskClusterPanel({
   onReset: () => void
 }) {
   return (
-    <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
-      <CardHeader className='pb-3'>
+    <Card className='h-full surface-raised rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardHeader className='pb-2'>
         <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><Boxes className='size-5 text-orange-200' />风险聚类</CardTitle>
-          <button type='button' onClick={onReset} className='rounded-full px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-slate-800 hover:text-foreground'>全部</button>
+          <CardTitle className='flex items-center gap-2 text-sm font-bold text-foreground'><Boxes className='size-4 text-orange-200' />风险聚类</CardTitle>
+          {activeClusterId !== 'all' && (
+            <button type='button' onClick={onReset} className='text-[11px] text-muted-foreground hover:text-foreground transition-colors'>显示全部</button>
+          )}
         </div>
       </CardHeader>
-      <CardContent className='flex flex-wrap gap-3 pt-0'>
+      <CardContent className='space-y-2 pt-0'>
         {clusters.length ? clusters.map((cluster) => {
           const selected = cluster.id === activeClusterId
-          const max = Math.max(1, cluster.findings.length)
-          const severityCounts = ['critical', 'high', 'medium', 'low'].map((severity) => cluster.findings.filter((finding) => finding.severity === severity).length)
           return (
             <motion.button
               key={cluster.id}
               type='button'
-              whileHover={{ y: -2 }}
+              whileHover={{ x: 2 }}
               onClick={() => onSelectCluster(cluster.id)}
               className={cn(
-                'min-h-[116px] min-w-[260px] flex-1 rounded-md border border-l-4 p-3 text-left transition-[border-color,background-color,box-shadow]',
-                selected ? 'border-orange-300/45 bg-slate-950/25 shadow-[0_0_22px_rgba(251,146,60,0.1)]' : 'border-slate-400/10 border-l-cyan-300/35 bg-[color:var(--surface-inset)] hover:border-slate-300/30'
+                'w-full flex items-center gap-3 rounded-md border border-l-[3px] px-3 py-2.5 text-left transition-colors',
+                selected
+                  ? 'border-orange-300/40 border-l-orange-400 bg-orange-400/8'
+                  : 'border-slate-400/10 border-l-slate-500/30 bg-[color:var(--surface-inset)] hover:border-slate-300/25',
               )}
             >
-              <div className='flex items-start justify-between gap-3'>
-                <div className='min-w-0'>
-                  <div className='truncate text-[17px] font-bold leading-5 text-foreground'>{cluster.title}</div>
-                  <div className='mt-2 flex flex-wrap items-center gap-1.5'>
-                    <SeverityPill severity={cluster.severity} />
-                    <span className='text-xs font-medium text-muted-foreground'>{cluster.workflowCount} workflows / {cluster.jobCount} jobs</span>
-                  </div>
+              <span className={cn('text-2xl font-black tabular-nums shrink-0 w-8 text-center', selected ? 'text-orange-100' : 'text-muted-foreground')}>
+                {cluster.count}
+              </span>
+              <div className='min-w-0 flex-1'>
+                <div className='text-sm font-semibold text-foreground truncate'>{cluster.title}</div>
+                <div className='mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground'>
+                  <SeverityPill severity={cluster.severity} />
+                  <span>{cluster.workflowCount} 个工作流 · {cluster.jobCount} 个作业</span>
                 </div>
-                <span className='text-3xl font-extrabold leading-none text-orange-100 tabular-nums'>{cluster.count}</span>
               </div>
-              <div className='mt-3 flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
-                {severityCounts.map((count, index) => (
-                  <span
-                    key={index}
-                    className={['bg-red-400', 'bg-orange-400', 'bg-amber-300', 'bg-cyan-300'][index]}
-                    style={{ width: `${(count / max) * 100}%` }}
-                  />
-                ))}
-              </div>
+              {selected && <ChevronRight className='size-4 text-orange-300 shrink-0' />}
             </motion.button>
           )
         }) : (
-          <div className='w-full rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-4 text-sm text-muted-foreground'>未发现风险聚类</div>
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-4 text-center text-xs text-muted-foreground'>未发现风险聚类</div>
         )}
       </CardContent>
     </Card>
@@ -7295,46 +7365,51 @@ function CicdFindingList({
   }
 
   return (
-    <div className='space-y-2'>
+    <div className='space-y-1.5'>
       {findings.slice(0, 12).map((finding) => {
         const selected = finding.fingerprint === selectedFinding?.fingerprint
         return (
           <motion.div
             key={finding.fingerprint}
             layout
-            className={cn('overflow-hidden rounded-md border transition-colors', selected ? 'border-orange-300/35 bg-orange-400/10' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:bg-[color:var(--surface-inset)]')}
+            className={cn('overflow-hidden rounded-md border transition-colors', selected ? 'border-orange-300/35 bg-orange-400/10' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:bg-[color:var(--surface-panel)]')}
           >
             <button
               type='button'
               onClick={() => onSelect(finding)}
-              className='grid w-full grid-cols-[72px_minmax(160px,1fr)_130px_110px_120px_80px] items-center gap-3 px-3 py-2.5 text-left text-xs'
+              className='grid w-full grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2.5 text-left text-xs'
             >
               <SeverityPill severity={finding.severity} />
-              <span className='truncate text-sm font-bold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
-              <span className='truncate font-medium text-muted-foreground' title={finding.workflow}>{compactWorkflowPath(finding.workflow)}</span>
-              <span className='truncate font-medium text-muted-foreground' title={finding.job_id || '-'}>{finding.job_id || '-'}</span>
-              <span className='truncate font-medium text-muted-foreground' title={finding.step_name || finding.job_name || '-'}>{finding.step_name || finding.job_name || '-'}</span>
-              <span className='flex items-center justify-between gap-1 font-medium text-muted-foreground'>
+              <div className='min-w-0'>
+                <span className='text-sm font-semibold text-foreground truncate block' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
+                <span className='mt-0.5 text-[11px] text-muted-foreground truncate block' title={`${compactWorkflowPath(finding.workflow)} · ${finding.job_name || finding.job_id || '-'}`}>
+                  {compactWorkflowPath(finding.workflow)}{finding.job_name || finding.job_id ? ` · ${finding.job_name || finding.job_id}` : ''}
+                </span>
+              </div>
+              <span className='flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0'>
                 未修复
-                {selected ? <ChevronUp className='size-4 text-muted-foreground' /> : <ChevronDown className='size-4 text-muted-foreground' />}
+                {selected ? <ChevronUp className='size-3.5' /> : <ChevronDown className='size-3.5' />}
               </span>
             </button>
             {selected ? (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-3'>
-                <div className='grid gap-3 md:grid-cols-3'>
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-2.5'>
+                <div className='grid gap-2.5 md:grid-cols-2'>
                   <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
-                  <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
                   <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
                 </div>
-                <div className='mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground'>
-                  <div className='flex min-w-0 flex-wrap items-center gap-2'>
-                    <span className='rounded-full border border-border bg-[color:var(--surface-inset)] px-2 py-1 font-semibold text-muted-foreground'>节点：{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
-                    <span className='truncate font-mono' title={`${finding.workflow}:${finding.line}`}>{compactWorkflowPath(finding.workflow)}:{finding.line}</span>
-                    {finding.job_id ? <span className='truncate font-medium text-muted-foreground' title={finding.job_id}>Job：{finding.job_id}</span> : null}
-                    {finding.step_name ? <span className='truncate font-medium text-muted-foreground' title={finding.step_name}>Step：{finding.step_name}</span> : null}
+                {finding.evidence && (
+                  <div className='mt-2 rounded border border-slate-400/10 bg-slate-950/30 px-2.5 py-1.5'>
+                    <div className='text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5'>关键证据</div>
+                    <div className='text-[11px] font-mono text-muted-foreground line-clamp-2 break-all' title={finding.evidence}>{finding.evidence}</div>
                   </div>
-                  <Button variant='ghost' size='sm' disabled={disabled} onClick={(event) => { event.stopPropagation(); onIgnore(finding) }}>
-                    <EyeOff className='size-4' />
+                )}
+                <div className='mt-2.5 flex items-center justify-between gap-3 text-[10px] text-muted-foreground'>
+                  <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
+                    <span className='rounded-full border border-border bg-[color:var(--surface-inset)] px-1.5 py-0.5 font-medium'>{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
+                    {finding.step_name && <span className='truncate max-w-[140px]' title={finding.step_name}>{finding.step_name}</span>}
+                  </div>
+                  <Button variant='ghost' size='sm' disabled={disabled} onClick={(event) => { event.stopPropagation(); onIgnore(finding) }} className='h-7 text-[11px]'>
+                    <EyeOff className='size-3.5' />
                     忽略
                   </Button>
                 </div>
@@ -8050,14 +8125,13 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
       </div>
       <div className='flex flex-wrap gap-2'>
         <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning || !requiredFilesReady}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}{scanning ? '正在执行门禁验证' : artifactTrustGateButtonLabel(requiredFilesReady)}</Button>
-        <Button variant='outline' size='sm' onClick={() => evidenceInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Upload />{SUPPLEMENT_FILE_LABEL}</Button>
         <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
       </div>
     </section>
 
     <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(520px,3fr)_minmax(360px,2fr)]'>
       <div ref={evidenceInputRef} className='min-w-0'><Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
-        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'><Upload className='size-5 text-cyan-300' />{SUPPLEMENT_FILE_INPUT_TITLE}</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待补充'}</span></div>
+        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px] inline-flex items-center gap-1.5 whitespace-nowrap'><Upload className='size-5 text-cyan-300' />{SUPPLEMENT_FILE_INPUT_TITLE}</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待补充'}</span></div>
         <div className='mt-4 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-sm text-muted-foreground'>
           {readinessMessage}
         </div>
@@ -8264,9 +8338,6 @@ function ArtifactTrustMaterialRow({
             <span className={cn('inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-bold', material.required ? 'border-cyan-400/35 text-cyan-200' : 'border-slate-400/25 text-muted-foreground')}>
               {material.required ? '必填' : '选填'}
             </span>
-          </div>
-          <div className='mt-2 line-clamp-2 break-words text-xs leading-5 text-muted-foreground' title={material.examples.join(' / ')}>
-            示例：{material.examples.join(' / ')}
           </div>
           <div className='mt-2 text-xs leading-5 text-muted-foreground'>{material.note}</div>
         </div>
