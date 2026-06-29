@@ -161,6 +161,196 @@ function DetailSheet({evidence,open,onClose}:{evidence:MultimodalEvidence|null;o
   </Sheet>
 }
 
+const multimodalFindingKey = (finding: MultimodalFindingRow) => `${finding.source_name}:${finding.id}`
+
+function MultimodalFindingNameList({
+  findings,
+  selectedKey,
+  severityFilter,
+  sourceFilter,
+  entityFilter,
+  reducedMotion,
+  onSelect,
+  onSeverityFilterChange,
+  onSourceFilterChange,
+  onClearEntityFilter,
+}: {
+  findings: MultimodalFindingRow[]
+  selectedKey: string | null
+  severityFilter: SecuritySeverity | 'all'
+  sourceFilter: MultimodalSourceType | 'all'
+  entityFilter: string | null
+  reducedMotion: boolean | null
+  onSelect: (key: string) => void
+  onSeverityFilterChange: (value: SecuritySeverity | 'all') => void
+  onSourceFilterChange: (value: MultimodalSourceType | 'all') => void
+  onClearEntityFilter: () => void
+}) {
+  return <Card className="surface-raised flex h-full min-h-[360px] flex-col">
+    <CardHeader className="shrink-0 space-y-3 pb-3">
+      <div className="flex items-center justify-between gap-3">
+        <CardTitle className="flex min-w-0 items-center gap-2 text-base font-bold tracking-tight">
+          <ShieldAlert className={cn('size-4 shrink-0', findings.some(f => f.severity === 'critical') ? 'text-red-400' : 'text-amber-400')} />
+          <span className="truncate">风险发现</span>
+          <Badge variant="outline" className="text-[11px]">{findings.length}</Badge>
+        </CardTitle>
+        {entityFilter && <Badge variant="secondary" className="shrink-0 gap-1 text-[11px]">
+          实体:{entityFilter}
+          <button type="button" onClick={onClearEntityFilter}><X className="size-3" /></button>
+        </Badge>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {(['all', 'critical', 'high', 'medium', 'low'] as const).map(s => {
+            const on = severityFilter === s
+            const c = s !== 'all' ? SEV[s as SecuritySeverity] : null
+            return <button
+              key={s}
+              type="button"
+              onClick={() => onSeverityFilterChange(s)}
+              className={cn('rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.96]', on ? s === 'all' ? 'bg-foreground/8 text-foreground' : cn(c!.border, c!.bg, c!.text, 'ring-1 ring-current/15') : 'text-muted-foreground hover:text-foreground')}
+            >
+              {s === 'all' ? '全部' : SEV[s as SecuritySeverity].label}
+            </button>
+          })}
+        </div>
+        <Select value={sourceFilter} onValueChange={v => onSourceFilterChange(v as MultimodalSourceType | 'all')}>
+          <SelectTrigger className="h-7 w-24 text-[11px]"><SelectValue placeholder="全部类型" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">全部</SelectItem>
+            <SelectItem value="image">图像</SelectItem>
+            <SelectItem value="audio">音频</SelectItem>
+            <SelectItem value="video">视频</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </CardHeader>
+    <CardContent className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pb-4 pr-2 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+      <AnimatePresence mode="popLayout">
+        {findings.length === 0 ? <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
+          <ShieldCheck className="size-10 text-muted-foreground/20" />
+          无匹配结果
+          {entityFilter && <Button variant="ghost" size="sm" onClick={onClearEntityFilter}>清除筛选</Button>}
+        </motion.div> : findings.slice(0, 25).map((finding, index) => {
+          const key = multimodalFindingKey(finding)
+          const selected = selectedKey === key
+          return <motion.button
+            key={key}
+            type="button"
+            layout={!reducedMotion}
+            initial={reducedMotion ? {} : { opacity: 0, y: 10, scale: .98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, scale: .96, transition: { duration: .15 } }}
+            transition={{ delay: Math.min(index * .015, .25), duration: .3, ease: [.16, 1, .3, 1] }}
+            onClick={() => onSelect(key)}
+            className={cn('group relative w-full rounded-xl border p-3 text-left transition-all duration-300 hover:-translate-y-0.5 active:scale-[0.99]', selected ? 'border-cyan-400/35 bg-cyan-950/25 shadow-[0_0_22px_rgba(6,182,212,0.08)]' : 'border-border/40 surface-base hover:border-cyan-500/20')}
+          >
+            <div className={cn('absolute left-0 top-0 bottom-0 w-1 rounded-l-xl', finding.severity === 'critical' ? 'bg-red-500/50' : finding.severity === 'high' ? 'bg-orange-500/40' : finding.severity === 'medium' ? 'bg-amber-500/35' : 'bg-emerald-500/35')} />
+            <div className="pl-3 text-sm font-bold leading-snug text-foreground">{finding.title}</div>
+          </motion.button>
+        })}
+      </AnimatePresence>
+      {findings.length > 25 && <div className="pt-3 text-center text-[11px] text-muted-foreground">显示前25条，共{findings.length}条。使用筛选缩小范围。</div>}
+    </CardContent>
+  </Card>
+}
+
+function MultimodalFindingDetailPanel({
+  finding,
+  evidence,
+  entityFilter,
+  onOpenEvidence,
+  onEntityFilter,
+}: {
+  finding: MultimodalFindingRow | null
+  evidence: MultimodalEvidence | null
+  entityFilter: string | null
+  onOpenEvidence: (finding: MultimodalFindingRow) => void
+  onEntityFilter: (value: string) => void
+}) {
+  if (!finding) {
+    return <Card className="surface-raised flex h-full min-h-[360px] flex-col">
+      <CardContent className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+        <ShieldCheck className="size-10 text-muted-foreground/20" />
+        选择一项风险后查看属性。
+      </CardContent>
+    </Card>
+  }
+  const Icon = SRC_ICONS[finding.source_type]
+  return <Card className="surface-raised flex h-full min-h-[360px] flex-col">
+    <CardHeader className="shrink-0 pb-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2 text-base font-bold tracking-tight">
+            <Siren className="size-4 text-red-400" />
+            风险属性
+          </CardTitle>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <SevBadge s={finding.severity} pulse={finding.severity === 'critical'} />
+            <span className="font-mono">{finding.rule_id}</span>
+            <span>·</span>
+            <span>{finding.score}分</span>
+          </div>
+        </div>
+        {evidence && <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1.5 text-[11px]" onClick={() => onOpenEvidence(finding)}>
+          <Eye className="size-3.5" />
+          原始材料
+        </Button>}
+      </div>
+    </CardHeader>
+    <CardContent className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pb-4 pr-2 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+      <div className="rounded-xl border border-border/35 surface-base p-4">
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">风险名称</div>
+        <div className="mt-2 text-sm font-bold leading-relaxed">{finding.title}</div>
+      </div>
+      <div className="rounded-xl border border-red-500/15 bg-red-950/15 p-4">
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-red-300">风险原因</div>
+        <p className="mt-2 text-sm leading-6 text-red-50/80">
+          外部告警材料触发 {SEV[finding.severity].label} 规则，说明截图、文本或告警内容中出现了与供应链攻击相关的异常行为或敏感线索。
+        </p>
+      </div>
+      <div className="rounded-xl border border-cyan-500/15 surface-inset p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-cyan-300">关键证据</div>
+          <span className="flex items-center gap-1.5 rounded-full border border-border/35 px-2 py-0.5 text-[11px] text-muted-foreground">
+            <Icon className="size-3" />
+            {finding.source_name}
+          </span>
+        </div>
+        <div className="mt-3 space-y-3">
+          {finding.matched_keywords.length > 0 && <div>
+            <div className="mb-1.5 text-[11px] text-muted-foreground">命中关键词</div>
+            <div className="flex flex-wrap gap-1.5">{finding.matched_keywords.map(keyword => <span key={keyword} className="rounded-md border border-cyan-500/10 surface-base px-2 py-0.5 font-mono text-[10px] text-cyan-300">{keyword}</span>)}</div>
+          </div>}
+          {finding.entities.length > 0 && <div>
+            <div className="mb-1.5 text-[11px] text-muted-foreground">关联实体</div>
+            <div className="flex flex-wrap gap-1.5">
+              {finding.entities.map((entity, index) => <button
+                key={`${entity.type}-${entity.value}-${index}`}
+                type="button"
+                onClick={() => onEntityFilter(entity.value)}
+                className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]', entityFilter === entity.value ? 'border-cyan-400/50 bg-cyan-950/40 text-cyan-200' : eColor(entity.type).border + ' ' + eColor(entity.type).bg + ' text-foreground/70 hover:text-foreground')}
+              >
+                {tLabel(entity.type)}:<span className="font-bold">{entity.value}</span>
+              </button>)}
+            </div>
+          </div>}
+          {finding.entities.some(entity => entity.evidence) && <div>
+            <div className="mb-1.5 text-[11px] text-muted-foreground">证据片段</div>
+            <div className="rounded-lg border border-border/30 bg-black/20 px-3 py-2 font-mono text-[11px] leading-relaxed text-cyan-50/70">
+              {short(finding.entities.find(entity => entity.evidence)?.evidence, 260)}
+            </div>
+          </div>}
+        </div>
+      </div>
+      <div className="rounded-xl border border-amber-500/15 bg-amber-950/15 p-4">
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-300">修复建议</div>
+        <p className="mt-2 text-sm leading-6 text-amber-50/80">{finding.recommendation}</p>
+      </div>
+    </CardContent>
+  </Card>
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    MAIN PANEL
    ══════════════════════════════════════════════════════════════════════ */
@@ -181,6 +371,7 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
   const [detail,setDetail]=useState<MultimodalEvidence|null>(null)
   const [rawOpen,setRawOpen]=useState(false)
   const [eFilt,setEFilt]=useState<string|null>(null)
+  const [selectedFindingKey,setSelectedFindingKey]=useState<string|null>(null)
   const [textDialogOpen,setTextDialogOpen]=useState(false)
   const fileInputRef=useRef<HTMLInputElement>(null)
 
@@ -194,6 +385,19 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
     if(eFilt)r=r.filter(f=>f.entities.some(e=>(e.normalized||e.value).toLowerCase().includes(eFilt.toLowerCase())))
     return r.sort((a,b)=>b.score-a.score)
   },[fRows,sevF,srcF,eFilt])
+
+  const selectedFinding = ff.find(f => multimodalFindingKey(f) === selectedFindingKey) ?? ff[0] ?? null
+  const selectedFindingEvidence = selectedFinding ? ev.find(e => e.original_filename === selectedFinding.source_name && e.findings.some(f => f.id === selectedFinding.id)) ?? null : null
+
+  useEffect(() => {
+    if (!ff.length) {
+      if (selectedFindingKey) setSelectedFindingKey(null)
+      return
+    }
+    if (!selectedFindingKey || !ff.some(f => multimodalFindingKey(f) === selectedFindingKey)) {
+      setSelectedFindingKey(multimodalFindingKey(ff[0]))
+    }
+  }, [ff, selectedFindingKey])
 
   /* actions */
   async function upload(fileList?: File[]){
@@ -278,8 +482,8 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
       <span className="flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/20 px-3 py-1 text-[11px] text-muted-foreground"><Images className="size-3"/>{ev.length} 证据</span>
     </div>
 
-    {/* ══ RISK SCORE + FINDINGS: 2-column grid ══ */}
-    {(hasEv||hasF)&&<div className={cn(hasEv&&hasF?'grid grid-cols-[340px_1fr] gap-4 items-stretch':'')}>
+    {/* ══ RISK SCORE + FINDINGS + ATTRIBUTES: 3-column grid ══ */}
+    {(hasEv||hasF)&&<div className={cn('grid-cols-1 gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]', hasEv&&hasF?'grid items-stretch':'')}>
       {/* Risk score card - left column */}
       {hasEv&&<Card className="surface-raised flex flex-col">
         <CardContent className="flex flex-1 flex-col items-center justify-center px-4 py-4">
@@ -300,38 +504,28 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
           <span className={cn('rounded-full px-3 py-0.5 text-[11px] font-bold',riskLevel==='critical'?'bg-red-950/50 text-red-300 ring-1 ring-red-500/25':riskLevel==='high'?'bg-orange-950/50 text-orange-300 ring-1 ring-orange-500/25':riskLevel==='medium'?'bg-amber-950/50 text-amber-300 ring-1 ring-amber-500/25':'bg-emerald-950/50 text-emerald-300 ring-1 ring-emerald-500/25')}>{riskLevel==='critical'?'严重风险':riskLevel==='high'?'高风险':riskLevel==='medium'?'中风险':'低风险'}</span>
         </CardContent>
       </Card>}
-      {/* Findings - right column */}
-      {hasF&&<Card className="surface-raised flex flex-col h-full">
-      <CardHeader className="shrink-0 flex flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="flex items-center gap-2 text-base font-bold tracking-tight">
-          <ShieldAlert className={cn('size-4',ff.some(f=>f.severity==='critical')?'text-red-400':'text-amber-400')}/>
-          风险发现{eFilt&&<Badge variant="secondary" className="text-[11px] gap-1">实体:{eFilt}<button onClick={()=>setEFilt(null)}><X className="size-3"/></button></Badge>}
-          <Badge variant="outline" className="text-[11px]">{ff.length}</Badge>
-        </CardTitle>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1">{(['all','critical','high','medium','low'] as const).map(s=>{const on=sevF===s;const c=s!=='all'?SEV[s as SecuritySeverity]:null;return<button key={s} onClick={()=>setSevF(s)} className={cn('rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.96]',on?s==='all'?'bg-foreground/8 text-foreground':cn(c!.border,c!.bg,c!.text,'ring-1 ring-current/15'):'text-muted-foreground hover:text-foreground')}>{s==='all'?'全部':SEV[s as SecuritySeverity].label}</button>})}</div>
-          <Select value={srcF} onValueChange={v=>setSrcF(v as MultimodalSourceType|'all')}><SelectTrigger className="h-7 w-24 text-[11px]"><SelectValue placeholder="全部类型"/></SelectTrigger><SelectContent><SelectItem value="all">全部</SelectItem><SelectItem value="image">图像</SelectItem><SelectItem value="audio">音频</SelectItem><SelectItem value="video">视频</SelectItem></SelectContent></Select>
-        </div>
-      </CardHeader>
-      <CardContent className="flex-1 space-y-2 overflow-y-auto overscroll-contain pb-4 min-h-0 max-h-[300px]">
-        <AnimatePresence mode="popLayout">
-          {ff.length===0?<motion.div initial={{opacity:0}} animate={{opacity:1}} className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground"><ShieldCheck className="size-10 text-muted-foreground/20"/>无匹配结果{eFilt&&<Button variant="ghost" size="sm" onClick={()=>setEFilt(null)}>清除筛选</Button>}</motion.div>
-          :ff.slice(0,25).map((f,i)=>{const c=SEV[f.severity]
-            return <motion.div key={f.id} layout={!rm} initial={rm?{}:{opacity:0,y:10,scale:.98}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,scale:.96,transition:{duration:.15}}} transition={{delay:Math.min(i*.015,.25),duration:.3,ease:[.16,1,.3,1]}}
-              className={cn('group relative rounded-xl border border-border/40 surface-base p-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_8px_28px_rgba(0,0,0,0.35)]',c.glow)}>
-              <div className={cn('absolute left-0 top-0 bottom-0 w-1 rounded-l-xl',f.severity==='critical'?'bg-red-500/50':f.severity==='high'?'bg-orange-500/40':f.severity==='medium'?'bg-amber-500/35':'bg-emerald-500/35')}/>
-              <div className="pl-3"><div className="flex items-start gap-3"><SevBadge s={f.severity} pulse={f.severity==='critical'} className="mt-0.5 shrink-0"/><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-sm font-bold leading-snug">{f.title}</div><div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground"><span className="font-mono">{f.rule_id}</span><span>·</span><button onClick={()=>{const s=ev.find(e=>e.findings.some(fi=>fi.id===f.id));if(s)setDetail(s)}} className="flex items-center gap-1 hover:text-cyan-400 transition-colors">{(()=>{const I=SRC_ICONS[f.source_type];return<I size={11}/>})()}{f.source_name}</button><span>·</span><span>{f.score}分</span></div></div><div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 shrink-0"><Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={()=>{const s=ev.find(e=>e.findings.some(fi=>fi.id===f.id));if(s)setDetail(s)}}><Eye className="size-3"/>详情</Button></div></div>
-              {f.matched_keywords.length>0&&<div className="mt-2.5 flex flex-wrap gap-1">{f.matched_keywords.slice(0,8).map(kw=><span key={kw} className="rounded-md surface-inset border-cyan-500/8 px-2 py-0.5 text-[10px] font-mono text-cyan-300/80 transition-all hover:border-cyan-400/25 hover:text-cyan-200 hover:shadow-[0_0_8px_rgba(6,182,212,0.08)] cursor-default">{kw}</span>)}{f.matched_keywords.length>8&&<span className="text-[10px] text-muted-foreground">+{f.matched_keywords.length-8}</span>}</div>}
-              {f.entities.length>0&&<div className="mt-2.5 flex flex-wrap gap-1.5">{f.entities.slice(0,6).map((e,ei)=><button key={ei} onClick={()=>setEFilt(eFilt===e.value?null:e.value)} className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]',eFilt===e.value?'border-cyan-400/50 bg-cyan-950/40 text-cyan-200':eColor(e.type).border+' '+eColor(e.type).bg+' text-foreground/70 hover:text-foreground')}>{tLabel(e.type)}:<span className="font-bold">{e.value}</span></button>)}</div>}
-              {f.severity==='critical'?<div className="mt-3 rounded-lg border border-amber-500/15 surface-inset px-3 py-2 text-[11px] text-amber-200/60 leading-relaxed"><span className="font-medium text-amber-300">建议: </span>{f.recommendation}</div>
-              :<div className="mt-2 rounded-lg border border-amber-500/10 surface-inset px-3 py-2 text-[11px] text-amber-200/50 leading-relaxed"><span className="font-medium text-amber-300">建议: </span>{f.recommendation}</div>}
-            </div></div></div>
-            </motion.div>
-          })}
-        </AnimatePresence>
-        {ff.length>25&&<div className="pt-3 text-center text-[11px] text-muted-foreground">显示前25条，共{ff.length}条。使用筛选缩小范围。</div>}
-      </CardContent>
-    </Card>}
+      {hasF&&<MultimodalFindingNameList
+        findings={ff}
+        selectedKey={selectedFinding ? multimodalFindingKey(selectedFinding) : null}
+        severityFilter={sevF}
+        sourceFilter={srcF}
+        entityFilter={eFilt}
+        reducedMotion={rm}
+        onSelect={setSelectedFindingKey}
+        onSeverityFilterChange={setSevF}
+        onSourceFilterChange={setSrcF}
+        onClearEntityFilter={() => setEFilt(null)}
+      />}
+      {hasF&&<MultimodalFindingDetailPanel
+        finding={selectedFinding}
+        evidence={selectedFindingEvidence}
+        entityFilter={eFilt}
+        onOpenEvidence={(finding) => {
+          const source = ev.find(e => e.original_filename === finding.source_name && e.findings.some(item => item.id === finding.id))
+          if (source) setDetail(source)
+        }}
+        onEntityFilter={(value) => setEFilt(eFilt === value ? null : value)}
+      />}
     </div>}
 
 

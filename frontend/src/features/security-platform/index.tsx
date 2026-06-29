@@ -250,8 +250,6 @@ import {
   type CicdDisplayModel,
 } from './cicd-display-model'
 import {
-  ARTIFACT_TRUST_OPTIONAL_MATERIALS,
-  ARTIFACT_TRUST_REQUIRED_MATERIALS,
   SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT,
   SUPPLEMENT_FILE_INPUT_TITLE,
   SUPPLEMENT_FILE_LABEL,
@@ -260,7 +258,6 @@ import {
   artifactTrustRequiredFilesReady,
   isSupplementProjectArchive,
   supplementFileSuccessMessage,
-  type ArtifactTrustMaterial,
 } from './supplement-file-workflow'
 type KnowledgeGraphNode = NonNullable<
   NonNullable<SecurityWorkspace['graph']>['nodes']
@@ -6563,8 +6560,6 @@ function PipelinePanel({
   const [scanning, setScanning] = useState(false)
   const [supplementing, setSupplementing] = useState(false)
   const [mutating, setMutating] = useState(false)
-  const [activeNodeId, setActiveNodeId] = useState('all')
-  const [activeClusterId, setActiveClusterId] = useState('all')
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState('all')
   const [workflowFilter, setWorkflowFilter] = useState('all')
@@ -6588,13 +6583,7 @@ function PipelinePanel({
     warnings: [...(audit?.warnings ?? []), ...(artifactTrust?.warnings ?? [])],
   }), [audit, artifactTrust, displayModel.summary, findings, workflows])
   const conclusion = buildCicdConclusion(displayAudit, corePipeline, findings)
-  const graphNodes = useMemo(() => buildCicdGraphNodes(displayAudit, corePipeline, findings), [displayAudit, corePipeline, findings])
-  const selectedNode = graphNodes.find((node) => node.id === activeNodeId)
-  const selectedNodeLabel = selectedNode?.label ?? activeNodeId
-  const riskClusters = useMemo(() => buildCicdRiskClusters(findings), [findings])
   const filteredFindings = findings.filter((finding) => {
-    if (activeNodeId !== 'all' && !cicdFindingNodeIds(finding).includes(activeNodeId)) return false
-    if (activeClusterId !== 'all' && cicdRiskType(finding).id !== activeClusterId) return false
     if (severityFilter !== 'all' && finding.severity !== severityFilter) return false
     if (workflowFilter !== 'all' && finding.workflow !== workflowFilter) return false
     return true
@@ -6608,33 +6597,19 @@ function PipelinePanel({
   }, [filteredFindings, selectedFindingId])
 
   useEffect(() => {
-    setActiveNodeId('all')
-    setActiveClusterId('all')
     setSeverityFilter('all')
     setWorkflowFilter('all')
     setSelectedFindingId(findings[0]?.fingerprint ?? null)
   }, [displayModel.scanKey])
 
-  function selectCluster(clusterId: string) {
-    if (clusterId === activeClusterId) {
-      setActiveClusterId('all')
-      return
-    }
-    setActiveClusterId(clusterId)
-    const cluster = riskClusters.find((item) => item.id === clusterId)
-    const nextFinding = cluster?.findings.find((finding) => activeNodeId === 'all' || cicdFindingNodeIds(finding).includes(activeNodeId))
-    setSelectedFindingId(nextFinding?.fingerprint ?? null)
-  }
-
   function selectFinding(finding: CicdFinding) {
-    setSelectedFindingId((currentId) => currentId === finding.fingerprint ? null : finding.fingerprint)
+    setSelectedFindingId(finding.fingerprint)
   }
 
   function resetCicdView() {
-    setActiveNodeId('all')
-    setActiveClusterId('all')
     setSeverityFilter('all')
     setWorkflowFilter('all')
+    setSelectedFindingId(findings[0]?.fingerprint ?? null)
   }
 
   async function startCICDScan() {
@@ -6787,70 +6762,29 @@ function PipelinePanel({
           </div>
         </div>
         {displayModel.summary.finding_count || audit ? (
-          <CicdConclusionStrip conclusion={conclusion} audit={displayAudit} clusters={riskClusters} />
+          <CicdConclusionStrip conclusion={conclusion} audit={displayAudit} findings={findings} />
         ) : null}
       </section>
 
-      <div className='grid gap-4'>
-        <div className='grid items-stretch gap-4 xl:grid-cols-[minmax(280px,28fr)_minmax(0,72fr)]'>
-          <CicdRiskOverviewCard model={displayModel} />
-          <CicdRiskClusterPanel
-            clusters={riskClusters}
-            activeClusterId={activeClusterId}
-            onSelectCluster={selectCluster}
-            onReset={resetCicdView}
-          />
-        </div>
-        <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
-          <CardHeader className='pb-3'>
-            <div className='flex flex-wrap items-center justify-between gap-3'>
-              <div className='flex flex-wrap items-center gap-2'>
-                <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><ShieldAlert className='size-5 text-orange-200' />风险明细</CardTitle>
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-bold', activeNodeId === 'all' ? 'border-border bg-[color:var(--surface-inset)] text-muted-foreground' : cicdNodeTone(selectedNode?.status ?? 'empty'))}>
-                  {activeNodeId === 'all' ? '全部风险' : `当前节点：${selectedNodeLabel}`}
-                </span>
-              </div>
-              <div className='flex flex-wrap items-center gap-2'>
-                <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                  <SelectTrigger size='sm' className='w-[120px] rounded-md border-border bg-[color:var(--surface-inset)]'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>全部等级</SelectItem>
-                    <SelectItem value='critical'>严重</SelectItem>
-                    <SelectItem value='high'>高危</SelectItem>
-                    <SelectItem value='medium'>中危</SelectItem>
-                    <SelectItem value='low'>低危</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select value={workflowFilter} onValueChange={setWorkflowFilter}>
-                  <SelectTrigger size='sm' className='w-[140px] rounded-md border-border bg-[color:var(--surface-inset)]'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>全部 Workflow</SelectItem>
-                    {workflows.map((workflow) => (
-                      <SelectItem key={workflow} value={workflow}>{compactWorkflowPath(workflow)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {(activeNodeId !== 'all' || activeClusterId !== 'all' || severityFilter !== 'all' || workflowFilter !== 'all') ? (
-                  <Button variant='ghost' size='sm' onClick={resetCicdView}>全部</Button>
-                ) : null}
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <CicdFindingList
-              findings={filteredFindings}
-              selectedFinding={selectedFinding}
-              contextNodeLabel={activeNodeId === 'all' ? undefined : selectedNodeLabel}
-              disabled={mutating}
-              onSelect={selectFinding}
-              onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
-            />
-          </CardContent>
-        </Card>
+      <div className='grid items-stretch gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]'>
+        <CicdRiskOverviewCard model={displayModel} />
+        <CicdFindingNameList
+          findings={filteredFindings}
+          selectedFinding={selectedFinding}
+          workflows={workflows}
+          severityFilter={severityFilter}
+          workflowFilter={workflowFilter}
+          onSeverityFilter={setSeverityFilter}
+          onWorkflowFilter={setWorkflowFilter}
+          onReset={resetCicdView}
+          onSelect={selectFinding}
+        />
+        <CicdFindingDetailPanel
+          finding={selectedFinding}
+          totalCount={filteredFindings.length}
+          disabled={mutating}
+          onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
+        />
       </div>
 
     </div>
@@ -6871,16 +6805,6 @@ type BuildChainStep = {
   stepData: SecurityPipelineStep | null
   relatedFindings: CicdFinding[]
   riskCount: number
-}
-
-type CicdRiskCluster = {
-  id: string
-  title: string
-  count: number
-  severity: SecuritySeverity
-  workflowCount: number
-  jobCount: number
-  findings: CicdFinding[]
 }
 
 /* ── Build ordered build chain steps from pipeline ── */
@@ -6942,23 +6866,22 @@ function buildOrderedBuildSteps(
 function CicdConclusionStrip({
   conclusion,
   audit,
-  clusters,
+  findings,
 }: {
   conclusion: ReturnType<typeof buildCicdConclusion>
   audit: CICDAuditResult
-  clusters: CicdRiskCluster[]
+  findings: CicdFinding[]
 }) {
-  const primary = clusters[0]?.title ?? conclusion.keyRisks[0] ?? '未发现高优先级风险'
-  const topClusterCount = clusters.slice(0, 2).reduce((sum, c) => sum + c.count, 0)
+  const primary = conclusion.keyRisks[0] ?? cicdFindingTitle(findings[0]) ?? '未发现高优先级风险'
   return (
     <div className='mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-xs'>
       <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2 py-0.5 text-[11px] font-semibold text-orange-100 shrink-0'>构建链风险</span>
       <span className='text-muted-foreground truncate min-w-0'>
         主要风险：<span className='font-semibold text-foreground'>{primary}</span>
-        {clusters.length > 1 && <span className='text-muted-foreground'> +{clusters.length - 1} 类</span>}
+        {findings.length > 1 && <span className='text-muted-foreground'> +{findings.length - 1} 项</span>}
       </span>
       <span className='text-muted-foreground shrink-0'>
-        {audit.workflows?.length || audit.summary.workflow_count || 0} workflows · {audit.summary.total_steps || audit.summary.job_count || 0} steps · <span className='font-semibold text-orange-100'>{topClusterCount}</span> 条风险
+        {audit.workflows?.length || audit.summary.workflow_count || 0} workflows · {audit.summary.total_steps || audit.summary.job_count || 0} steps · <span className='font-semibold text-orange-100'>{findings.length}</span> 条风险
       </span>
     </div>
   )
@@ -7287,177 +7210,156 @@ function BuildStepDetail({
   )
 }
 
-function CicdRiskClusterPanel({
-  clusters,
-  activeClusterId,
-  onSelectCluster,
+
+function CicdFindingNameList({
+  findings,
+  selectedFinding,
+  workflows,
+  severityFilter,
+  workflowFilter,
+  onSeverityFilter,
+  onWorkflowFilter,
   onReset,
+  onSelect,
 }: {
-  clusters: CicdRiskCluster[]
-  activeClusterId: string
-  onSelectCluster: (id: string) => void
+  findings: CicdFinding[]
+  selectedFinding?: CicdFinding
+  workflows: string[]
+  severityFilter: string
+  workflowFilter: string
+  onSeverityFilter: (value: string) => void
+  onWorkflowFilter: (value: string) => void
   onReset: () => void
+  onSelect: (finding: CicdFinding) => void
 }) {
+  const filtered = severityFilter !== 'all' || workflowFilter !== 'all'
+
   return (
-    <Card className='h-full surface-raised rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
-      <CardHeader className='pb-2'>
-        <div className='flex items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-sm font-bold text-foreground'><Boxes className='size-4 text-orange-200' />风险聚类</CardTitle>
-          {activeClusterId !== 'all' && (
-            <button type='button' onClick={onReset} className='text-[11px] text-muted-foreground hover:text-foreground transition-colors'>显示全部</button>
-          )}
+    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardHeader className='pb-3'>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><ClipboardList className='size-5 text-orange-200' />风险明细</CardTitle>
+          {filtered ? <Button variant='ghost' size='sm' onClick={onReset}>全部</Button> : null}
+        </div>
+        <div className='flex flex-wrap items-center gap-2 pt-2'>
+          <Select value={severityFilter} onValueChange={onSeverityFilter}>
+            <SelectTrigger size='sm' className='w-[120px] rounded-md border-border bg-[color:var(--surface-inset)]'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部等级</SelectItem>
+              <SelectItem value='critical'>严重</SelectItem>
+              <SelectItem value='high'>高危</SelectItem>
+              <SelectItem value='medium'>中危</SelectItem>
+              <SelectItem value='low'>低危</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={workflowFilter} onValueChange={onWorkflowFilter}>
+            <SelectTrigger size='sm' className='w-[150px] rounded-md border-border bg-[color:var(--surface-inset)]'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部 Workflow</SelectItem>
+              {workflows.map((workflow) => (
+                <SelectItem key={workflow} value={workflow}>{compactWorkflowPath(workflow)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </CardHeader>
-      <CardContent className='space-y-2 pt-0'>
-        {clusters.length ? clusters.map((cluster) => {
-          const selected = cluster.id === activeClusterId
-          return (
-            <motion.button
-              key={cluster.id}
-              type='button'
-              whileHover={{ x: 2 }}
-              onClick={() => onSelectCluster(cluster.id)}
-              className={cn(
-                'w-full flex items-center gap-3 rounded-md border border-l-[3px] px-3 py-2.5 text-left transition-colors',
-                selected
-                  ? 'border-orange-300/40 border-l-orange-400 bg-orange-400/8'
-                  : 'border-slate-400/10 border-l-slate-500/30 bg-[color:var(--surface-inset)] hover:border-slate-300/25',
-              )}
-            >
-              <span className={cn('text-2xl font-black tabular-nums shrink-0 w-8 text-center', selected ? 'text-orange-100' : 'text-muted-foreground')}>
-                {cluster.count}
-              </span>
-              <div className='min-w-0 flex-1'>
-                <div className='text-sm font-semibold text-foreground truncate'>{cluster.title}</div>
-                <div className='mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground'>
-                  <SeverityPill severity={cluster.severity} />
-                  <span>{cluster.workflowCount} 个工作流 · {cluster.jobCount} 个作业</span>
-                </div>
-              </div>
-              {selected && <ChevronRight className='size-4 text-orange-300 shrink-0' />}
-            </motion.button>
-          )
-        }) : (
-          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-4 text-center text-xs text-muted-foreground'>未发现风险聚类</div>
+      <CardContent className='min-h-0'>
+        {findings.length ? (
+          <div className='max-h-[430px] space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            {findings.map((finding) => {
+              const selected = finding.fingerprint === selectedFinding?.fingerprint
+              return (
+                <motion.button
+                  key={finding.fingerprint}
+                  type='button'
+                  layout
+                  onClick={() => onSelect(finding)}
+                  className={cn(
+                    'grid w-full grid-cols-[auto_1fr_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs transition-colors',
+                    selected
+                      ? 'border-orange-300/35 bg-orange-400/10 shadow-[inset_3px_0_0_rgba(251,146,60,0.75)]'
+                      : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:bg-[color:var(--surface-panel)]',
+                  )}
+                >
+                  <SeverityPill severity={finding.severity} />
+                  <span className='min-w-0 truncate text-sm font-semibold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
+                  <ChevronRight className={cn('size-4 shrink-0 transition-colors', selected ? 'text-orange-200' : 'text-muted-foreground')} />
+                </motion.button>
+              )
+            })}
+          </div>
+        ) : (
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>无匹配风险</div>
         )}
       </CardContent>
     </Card>
   )
 }
 
-function CicdFindingList({
-  findings,
-  selectedFinding,
-  contextNodeLabel,
+function CicdFindingDetailPanel({
+  finding,
+  totalCount,
   disabled,
-  onSelect,
   onIgnore,
 }: {
-  findings: CicdFinding[]
-  selectedFinding?: CicdFinding
-  contextNodeLabel?: string
+  finding?: CicdFinding
+  totalCount: number
   disabled: boolean
-  onSelect: (finding: CicdFinding) => void
   onIgnore: (finding: CicdFinding) => void
 }) {
-  if (!findings.length) {
-    return <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>无匹配风险</div>
+  if (!finding) {
+    return (
+      <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+        <CardHeader className='pb-3'>
+          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><FileSearch className='size-5 text-cyan-200' />风险属性</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
+            {totalCount ? '选择左侧风险查看原因、证据和修复建议。' : '当前筛选条件下没有风险。'}
+          </div>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
-    <div className='space-y-1.5'>
-      {findings.slice(0, 12).map((finding) => {
-        const selected = finding.fingerprint === selectedFinding?.fingerprint
-        return (
-          <motion.div
-            key={finding.fingerprint}
-            layout
-            className={cn('overflow-hidden rounded-md border transition-colors', selected ? 'border-orange-300/35 bg-orange-400/10' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:bg-[color:var(--surface-panel)]')}
-          >
-            <button
-              type='button'
-              onClick={() => onSelect(finding)}
-              className='grid w-full grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2.5 text-left text-xs'
-            >
-              <SeverityPill severity={finding.severity} />
-              <div className='min-w-0'>
-                <span className='text-sm font-semibold text-foreground truncate block' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
-                <span className='mt-0.5 text-[11px] text-muted-foreground truncate block' title={`${compactWorkflowPath(finding.workflow)} · ${finding.job_name || finding.job_id || '-'}`}>
-                  {compactWorkflowPath(finding.workflow)}{finding.job_name || finding.job_id ? ` · ${finding.job_name || finding.job_id}` : ''}
-                </span>
-              </div>
-              <span className='flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0'>
-                未修复
-                {selected ? <ChevronUp className='size-3.5' /> : <ChevronDown className='size-3.5' />}
-              </span>
-            </button>
-            {selected ? (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} transition={{ duration: 0.2 }} className='border-t border-slate-400/10 px-3 py-2.5'>
-                <div className='grid gap-2.5 md:grid-cols-2'>
-                  <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
-                  <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
-                </div>
-                {finding.evidence && (
-                  <div className='mt-2 rounded border border-slate-400/10 bg-slate-950/30 px-2.5 py-1.5'>
-                    <div className='text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5'>关键证据</div>
-                    <div className='text-[11px] font-mono text-muted-foreground line-clamp-2 break-all' title={finding.evidence}>{finding.evidence}</div>
-                  </div>
-                )}
-                <div className='mt-2.5 flex items-center justify-between gap-3 text-[10px] text-muted-foreground'>
-                  <div className='flex min-w-0 flex-wrap items-center gap-1.5'>
-                    <span className='rounded-full border border-border bg-[color:var(--surface-inset)] px-1.5 py-0.5 font-medium'>{contextNodeLabel ?? cicdPrimaryNodeLabel(finding)}</span>
-                    {finding.step_name && <span className='truncate max-w-[140px]' title={finding.step_name}>{finding.step_name}</span>}
-                  </div>
-                  <Button variant='ghost' size='sm' disabled={disabled} onClick={(event) => { event.stopPropagation(); onIgnore(finding) }} className='h-7 text-[11px]'>
-                    <EyeOff className='size-3.5' />
-                    忽略
-                  </Button>
-                </div>
-              </motion.div>
-            ) : null}
-          </motion.div>
-        )
-      })}
-    </div>
+    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardHeader className='pb-3'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><FileSearch className='size-5 text-cyan-200' />风险属性</CardTitle>
+            <div className='mt-2 min-w-0 truncate text-sm font-semibold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</div>
+            <div className='mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground'>
+              <span className='truncate' title={compactWorkflowPath(finding.workflow)}>{compactWorkflowPath(finding.workflow)}</span>
+              {(finding.job_name || finding.job_id) ? <span>·</span> : null}
+              {(finding.job_name || finding.job_id) ? <span className='truncate' title={finding.job_name || finding.job_id || ''}>{finding.job_name || finding.job_id}</span> : null}
+            </div>
+          </div>
+          <SeverityPill severity={finding.severity} />
+        </div>
+      </CardHeader>
+      <CardContent className='space-y-3'>
+        <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
+        <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
+        <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
+        <div className='flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-[11px] text-muted-foreground'>
+          <span className='min-w-0 truncate' title={finding.step_name || cicdPrimaryNodeLabel(finding)}>
+            {finding.step_name || cicdPrimaryNodeLabel(finding)}
+          </span>
+          <Button variant='ghost' size='sm' disabled={disabled} onClick={() => onIgnore(finding)} className='h-7 shrink-0 text-[11px]'>
+            <EyeOff className='size-3.5' />
+            忽略
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
-function buildCicdGraphNodes(
-  audit: CICDAuditResult | null | undefined,
-  pipeline: SecurityPipelineStep[],
-  findings: CicdFinding[]
-): CicdGraphNode[] {
-  const nodeDefs: Array<Omit<CicdGraphNode, 'riskCount' | 'findings' | 'status' | 'meta'>> = [
-    { id: 'workflow', label: 'Workflow 文件', icon: GitBranch },
-    { id: 'trigger', label: 'Trigger', icon: GitPullRequestArrow },
-    { id: 'job', label: 'Job', icon: Boxes },
-    { id: 'step', label: 'Step', icon: TerminalSquare },
-    { id: 'action', label: 'Third-party Action', icon: PackageCheck },
-    { id: 'runner', label: 'Runner', icon: ServerCog },
-    { id: 'artifact', label: 'Artifact', icon: Fingerprint },
-    { id: 'provenance', label: 'Provenance', icon: KeyRound },
-    { id: 'logs', label: 'Log Evidence', icon: FileText },
-  ]
-  const pipelineText = pipeline.map((step) => `${step.step} ${step.name} ${step.detail} ${step.actor}`).join('\n')
-  return nodeDefs.map((node) => {
-    let nodeFindings = findings.filter((finding) => cicdFindingNodeIds(finding).includes(node.id))
-    if (node.id === 'runner' && /self-hosted/i.test(pipelineText)) {
-      nodeFindings = nodeFindings.length ? nodeFindings : findings.slice(0, 1)
-    }
-    const riskCount = nodeFindings.length
-    return {
-      ...node,
-      riskCount,
-      findings: nodeFindings,
-      status: cicdNodeStatus(node.id, nodeFindings, audit, pipelineText),
-      meta: {
-        workflow: nodeFindings[0]?.workflow || audit?.workflows?.[0],
-        job: nodeFindings[0]?.job_id || nodeFindings[0]?.job_name || undefined,
-        step: nodeFindings[0]?.step_name || undefined,
-      },
-    }
-  })
-}
 
 function cicdFindingNodeIds(finding: CicdFinding) {
   const text = `${finding.rule_id} ${finding.reason} ${finding.evidence} ${finding.workflow} ${finding.job_id} ${finding.job_name} ${finding.step_name}`.toLowerCase()
@@ -7479,80 +7381,6 @@ function cicdPrimaryNodeLabel(finding: CicdFinding) {
   return cicdGraphNodeLabel(ids.find((id) => !['workflow', 'job', 'step'].includes(id)) ?? ids[ids.length - 1] ?? 'workflow')
 }
 
-function cicdNodeStatus(
-  nodeId: string,
-  findings: CicdFinding[],
-  audit: CICDAuditResult | null | undefined,
-  pipelineText: string
-): CicdGraphNode['status'] {
-  if (!audit && nodeId !== 'workflow') return 'empty'
-  if (findings.some((finding) => finding.severity === 'critical')) return 'critical'
-  if (findings.some((finding) => finding.severity === 'high')) return 'high'
-  if (findings.length) return 'gap'
-  if (nodeId === 'logs' && !/runtime|log/i.test(pipelineText)) return 'gap'
-  if (nodeId === 'artifact' && !/artifact/i.test(pipelineText)) return 'empty'
-  if (nodeId === 'provenance' && !/attestation|provenance/i.test(pipelineText)) return 'empty'
-  return 'normal'
-}
-
-function buildCicdRiskClusters(findings: CicdFinding[]): CicdRiskCluster[] {
-  const groups = new Map<string, CicdRiskCluster>()
-  findings.forEach((finding) => {
-    const type = cicdRiskType(finding)
-    const existing = groups.get(type.id)
-    if (existing) {
-      existing.findings.push(finding)
-      existing.count += 1
-      existing.severity = maxSeverity(existing.severity, finding.severity)
-      existing.workflowCount = new Set(existing.findings.map((item) => item.workflow)).size
-      existing.jobCount = new Set(existing.findings.map((item) => item.job_id || item.job_name || '-')).size
-      return
-    }
-    groups.set(type.id, {
-      id: type.id,
-      title: type.title,
-      count: 1,
-      severity: finding.severity,
-      workflowCount: 1,
-      jobCount: finding.job_id || finding.job_name ? 1 : 0,
-      findings: [finding],
-    })
-  })
-  return Array.from(groups.values()).sort((a, b) => b.count - a.count || severityWeight(b.severity) - severityWeight(a.severity))
-}
-
-function cicdRiskType(finding: CicdFinding) {
-  const text = `${finding.rule_id} ${finding.title} ${finding.reason} ${finding.evidence}`.toLowerCase()
-  if (/unpinned|mutable|action/.test(text)) return { id: 'unpinned-action', title: 'Action 版本未固定' }
-  if (/permission|write-all|github_token|id-token|contents: write/.test(text)) return { id: 'broad-permission', title: '权限过宽' }
-  if (/artifact|provenance|attestation|digest|slsa/.test(text)) return { id: 'artifact-provenance', title: 'Artifact / Provenance 异常' }
-  if (/secret|credential|token|password|api[_-]?key/.test(text)) return { id: 'secret-exposure', title: '敏感凭据暴露' }
-  if (/curl|wget|remote|pipe|script|expression/.test(text)) return { id: 'remote-script', title: '脚本执行风险' }
-  if (/runner|self-hosted/.test(text)) return { id: 'runner-risk', title: 'Runner 风险' }
-  return { id: 'workflow-risk', title: 'Workflow 配置风险' }
-}
-
-function cicdClusterNodeIds(clusterId: string) {
-  const mapping: Record<string, string[]> = {
-    'unpinned-action': ['workflow', 'step', 'action'],
-    'broad-permission': ['workflow', 'trigger', 'job'],
-    'artifact-provenance': ['artifact', 'provenance'],
-    'secret-exposure': ['workflow', 'job', 'step'],
-    'remote-script': ['step', 'runner'],
-    'runner-risk': ['runner', 'job'],
-    'workflow-risk': ['workflow', 'trigger'],
-  }
-  return mapping[clusterId] ?? []
-}
-
-function maxSeverity(a: SecuritySeverity, b: SecuritySeverity): SecuritySeverity {
-  return severityWeight(a) >= severityWeight(b) ? a : b
-}
-
-function severityWeight(severity: SecuritySeverity) {
-  return { low: 1, medium: 2, high: 3, critical: 4 }[severity] ?? 0
-}
-
 function cicdGraphNodeLabel(nodeId: string) {
   return {
     workflow: 'Workflow',
@@ -7565,22 +7393,6 @@ function cicdGraphNodeLabel(nodeId: string) {
     provenance: 'Provenance',
     logs: 'Log',
   }[nodeId] ?? nodeId
-}
-
-function cicdNodeTone(status: CicdGraphNode['status']) {
-  if (status === 'critical') return 'border-red-300/35 bg-red-500/10 text-red-100 shadow-[0_0_18px_rgba(248,113,113,0.14)]'
-  if (status === 'high') return 'border-orange-300/35 bg-orange-500/10 text-orange-100 shadow-[0_0_18px_rgba(251,146,60,0.13)]'
-  if (status === 'gap') return 'border-amber-300/35 bg-amber-500/10 text-amber-100 shadow-[0_0_18px_rgba(251,191,36,0.1)]'
-  if (status === 'normal') return 'border-cyan-300/35 bg-cyan-500/10 text-cyan-100 shadow-[0_0_18px_rgba(34,211,238,0.1)]'
-  return 'border-slate-500/30 bg-slate-800/70 text-muted-foreground'
-}
-
-function cicdNodeStatusLabel(status: CicdGraphNode['status']) {
-  if (status === 'critical') return '严重'
-  if (status === 'high') return '高危'
-  if (status === 'gap') return '缺证据'
-  if (status === 'normal') return '正常'
-  return '未命中'
 }
 
 function buildCoreCicdPipeline(pipeline: SecurityPipelineStep[]) {
@@ -8044,21 +7856,20 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   const [requireSignature] = useState(true)
   const [allowSelfHostedRunner] = useState(false)
   const [scanning, setScanning] = useState(false)
-  const [activeEvidence, setActiveEvidence] = useState<EvidenceKey>('artifact')
+  const [supplementOpen, setSupplementOpen] = useState(false)
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
-  const [configOpen, setConfigOpen] = useState(false)
   const [lastUploadedScanId, setLastUploadedScanId] = useState<string | null>(null)
   const [lastUploadedMaterialKey, setLastUploadedMaterialKey] = useState('')
-  const evidenceInputRef = useRef<HTMLDivElement>(null)
   const activeResult = result ?? (import.meta.env.DEV ? artifactTrustPreviewResult : undefined)
   const isPreview = !result && Boolean(activeResult)
   const score = activeResult ? artifactTrustScore(activeResult) : 0
   const { value: displayedScore } = useAnimatedNumber(score, { durationMs: 900, delayMs: 80, resetKey: activeResult?.scan_id ?? activeResult?.artifact ?? 'empty' })
   const checks = activeResult?.checks ?? []
-  const failedChecks = checks.filter((check) => ['fail', 'missing', 'warn'].includes(check.status))
-  const passedChecks = checks.filter((check) => check.status === 'pass')
-  const activeIssue = checks.find((check) => check.name === activeIssueId)
-  const nodes = artifactTrustNodes(activeResult, score)
+  const issueChecks = checks.filter((check) => ['fail', 'missing', 'warn'].includes(check.status))
+  const failCount = checks.filter((check) => check.status === 'fail').length
+  const missingCount = checks.filter((check) => check.status === 'missing').length
+  const warnCount = checks.filter((check) => check.status === 'warn').length
+  const activeIssue = issueChecks.find((check) => check.name === activeIssueId) ?? issueChecks[0]
   const requiredFilesReady = artifactTrustRequiredFilesReady({
     artifactSelected: Boolean(artifactFile),
     attestationSelected: Boolean(attestationFile),
@@ -8087,19 +7898,12 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
           : activeResult?.scan_id
             ? 'previous'
             : 'empty'
-  const artifactMaterial = ARTIFACT_TRUST_REQUIRED_MATERIALS.find((material) => material.id === 'artifact')
-  const attestationMaterial = ARTIFACT_TRUST_REQUIRED_MATERIALS.find((material) => material.id === 'attestation')
-  const policyMaterial = ARTIFACT_TRUST_OPTIONAL_MATERIALS.find((material) => material.id === 'policy')
-  const signatureMaterial = ARTIFACT_TRUST_OPTIONAL_MATERIALS.find((material) => material.id === 'signature')
-  const releaseMaterial = ARTIFACT_TRUST_OPTIONAL_MATERIALS.find((material) => material.id === 'release')
-
-  function handleEvidenceClick(key: EvidenceKey) { setActiveEvidence(key); setActiveIssueId(null) }
-  function handleIssueClick(issueId: string) { setActiveIssueId((current) => current === issueId ? null : issueId) }
+  function handleIssueClick(issueId: string) { setActiveIssueId(issueId) }
 
   async function verifyGate() {
     if (!requiredFilesReady) {
       toast.error('请先补充产物文件和来源证明')
-      return
+      return false
     }
     setScanning(true)
     try {
@@ -8107,9 +7911,16 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
       setLastUploadedScanId(next.scan_id ?? null)
       setLastUploadedMaterialKey(selectedMaterialKey)
       await onScanned(next)
+      return true
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '产物可信验证失败')
+      return false
     } finally { setScanning(false) }
+  }
+
+  async function confirmSupplement() {
+    const ok = await verifyGate()
+    if (ok) setSupplementOpen(false)
   }
 
   return <div className='min-w-0 space-y-4'>
@@ -8124,62 +7935,113 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
         </div>
       </div>
       <div className='flex flex-wrap gap-2'>
-        <Button className={actionButtonClass} size='sm' onClick={() => void verifyGate()} disabled={scanning || !requiredFilesReady}>{scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}{scanning ? '正在执行门禁验证' : artifactTrustGateButtonLabel(requiredFilesReady)}</Button>
+        <Button className={actionButtonClass} size='sm' onClick={() => setSupplementOpen(true)}><Plus />补充文件</Button>
         <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
       </div>
     </section>
 
-    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(520px,3fr)_minmax(360px,2fr)]'>
-      <div ref={evidenceInputRef} className='min-w-0'><Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='flex h-full min-h-[360px] flex-col p-5'>
-        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px] inline-flex items-center gap-1.5 whitespace-nowrap'><Upload className='size-5 text-cyan-300' />{SUPPLEMENT_FILE_INPUT_TITLE}</span><span className='meta-chip-dark'>{attestationFile ? 'Attestation 已选择' : 'Attestation 待补充'}</span></div>
-        <div className='mt-4 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-sm text-muted-foreground'>
-          {readinessMessage}
-        </div>
-        <div className='mt-4 space-y-3'>
-          {artifactMaterial ? (
-            <ArtifactTrustMaterialRow
-              material={artifactMaterial}
-              status={artifactFile ? '已选择' : activeResult?.artifact ? '已用于验证' : '待补充'}
-            />
-          ) : null}
-          {attestationMaterial ? (
-            <ArtifactTrustMaterialRow
-              material={attestationMaterial}
-              status={attestationFile ? '已选择' : activeResult?.attestation_path ? '已用于验证' : '待补充'}
-            />
-          ) : null}
-          {policyMaterial ? (
-            <ArtifactTrustMaterialRow
-              material={policyMaterial}
-              status={expectedRepo || expectedCommit || allowedWorkflows || allowedBuilders ? '已配置' : '未提供'}
-            />
-          ) : null}
-          {signatureMaterial ? (
-            <ArtifactTrustMaterialRow
-              material={signatureMaterial}
-              status={requireSignature ? '可增强判断' : '未提供'}
-            />
-          ) : null}
-          {releaseMaterial ? (
-            <ArtifactTrustMaterialRow
-              material={releaseMaterial}
-              status={expectedRepo || expectedCommit || allowedWorkflows || allowedBuilders ? '已配置' : '未提供'}
-            />
-          ) : null}
-        </div>
-        <div className='mt-5 grid gap-3'>
+    <Dialog open={supplementOpen} onOpenChange={setSupplementOpen}>
+      <DialogContent className='max-h-[88vh] max-w-3xl overflow-y-auto rounded-md border-slate-400/15 bg-[color:var(--surface-card)]'>
+        <ArtifactSupplementDialogContent
+          readinessMessage={readinessMessage}
+          expectedRepo={expectedRepo}
+          expectedCommit={expectedCommit}
+          allowedWorkflows={allowedWorkflows}
+          allowedBuilders={allowedBuilders}
+          scanning={scanning}
+          requiredFilesReady={requiredFilesReady}
+          onArtifactFile={setArtifactFile}
+          onAttestationFile={setAttestationFile}
+          onExpectedRepo={setExpectedRepo}
+          onExpectedCommit={setExpectedCommit}
+          onAllowedWorkflows={setAllowedWorkflows}
+          onAllowedBuilders={setAllowedBuilders}
+          onCancel={() => setSupplementOpen(false)}
+          onConfirm={() => void confirmSupplement()}
+        />
+      </DialogContent>
+    </Dialog>
+
+    <div className='grid min-w-0 items-stretch gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]'>
+      <ArtifactGateOverviewCard
+        score={score}
+        displayedScore={displayedScore}
+        result={activeResult}
+        scoreSource={scoreSource}
+        artifactName={artifactFile?.name}
+        attestationName={attestationFile?.name}
+        failCount={failCount}
+        missingCount={missingCount}
+        warnCount={warnCount}
+      />
+      <ArtifactIssueList
+        checks={issueChecks}
+        selectedCheck={activeIssue}
+        onSelect={handleIssueClick}
+      />
+      <ArtifactIssueDetailPanel
+        check={activeIssue}
+        totalCount={issueChecks.length}
+      />
+    </div>
+
+  </div>
+}
+
+type ArtifactTrustScoreSource = 'fresh' | 'pending' | 'previous' | 'preview' | 'empty'
+
+function ArtifactSupplementDialogContent({
+  readinessMessage,
+  expectedRepo,
+  expectedCommit,
+  allowedWorkflows,
+  allowedBuilders,
+  scanning,
+  requiredFilesReady,
+  onArtifactFile,
+  onAttestationFile,
+  onExpectedRepo,
+  onExpectedCommit,
+  onAllowedWorkflows,
+  onAllowedBuilders,
+  onCancel,
+  onConfirm,
+}: {
+  readinessMessage: string
+  expectedRepo: string
+  expectedCommit: string
+  allowedWorkflows: string
+  allowedBuilders: string
+  scanning: boolean
+  requiredFilesReady: boolean
+  onArtifactFile: (file: File | null) => void
+  onAttestationFile: (file: File | null) => void
+  onExpectedRepo: (value: string) => void
+  onExpectedCommit: (value: string) => void
+  onAllowedWorkflows: (value: string) => void
+  onAllowedBuilders: (value: string) => void
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className='flex items-center gap-2 text-section-title text-foreground'><Upload className='size-5 text-cyan-300' />{SUPPLEMENT_FILE_INPUT_TITLE}</DialogTitle>
+        <DialogDescription className='text-sm text-muted-foreground'>{readinessMessage}</DialogDescription>
+      </DialogHeader>
+      <div className='space-y-4'>
+        <div className='space-y-3'>
           <div className='rounded-md border border-cyan-300/20 bg-cyan-400/5 p-3'>
             <div className='flex flex-wrap items-center justify-between gap-2'>
               <Label htmlFor='artifact-required-file' className='text-sm font-bold text-foreground'>Artifact 产物文件</Label>
               <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-100'>必填</span>
             </div>
-            <p className='mt-2 text-xs leading-5 text-muted-foreground'>Artifact 是待验证的发布/构建产物，例如 tar.gz、exe、zip、tgz，或记录 docker image digest 的文件；系统会用它计算 digest。</p>
             <Input
               id='artifact-required-file'
               aria-label='Artifact 产物文件'
               type='file'
               className={cn(fileInputClass, 'mt-3')}
-              onChange={event => setArtifactFile(event.target.files?.[0] ?? null)}
+              onChange={event => onArtifactFile(event.target.files?.[0] ?? null)}
             />
           </div>
           <div className='rounded-md border border-amber-300/20 bg-amber-400/5 p-3'>
@@ -8187,49 +8049,157 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
               <Label htmlFor='attestation-required-file' className='text-sm font-bold text-foreground'>Attestation / Provenance 来源证明</Label>
               <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-100'>必填</span>
             </div>
-            <p className='mt-2 text-xs leading-5 text-muted-foreground'>Attestation / Provenance 是来源证明，不是产物本身；用于核对仓库、commit、workflow、builder，以及证明里声明的 subject digest。</p>
             <Input
               id='attestation-required-file'
               aria-label='Attestation / Provenance 来源证明'
               type='file'
               accept='.json,.jsonl,application/json'
               className={cn(fileInputClass, 'mt-3')}
-              onChange={event => setAttestationFile(event.target.files?.[0] ?? null)}
+              onChange={event => onAttestationFile(event.target.files?.[0] ?? null)}
             />
           </div>
         </div>
-        <Button className={cn('mt-4 w-full', actionButtonClass)} onClick={() => void verifyGate()} disabled={scanning || !requiredFilesReady}>
-          {scanning ? <Loader2 className='animate-spin' /> : <Upload />}
-          {scanning ? '正在上传并执行门禁' : requiredFilesReady ? '上传并执行门禁' : '补齐必填材料后验证'}
-        </Button>
-        <div className='mt-4 flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2'><span className='text-label'>策略摘要</span><span className='truncate text-value' title={expectedRepo || '未配置'}>{expectedRepo || '未配置'} · {requireSignature ? '要求签名' : '未要求签名'}</span></div>
-        <Collapsible open={configOpen} onOpenChange={setConfigOpen}><CollapsibleTrigger asChild><Button variant='ghost' size='sm' className='mt-2 w-full justify-between'>展开配置<ChevronDown /></Button></CollapsibleTrigger><CollapsibleContent className='grid gap-2 pt-2'><Input placeholder='可信源码仓库（未配置）' value={expectedRepo} onChange={event => setExpectedRepo(event.target.value)} /><Input placeholder='预期 commit（未配置）' value={expectedCommit} onChange={event => setExpectedCommit(event.target.value)} /><Input placeholder='允许 workflow（未配置）' value={allowedWorkflows} onChange={event => setAllowedWorkflows(event.target.value)} /><Input placeholder='可信 builder（未配置）' value={allowedBuilders} onChange={event => setAllowedBuilders(event.target.value)} /></CollapsibleContent></Collapsible>
-        <div className='mt-4 grid grid-cols-2 gap-2'>{nodes.slice(0, 6).map(node => <button key={node.id} type='button' onClick={() => handleEvidenceClick(node.id as EvidenceKey)} className={cn('rounded-md border p-2 text-left transition hover:-translate-y-0.5', activeEvidence === node.id && !activeIssue ? 'border-cyan-300/45 bg-cyan-400/10' : 'border-slate-400/12 bg-[color:var(--surface-inset)]')}><div className='flex items-center justify-between gap-2'><span className='text-sm font-bold text-foreground'>{node.label}</span><node.icon className={cn('size-4', node.className)} /></div><span className={cn('mt-2 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', node.badgeClass)}>{node.status}</span></button>)}</div>
-      </CardContent></Card></div>
-      <div className='grid min-w-0 gap-4'>
-      <Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='space-y-4 p-5'>
-        <div className='flex items-center justify-between'><span className='text-section-title !text-[20px]'>发布门禁</span><ArtifactGateBadge score={score} /></div>
-        <ArtifactTrustScoreSourceBar
-          result={activeResult}
-          source={scoreSource}
-          artifactName={artifactFile?.name}
-          attestationName={attestationFile?.name}
-        />
-        <div><div className={cn('text-metric', score >= 90 ? 'text-emerald-200' : 'text-red-200')}>{displayedScore}<span className='ml-2 text-xl text-muted-foreground'>/ 100</span></div><div className='mt-4 h-3 overflow-hidden rounded-full border border-white/10 bg-[color:var(--surface-inset)]'><motion.div className={cn('h-full rounded-full', score >= 90 ? 'bg-emerald-400' : 'bg-gradient-to-r from-red-500 to-orange-300')} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.85, ease: 'easeOut' }} /></div><div className='mt-4 text-body'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div></div>
-        <div className='grid grid-cols-2 gap-2 text-center sm:grid-cols-4 xl:grid-cols-4'><GateMetric label='检查' value={checks.length} /><GateMetric label='通过' value={passedChecks.length} /><GateMetric label='失败' value={failedChecks.length} /><GateMetric label='警告' value={checks.filter(check => check.status === 'warn').length} /></div>
-      </CardContent></Card>
-      <Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'><CardContent className='space-y-3 p-5'>
-        <ArtifactDetailPanel detail={activeIssue ? getIssueDetail(activeIssue) : getEvidenceDetail(activeEvidence, activeResult, { artifactName: artifactFile?.name, attestationName: attestationFile?.name, expectedRepo, expectedCommit, allowedWorkflows, allowedBuilders, requireSignature, allowSelfHostedRunner, score })} />
-      </CardContent></Card>
+        <div className='space-y-2 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-3'>
+          <Input placeholder='可信源码仓库（选填）' value={expectedRepo} onChange={event => onExpectedRepo(event.target.value)} />
+          <Input placeholder='预期 commit（选填）' value={expectedCommit} onChange={event => onExpectedCommit(event.target.value)} />
+          <Input placeholder='允许 workflow（选填）' value={allowedWorkflows} onChange={event => onAllowedWorkflows(event.target.value)} />
+          <Input placeholder='可信 builder（选填）' value={allowedBuilders} onChange={event => onAllowedBuilders(event.target.value)} />
+        </div>
       </div>
-    </div>
-
-    <Card className='rounded-md border-slate-400/15 bg-[color:var(--surface-inset)]'><CardHeader><CardTitle className='text-section-title'><ShieldAlert className='size-5 text-amber-300' />失败与缺失项</CardTitle></CardHeader><CardContent className='grid gap-3 md:grid-cols-2 xl:grid-cols-3'>{failedChecks.length ? failedChecks.map(check => <ArtifactGateCheck key={check.name} check={check} selected={activeIssueId === check.name} onSelect={() => handleIssueClick(check.name)} />) : <div className='text-body'>未发现阻断项</div>}</CardContent></Card>
-
-  </div>
+      <DialogFooter>
+        <Button variant='outline' onClick={onCancel}>取消</Button>
+        <Button className={actionButtonClass} onClick={onConfirm} disabled={scanning || !requiredFilesReady}>
+          {scanning ? <Loader2 className='animate-spin' /> : <Upload />}
+          {scanning ? '正在验证' : '确认'}
+        </Button>
+      </DialogFooter>
+    </>
+  )
 }
 
-type ArtifactTrustScoreSource = 'fresh' | 'pending' | 'previous' | 'preview' | 'empty'
+function ArtifactGateOverviewCard({
+  score,
+  displayedScore,
+  result,
+  scoreSource,
+  artifactName,
+  attestationName,
+  failCount,
+  missingCount,
+  warnCount,
+}: {
+  score: number
+  displayedScore: number
+  result?: ArtifactTrustResult
+  scoreSource: ArtifactTrustScoreSource
+  artifactName?: string
+  attestationName?: string
+  failCount: number
+  missingCount: number
+  warnCount: number
+}) {
+  return (
+    <Card className='h-full min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardContent className='space-y-4 p-5'>
+        <div className='flex items-center justify-between gap-3'>
+          <span className='text-section-title !text-[20px]'>发布门禁</span>
+          <ArtifactGateBadge score={score} />
+        </div>
+        <ArtifactTrustScoreSourceBar
+          result={result}
+          source={scoreSource}
+          artifactName={artifactName}
+          attestationName={attestationName}
+        />
+        <div>
+          <div className={cn('text-metric', score >= 90 ? 'text-emerald-200' : 'text-red-200')}>{displayedScore}<span className='ml-2 text-xl text-muted-foreground'>/ 100</span></div>
+          <div className='mt-4 h-3 overflow-hidden rounded-full border border-white/10 bg-[color:var(--surface-inset)]'><motion.div className={cn('h-full rounded-full', score >= 90 ? 'bg-emerald-400' : 'bg-gradient-to-r from-red-500 to-orange-300')} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.85, ease: 'easeOut' }} /></div>
+          <div className='mt-4 text-body'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div>
+        </div>
+        <div className='grid grid-cols-3 gap-2 text-center'>
+          <GateMetric label='失败' value={failCount} />
+          <GateMetric label='缺失' value={missingCount} />
+          <GateMetric label='警告' value={warnCount} />
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ArtifactIssueList({
+  checks,
+  selectedCheck,
+  onSelect,
+}: {
+  checks: ArtifactTrustCheck[]
+  selectedCheck?: ArtifactTrustCheck
+  onSelect: (name: string) => void
+}) {
+  return (
+    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><ShieldAlert className='size-5 text-amber-300' />失败、缺失与警告项</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {checks.length ? (
+          <div className='max-h-[430px] space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            {checks.map((check) => {
+              const selected = check.name === selectedCheck?.name
+              return (
+                <button
+                  key={check.name}
+                  type='button'
+                  onClick={() => onSelect(check.name)}
+                  className={cn(
+                    'grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors',
+                    selected
+                      ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[inset_3px_0_0_rgba(34,211,238,0.75)]'
+                      : 'border-slate-400/12 bg-[color:var(--surface-inset)] hover:border-slate-300/30',
+                  )}
+                >
+                  <span className='min-w-0 truncate text-sm font-semibold text-foreground' title={artifactCheckTitle(check.name)}>{artifactCheckTitle(check.name)}</span>
+                  <span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span>
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>未发现失败、缺失或警告项</div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ArtifactIssueDetailPanel({
+  check,
+  totalCount,
+}: {
+  check?: ArtifactTrustCheck
+  totalCount: number
+}) {
+  if (!check) {
+    return (
+      <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+        <CardHeader className='pb-3'>
+          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><FileSearch className='size-5 text-cyan-200' />风险属性</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
+            {totalCount ? '选择左侧条目查看属性。' : '当前没有需要处理的门禁项。'}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+  return (
+    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <CardContent className='space-y-3 p-5'>
+        <ArtifactDetailPanel detail={getIssueDetail(check)} />
+      </CardContent>
+    </Card>
+  )
+}
 
 function ArtifactTrustScoreSourceBar({
   result,
@@ -8316,38 +8286,6 @@ function getEvidenceDetail(key: EvidenceKey, result: ArtifactTrustResult | undef
 }
 function getIssueDetail(check: ArtifactTrustCheck): ArtifactDetail { const detail = artifactCheckExplanation(check); return { title: artifactCheckTitle(check.name), rows: [['状态', artifactCheckLabel(check.status)], ['风险等级', check.severity ? severityLabel(check.severity as SecuritySeverity) : '信息'], ['关联检查', check.name]], evidence: check.evidence || '未提供', advice: detail.action, severity: check.severity as SecuritySeverity } }
 function ArtifactDetailPanel({ detail }: { detail: ArtifactDetail }) { return <><h2 className='text-section-title !text-[20px]'>{detail.title}</h2><div className='space-y-2'>{detail.rows.map(([label, value]) => <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2.5'><span className='whitespace-nowrap text-label font-bold'>{label}</span><span className='min-w-0 truncate text-right text-value' title={value}>{value}</span></div>)}</div>{detail.evidence ? <div className='code-evidence mt-4 truncate px-3 py-2.5' title={detail.evidence}>{detail.evidence}</div> : null}{detail.advice ? <div className='action-advice mt-4 p-4'><div className='font-bold'>建议修复</div><div className='mt-1 line-clamp-2 leading-6' title={detail.advice}>{detail.advice}</div></div> : null}</> }
-
-function ArtifactTrustMaterialRow({
-  material,
-  status,
-}: {
-  material: ArtifactTrustMaterial
-  status: '待补充' | '已选择' | '已用于验证' | '缺失' | '未提供' | '已配置' | '可增强判断' | '已纳入说明'
-}) {
-  const statusClass = status === '待补充' || status === '缺失'
-    ? 'border-amber-400/35 bg-amber-500/10 text-amber-200'
-    : status === '未提供' || status === '可增强判断'
-      ? 'border-slate-400/25 bg-slate-500/10 text-muted-foreground'
-      : 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200'
-  return (
-    <div className='rounded-md border border-slate-400/12 bg-[color:var(--surface-inset)] p-3'>
-      <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
-        <div className='min-w-0'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <span className='text-sm font-bold text-foreground'>{material.label}</span>
-            <span className={cn('inline-flex h-5 items-center rounded-full border px-2 text-[11px] font-bold', material.required ? 'border-cyan-400/35 text-cyan-200' : 'border-slate-400/25 text-muted-foreground')}>
-              {material.required ? '必填' : '选填'}
-            </span>
-          </div>
-          <div className='mt-2 text-xs leading-5 text-muted-foreground'>{material.note}</div>
-        </div>
-        <span className={cn('shrink-0 rounded-full border px-2 py-1 text-xs font-bold', statusClass)}>
-          {status}
-        </span>
-      </div>
-    </div>
-  )
-}
 
 function ArtifactGateBadge({ score }: { score: number }) { const blocked = score < 90; return <span className={cn('inline-flex h-7 items-center rounded-full border px-3 text-sm font-bold', blocked ? 'border-red-400/35 bg-red-500/10 text-red-200' : 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200')}>{blocked ? '建议阻断' : '允许发布'}</span> }
 function GateMetric({ label, value }: { label: string; value: number }) { return <div className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2'><div className='text-label'>{label}</div><div className='mt-1 text-xl font-extrabold text-foreground'>{value}</div></div> }
