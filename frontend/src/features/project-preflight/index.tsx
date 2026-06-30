@@ -54,7 +54,6 @@ import {
 } from '@/components/ui/card'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 
 type CoverageState = 'ready' | 'partial' | 'missing'
@@ -191,7 +190,6 @@ export function ProjectPreflightPage() {
             </div>
           </div>
           <div className='flex shrink-0 items-center gap-2'>
-            <Search />
             <ThemeSwitch />
           </div>
         </div>

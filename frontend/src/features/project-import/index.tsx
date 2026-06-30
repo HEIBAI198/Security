@@ -32,7 +32,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
-import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 
 type BusyState = DemoPresetKey | 'upload' | 'git' | 'local' | null
@@ -159,7 +158,6 @@ export function ProjectImportPage() {
             </div>
           </div>
           <div className='flex shrink-0 items-center gap-2'>
-            <Search />
             <ThemeSwitch />
           </div>
         </div>

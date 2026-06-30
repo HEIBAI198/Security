@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { useRef } from 'react'
 import {
   Area,
@@ -33,6 +33,7 @@ import {
 import {
   AlertTriangle,
   Archive,
+  ArrowUp,
   Bot,
   Boxes,
   BrainCircuit,
@@ -55,17 +56,17 @@ import {
   KeyRound,
   Loader2,
   LogOut,
-  MessageSquare,
   Music2,
   Network,
   PackageCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   Radar,
   RefreshCw,
   Route,
   Search,
-  Send,
   ServerCog,
   ShieldAlert,
   ShieldCheck,
@@ -90,7 +91,6 @@ import {
   ignoreCICDAuditFinding,
   ignoreCodeAuditFinding,
   ignoreRealtimeLogFinding,
-  ingestRealtimeLogs,
   createSecurityAgentJob,
   downloadAgentEvidencePackage,
   downloadWorkspaceEvidencePackage,
@@ -194,6 +194,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -230,7 +237,6 @@ import {
 } from '@/components/ui/tooltip'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
-import { Search as GlobalSearch } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import {
   investigationSteps,
@@ -304,6 +310,7 @@ type ReachabilityMatrixCell = {
 type ReachabilityMatrixRow = {
   id: string
   signal: string
+  severity?: SecuritySeverity
   cells: ReachabilityMatrixCell[]
 }
 type ReachabilityViewModel = {
@@ -553,6 +560,93 @@ function writeStoredScanState(workspaceId: string, state: ScanWorkspaceState) {
   window.localStorage.setItem(scanStateStorageKey(workspaceId), JSON.stringify(state))
 }
 
+const assistantHistoryLimit = 50
+
+function assistantHistoryStorageKey(workspaceId: string) {
+  return `supplyguard.assistant-history.${workspaceId}`
+}
+
+function normalizeAssistantHistory(value: unknown): SecurityAssistantResponse[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is SecurityAssistantResponse =>
+      Boolean(
+        item &&
+          typeof item === 'object' &&
+          'question' in item &&
+          'answer' in item &&
+          typeof (item as SecurityAssistantResponse).question === 'string' &&
+          typeof (item as SecurityAssistantResponse).answer === 'string'
+      )
+    )
+    .map((item) => ({
+      question: item.question,
+      answer: item.answer,
+      retrieval: Array.isArray(item.retrieval) ? item.retrieval : [],
+      graph_rag: item.graph_rag ?? null,
+      next_actions: Array.isArray(item.next_actions) ? item.next_actions : [],
+      model: item.model || 'demo-rag-security-analyst',
+    }))
+    .slice(-assistantHistoryLimit)
+}
+
+function readStoredAssistantHistory(workspaceId: string): SecurityAssistantResponse[] {
+  try {
+    const raw = window.localStorage.getItem(assistantHistoryStorageKey(workspaceId))
+    if (!raw) return []
+    return normalizeAssistantHistory(JSON.parse(raw))
+  } catch {
+    return []
+  }
+}
+
+function writeStoredAssistantHistory(workspaceId: string, messages: SecurityAssistantResponse[]) {
+  window.localStorage.setItem(
+    assistantHistoryStorageKey(workspaceId),
+    JSON.stringify(messages.slice(-assistantHistoryLimit))
+  )
+}
+
+function useAutoResizeTextarea({
+  minHeight,
+  maxHeight,
+}: {
+  minHeight: number
+  maxHeight?: number
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const adjustHeight = useCallback(
+    (reset = false) => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      if (reset) {
+        textarea.style.height = `${minHeight}px`
+        return
+      }
+      textarea.style.height = `${minHeight}px`
+      const nextHeight = Math.max(
+        minHeight,
+        Math.min(textarea.scrollHeight, maxHeight ?? Number.POSITIVE_INFINITY)
+      )
+      textarea.style.height = `${nextHeight}px`
+    },
+    [maxHeight, minHeight]
+  )
+
+  useEffect(() => {
+    adjustHeight(true)
+  }, [adjustHeight])
+
+  useEffect(() => {
+    const onResize = () => adjustHeight()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [adjustHeight])
+
+  return { textareaRef, adjustHeight }
+}
+
 const severityLabels: Record<SecuritySeverity, string> = {
   critical: '严重',
   high: '高危',
@@ -717,7 +811,35 @@ const emptyAgentForm: AgentFormState = {
   allowSelfHostedRunner: false,
 }
 
-function getAssistantPayload(workspace: Pick<SecurityWorkspace, 'assistant'>): SecurityAssistantPayload {
+function getWorkspaceDisplayName(workspace: Pick<SecurityWorkspace, 'workspace' | 'import'>) {
+  return workspace.workspace?.name || workspace.import?.projectName || '当前项目'
+}
+
+function getWaitingAssistantPayload(
+  workspace: Pick<SecurityWorkspace, 'workspace' | 'import'>,
+  question?: string
+): SecurityAssistantPayload {
+  const projectName = getWorkspaceDisplayName(workspace)
+  const targetQuestion = question?.trim()
+  return {
+    default_question: `${projectName} 这条供应链风险链路应该优先修哪里？`,
+    answer: targetQuestion
+      ? `${projectName} 目前还没有完成扫描，不能判断“${targetQuestion}”对应的修复优先级。请先点击“运行扫描”，或补充依赖、CI/CD、产物、日志和外部告警证据。`
+      : `${projectName} 已导入，但尚未执行供应链溯源扫描。当前没有足够证据给出修复优先级，请先运行扫描或补充依赖、CI/CD、产物和日志材料。`,
+    retrieval: [`Project: ${projectName}`, 'Status: waiting_for_scan'],
+    graph_rag: null,
+    next_actions: [
+      '先运行供应链溯源扫描，生成依赖、代码和 CI/CD 证据。',
+      '如需验证运行期影响，再上传日志或外部告警证据。',
+    ],
+  }
+}
+
+function isImportedSecurityWorkspace(workspace: Pick<SecurityWorkspace, 'workspace' | 'import'>) {
+  return Boolean(workspace.import || workspace.workspace?.importId)
+}
+
+function getAssistantPayload(workspace: Pick<SecurityWorkspace, 'assistant' | 'workspace' | 'import'>): SecurityAssistantPayload {
   const assistant = workspace.assistant
   return {
     default_question: assistant?.default_question || fallbackAssistant.default_question,
@@ -816,8 +938,8 @@ export function SecurityPlatform() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [question, setQuestion] = useState('')
-  const [assistantAnswer, setAssistantAnswer] =
-    useState<SecurityAssistantResponse | null>(null)
+  const [assistantMessages, setAssistantMessages] =
+    useState<SecurityAssistantResponse[]>([])
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [conversations, setConversations] = useState<SecurityConversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState('')
@@ -828,6 +950,7 @@ export function SecurityPlatform() {
   )
   const [activeTabId, setActiveTabId] = useState<WorkspaceTab['id']>(initialTab)
   const [restoredTabsKey, setRestoredTabsKey] = useState('')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [scanStateByWorkspace, setScanStateByWorkspace] = useState<Record<string, ScanWorkspaceState>>({})
   const activeWorkspaceRef = useRef('')
   const contentScrollRef = useRef<HTMLDivElement>(null)
@@ -876,15 +999,15 @@ export function SecurityPlatform() {
     })
   }
 
-  function applyAssistant(nextWorkspace: SecurityWorkspace) {
-    const assistant = getAssistantPayload(nextWorkspace)
-    setAssistantAnswer({
-      question: assistant.default_question,
-      answer: assistant.answer,
-      retrieval: assistant.retrieval,
-      graph_rag: assistant.graph_rag ?? null,
-      next_actions: assistant.next_actions,
-      model: 'demo-rag-security-analyst',
+  function loadAssistantHistory(workspaceId: string) {
+    setAssistantMessages(readStoredAssistantHistory(workspaceId))
+  }
+
+  function appendAssistantMessage(workspaceId: string, message: SecurityAssistantResponse) {
+    setAssistantMessages((current) => {
+      const next = [...current, message].slice(-assistantHistoryLimit)
+      writeStoredAssistantHistory(workspaceId, next)
+      return next
     })
   }
 
@@ -894,12 +1017,17 @@ export function SecurityPlatform() {
       const payload = workspaceId
         ? await loadSecurityWorkspaceById(workspaceId)
         : await loadSecurityWorkspace()
-      setWorkspace(payload)
-      applyAssistant(payload)
       const nextWorkspaceId = getWorkspaceId(payload)
+      const workspaceScanState = scanStateFromWorkspace(payload)
+      const storedScanState = readStoredScanState(nextWorkspaceId)
+      const nextScanState = workspaceScanState.completed
+        ? workspaceScanState
+        : storedScanState ?? workspaceScanState
+      setWorkspace(payload)
+      loadAssistantHistory(nextWorkspaceId)
       setWorkspaceScanState(
         nextWorkspaceId,
-        readStoredScanState(nextWorkspaceId) ?? scanStateFromWorkspace(payload)
+        nextScanState
       )
       if (showToast) toast.success('安全态势已刷新')
     } catch (error) {
@@ -926,7 +1054,7 @@ export function SecurityPlatform() {
         setActiveConversationId('')
         setDraftConversation(false)
         setWorkspace(null)
-        setAssistantAnswer(null)
+        setAssistantMessages([])
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '加载历史对话失败')
@@ -997,9 +1125,27 @@ export function SecurityPlatform() {
   async function submitQuestion() {
     const value = question.trim()
     if (!value) return
+    if (workspace && isImportedSecurityWorkspace(workspace) && !activeScanState.completed) {
+      const assistant = getWaitingAssistantPayload(workspace, value)
+      appendAssistantMessage(getWorkspaceId(workspace), {
+        question: value,
+        answer: assistant.answer,
+        retrieval: assistant.retrieval,
+        graph_rag: assistant.graph_rag ?? null,
+        next_actions: assistant.next_actions,
+        model: 'waiting-for-scan',
+      })
+      setQuestion('')
+      return
+    }
     setAssistantBusy(true)
     try {
-      setAssistantAnswer(await askSecurityAssistant(value, workspace ? getWorkspaceId(workspace) : undefined))
+      const response = await askSecurityAssistant(value, workspace ? getWorkspaceId(workspace) : undefined)
+      if (workspace) {
+        appendAssistantMessage(getWorkspaceId(workspace), response)
+      } else {
+        setAssistantMessages((current) => [...current, response].slice(-assistantHistoryLimit))
+      }
       setQuestion('')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '安全助手分析失败')
@@ -1020,7 +1166,7 @@ export function SecurityPlatform() {
     setActiveConversationId('')
     setDraftConversation(true)
     setWorkspace(null)
-    setAssistantAnswer(null)
+    setAssistantMessages([])
     setOpenTabs(defaultWorkspaceTabs('overview'))
     setActiveTabId('overview')
     window.history.replaceState(null, '', '#overview')
@@ -1074,7 +1220,9 @@ export function SecurityPlatform() {
       title: record.projectName,
     })
     setWorkspace(nextWorkspace)
-    applyAssistant(nextWorkspace)
+    const initialScanState = freshScanState()
+    setAssistantMessages([])
+    writeStoredAssistantHistory(getWorkspaceId(nextWorkspace), [])
     setDraftConversation(false)
     setActiveConversationId(nextConversation.conversationId)
     setConversations((items) => [
@@ -1084,7 +1232,7 @@ export function SecurityPlatform() {
     setOpenTabs(defaultWorkspaceTabs(targetTab))
     setActiveTabId(targetTab)
     window.history.replaceState(null, '', `#${targetTab}`)
-    setWorkspaceScanState(getWorkspaceId(nextWorkspace), freshScanState())
+    setWorkspaceScanState(getWorkspaceId(nextWorkspace), initialScanState)
     toast.success(options.successMessage ?? '项目已导入，对话已创建')
   }
 
@@ -1148,7 +1296,6 @@ export function SecurityPlatform() {
       const nextWorkspace = await loadSecurityWorkspaceById(activeWorkspaceId)
       if (activeWorkspaceRef.current === activeWorkspaceId) {
         setWorkspace(nextWorkspace)
-        applyAssistant(nextWorkspace)
       }
       return nextWorkspace
     }
@@ -1207,7 +1354,6 @@ export function SecurityPlatform() {
       })))
       if (activeWorkspaceRef.current === activeWorkspaceId) {
         setWorkspace(nextWorkspace)
-        applyAssistant(nextWorkspace)
       }
       setConversations((items) =>
         items.map((item) =>
@@ -1264,10 +1410,26 @@ export function SecurityPlatform() {
 
   return (
     <div className='security-platform min-h-svh bg-background'>
-      <Header fixed className='border-b bg-[color:var(--surface-shell)]/95 shadow-[var(--shadow-soft)] backdrop-blur'>
+      <Header
+        fixed
+        className='border-b bg-[color:var(--surface-shell)]/95 shadow-[var(--shadow-soft)] backdrop-blur'
+        sidebarTrigger={
+          <Button
+            type='button'
+            variant='outline'
+            size='icon'
+            className='size-9 rounded-lg'
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            title={sidebarCollapsed ? '展开对话侧边栏' : '收起对话侧边栏'}
+            aria-label={sidebarCollapsed ? '展开对话侧边栏' : '收起对话侧边栏'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className='size-4' /> : <PanelLeftClose className='size-4' />}
+          </Button>
+        }
+      >
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
           <div className='min-w-0'>
-            <div className='truncate text-sm font-semibold'>APT 溯源助手</div>
+            <div className='truncate text-sm font-semibold'>SupplyGuard KG</div>
             <div className='truncate text-xs text-muted-foreground'>
               {workspace
                 ? `${workspace.workspace.repository} · ${workspace.workspace.commit}`
@@ -1277,7 +1439,6 @@ export function SecurityPlatform() {
             </div>
           </div>
           <div className='flex shrink-0 items-center gap-2'>
-            <GlobalSearch />
             <ThemeSwitch />
             <Button variant='ghost' size='sm' onClick={signOut}>
               <LogOut className='size-4' />
@@ -1307,24 +1468,26 @@ export function SecurityPlatform() {
       </Header>
 
       <Main fluid className='p-0'>
-        <div className='grid h-[calc(100svh-4rem)] min-h-0 lg:grid-cols-[292px_minmax(0,1fr)]'>
-          <AgentProjectSidebar
-            conversations={conversations}
-            activeConversationId={activeConversationId}
-            draftActive={draftConversation}
-            scanStateByWorkspace={scanStateByWorkspace}
-            onNewConversation={startDraftConversation}
-            onSelect={(conversation) => void selectConversation(conversation)}
-            onDelete={(conversationId) => void removeConversation(conversationId)}
-            onRename={(conversationId, title) => void updateConversationTitle(conversationId, title)}
-          />
+        <div className={cn('grid h-[calc(100svh-4rem)] min-h-0 transition-[grid-template-columns] duration-300', sidebarCollapsed ? 'lg:grid-cols-[minmax(0,1fr)]' : 'lg:grid-cols-[292px_minmax(0,1fr)]')}>
+          {!sidebarCollapsed ? (
+            <AgentProjectSidebar
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              draftActive={draftConversation}
+              scanStateByWorkspace={scanStateByWorkspace}
+              onNewConversation={startDraftConversation}
+              onSelect={(conversation) => void selectConversation(conversation)}
+              onDelete={(conversationId) => void removeConversation(conversationId)}
+              onRename={(conversationId, title) => void updateConversationTitle(conversationId, title)}
+            />
+          ) : null}
 
           <Tabs
             value={activeWorkspaceTab.module}
             onValueChange={(value) => {
               if (isPlatformTab(value)) openWorkspaceTab(value)
             }}
-            className='flex min-h-0 min-w-0 flex-col border-l bg-[color:var(--surface-shell)]'
+            className={cn('flex min-h-0 min-w-0 flex-col bg-[color:var(--surface-shell)]', !sidebarCollapsed && 'border-l')}
           >
             <WorkspaceTabs
               tabs={openTabs}
@@ -1344,9 +1507,8 @@ export function SecurityPlatform() {
                       scanSteps={scanSteps}
                       question={question}
                       setQuestion={setQuestion}
-                      answer={assistantAnswer}
+                      messages={assistantMessages}
                       busy={assistantBusy}
-                      animationKey={moduleViewKey}
                       onSubmit={() => void submitQuestion()}
                       onStartAnalysis={() => void startFullAnalysis()}
                       onOpenModule={(module) => openWorkspaceTab(module)}
@@ -1542,20 +1704,11 @@ export function SecurityPlatform() {
               workspace={workspace}
               question={question}
               setQuestion={setQuestion}
-              answer={assistantAnswer}
+              messages={assistantMessages}
               busy={assistantBusy}
               onSubmit={() => void submitQuestion()}
               onWorkspaceUpdated={(nextWorkspace) => {
                 setWorkspace(nextWorkspace)
-                const assistant = getAssistantPayload(nextWorkspace)
-                setAssistantAnswer({
-                  question: assistant.default_question,
-                  answer: assistant.answer,
-                  retrieval: assistant.retrieval,
-                  graph_rag: assistant.graph_rag ?? null,
-                  next_actions: assistant.next_actions,
-                  model: 'demo-rag-security-analyst',
-                })
               }}
             />
             </WorkbenchMotionLayer>
@@ -1601,23 +1754,26 @@ function AgentProjectSidebar({
   onRename: (conversationId: string, title: string) => void
 }) {
   return (
-    <aside className='flex min-h-[calc(100svh-4rem)] flex-col border-r bg-muted/20'>
-      <div className='border-b p-4'>
-        <Button className={cn('group relative w-full justify-start gap-2 overflow-hidden', actionButtonClass)} onClick={onNewConversation}>
-          <Plus className='size-4 transition-transform duration-500 group-hover:scale-110 group-hover:rotate-90' />
-          <span className="transition-opacity duration-500 group-hover:opacity-0">新建对话</span>
-          <i className="absolute right-2 top-1 bottom-1 rounded-sm z-10 grid place-items-center transition-all duration-500 bg-white/10 w-1/5 group-hover:w-[calc(100%-0.5rem)]">
-            <Plus className='size-3.5' />
-          </i>
+    <aside className='flex min-h-[calc(100svh-4rem)] flex-col border-r border-cyan-950/70 bg-[linear-gradient(180deg,rgba(8,145,178,0.08),rgba(2,6,23,0.1))]'>
+      <div className='border-b border-cyan-950/70 p-4'>
+        <Button
+          className='group h-11 w-full justify-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-400 text-slate-950 shadow-[0_12px_30px_rgba(8,145,178,0.25)] transition-[background-color,box-shadow,transform] hover:-translate-y-0.5 hover:bg-cyan-300 hover:shadow-[0_16px_36px_rgba(34,211,238,0.25)]'
+          onClick={onNewConversation}
+        >
+          <Plus className='size-4 transition-transform duration-300 group-hover:rotate-90' />
+          新建对话
         </Button>
       </div>
 
-      <div className='flex-1 space-y-3 overflow-y-scroll overscroll-contain p-3 [scrollbar-gutter:stable]'>
-        <div className='px-1 text-xs font-medium text-muted-foreground'>历史对话</div>
+      <div className='flex-1 space-y-2.5 overflow-y-scroll overscroll-contain p-3 [scrollbar-gutter:stable]'>
+        <div className='flex items-center justify-between px-1 text-xs font-medium text-muted-foreground'>
+          <span>历史对话</span>
+          <span>{conversations.length}</span>
+        </div>
 
         {draftActive ? (
-          <Card className='rounded-md border-primary/30 bg-background shadow-sm'>
-            <CardContent className='space-y-2 p-4'>
+          <Card className='rounded-xl border-cyan-400/35 bg-cyan-400/10 shadow-sm'>
+            <CardContent className='space-y-2 p-3'>
               <div className='text-sm font-semibold'>新建溯源对话</div>
             </CardContent>
           </Card>
@@ -1636,7 +1792,7 @@ function AgentProjectSidebar({
             />
           ))
         ) : !draftActive ? (
-          <div className='rounded-md border border-dashed bg-background/60 p-4 text-sm text-muted-foreground'>
+          <div className='rounded-xl border border-dashed border-cyan-400/20 bg-background/40 p-4 text-sm text-muted-foreground'>
             暂无历史对话。新建对话后导入项目开始分析。
           </div>
         ) : null}
@@ -1679,7 +1835,7 @@ function ConversationProgressRing({ state }: { state: ScanWorkspaceState }) {
 
   return (
     <div
-      className={cn('relative grid size-9 shrink-0 place-items-center rounded-full', tone)}
+      className={cn('relative grid size-7 shrink-0 place-items-center rounded-full', tone)}
       aria-label={`扫描进度约 ${percent}%`}
       title={`扫描进度约 ${percent}%`}
     >
@@ -1696,7 +1852,7 @@ function ConversationProgressRing({ state }: { state: ScanWorkspaceState }) {
           <span className='absolute left-1/2 top-0 size-1.5 -translate-x-1/2 rounded-full bg-current' />
         ) : null}
       </div>
-      <div className='absolute inset-[4px] rounded-full bg-background' />
+      <div className='absolute inset-[3px] rounded-full bg-slate-950' />
       <span className={cn('relative size-1.5 rounded-full transition-colors duration-300', dotTone)} />
     </div>
   )
@@ -1734,15 +1890,15 @@ function ConversationHistoryCard({
     >
       <Card
         className={cn(
-          'group relative overflow-hidden rounded-md transition-all duration-500',
-          'before:absolute before:inset-0 before:rounded-md before:bg-background/40 before:opacity-100 before:transition-opacity before:duration-700 before:z-10 before:pointer-events-none',
-          'hover:before:opacity-0 hover:-translate-y-1 hover:shadow-lg hover:shadow-cyan-950/20',
+          'group relative overflow-hidden rounded-xl transition-all duration-300',
+          'before:absolute before:inset-y-3 before:left-0 before:w-1 before:rounded-r-full before:bg-cyan-300 before:opacity-0 before:transition-opacity',
+          'hover:-translate-y-0.5 hover:border-cyan-400/35 hover:bg-cyan-950/20 hover:shadow-[0_14px_34px_rgba(2,6,23,0.25)]',
           active
-            ? 'border-cyan-400/50 bg-background shadow-lg shadow-cyan-950/25 ring-1 ring-cyan-400/15'
-            : 'border-border/70 bg-background/50 grayscale-[30%] hover:grayscale-0 hover:border-cyan-400/35 hover:bg-background'
+            ? 'border-cyan-400/70 bg-cyan-950/25 shadow-[0_16px_42px_rgba(8,145,178,0.18)] ring-1 ring-cyan-300/20 before:opacity-100'
+            : 'border-slate-700/70 bg-slate-950/35'
         )}
       >
-      <CardContent className={cn('space-y-3 p-3 transition-[padding] duration-300', active && 'p-4')}>
+      <CardContent className={cn('space-y-2.5 p-3 transition-[padding] duration-300', active && 'p-3.5 pl-4')}>
         <button type='button' className='w-full text-left' onClick={onSelect}>
           <div className='flex items-start justify-between gap-2'>
             <div className='min-w-0'>
@@ -1763,11 +1919,11 @@ function ConversationHistoryCard({
                   autoFocus
                 />
               ) : (
-                <div className={cn('truncate font-semibold', active ? 'text-base' : 'text-sm')}>
+                <div className={cn('truncate font-semibold leading-6', active ? 'text-sm text-foreground' : 'text-sm text-foreground/75')}>
                   {conversation.title}
                 </div>
               )}
-              <div className='mt-1 truncate text-xs text-muted-foreground'>
+              <div className='mt-0.5 truncate text-xs text-muted-foreground/75'>
                 {conversation.sourcePath || conversation.projectName || '项目路径未记录'}
               </div>
             </div>
@@ -1777,13 +1933,13 @@ function ConversationHistoryCard({
 
         {active ? (
           <motion.div
-            className='space-y-3'
+            className='space-y-2.5'
             initial={reducedMotion ? false : { opacity: 0, y: -8, filter: 'blur(6px)' }}
             animate={reducedMotion ? undefined : { opacity: 1, y: 0, filter: 'blur(0px)' }}
             transition={{ duration: 0.34, ease: workbenchMotionEase }}
           >
             <div className='grid grid-cols-2 gap-2 text-xs'>
-              <div className='rounded-md bg-muted/70 p-2'>
+              <div className='rounded-lg border border-cyan-400/10 bg-slate-900/55 p-2'>
                 <div className='text-muted-foreground'>{scanned ? '风险评分' : '预检文件'}</div>
                 <div className='mt-1 font-semibold text-foreground'>
                   {scanned
@@ -1791,7 +1947,7 @@ function ConversationHistoryCard({
                     : compactNumber(conversation.summary.preflightFiles ?? 0)}
                 </div>
               </div>
-              <div className='rounded-md bg-muted/70 p-2'>
+              <div className='rounded-lg border border-cyan-400/10 bg-slate-900/55 p-2'>
                 <div className='text-muted-foreground'>{scanned ? '攻击路径' : '依赖/CI'}</div>
                 <div className='mt-1 font-semibold text-foreground'>
                   {scanned
@@ -1805,17 +1961,17 @@ function ConversationHistoryCard({
                 type='button'
                 variant='ghost'
                 size='sm'
-                className='h-8 px-2 text-muted-foreground'
+                className='h-8 rounded-lg px-2 text-muted-foreground hover:bg-cyan-400/10 hover:text-cyan-100'
                 onClick={() => setEditing(true)}
               >
                 <Pencil className='size-3.5' />
-                重命名
+                <span className='text-xs'>重命名</span>
               </Button>
               <Button
                 type='button'
                 variant='ghost'
                 size='icon'
-                className='size-8 text-muted-foreground hover:text-destructive'
+                className='size-8 rounded-lg text-muted-foreground hover:bg-red-500/10 hover:text-red-300'
                 title='永久删除对话'
                 onClick={onDelete}
               >
@@ -2043,9 +2199,8 @@ function AgentConversationHome({
   scanSteps,
   question,
   setQuestion,
-  answer,
+  messages,
   busy,
-  animationKey,
   onSubmit,
   onStartAnalysis,
   onOpenModule,
@@ -2056,66 +2211,18 @@ function AgentConversationHome({
   scanSteps: ScanStepState[]
   question: string
   setQuestion: (value: string) => void
-  answer: SecurityAssistantResponse | null
+  messages: SecurityAssistantResponse[]
   busy: boolean
-  animationKey: number
   onSubmit: () => void
   onStartAnalysis: () => void
   onOpenModule: (module: PlatformTab) => void
 }) {
-  const assistant = getAssistantPayload(workspace)
   const visibleModules = agentModuleTabs.filter((module) => module !== 'copilot' && module !== 'report')
-
-  const [thinkOpen, setThinkOpen] = useState(true)
-  const [reportOpen, setReportOpen] = useState(false)
-  const hasAnalysisResult = !!(answer?.answer || assistant.answer || answer?.graph_rag || assistant.graph_rag)
 
   return (
     <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-5xl flex-col'>
       <div className='flex-1 space-y-5 pb-40'>
-        <CopilotMessage
-          role='assistant'
-          title='研判助手'
-          icon={<BrainCircuit className='size-4 text-primary' />}
-        >
-          <CopilotMarkdown text={answer?.answer || assistant.answer} />
-          <Collapsible open={thinkOpen} onOpenChange={setThinkOpen} className='mt-3'>
-            <div className='flex items-center gap-2'>
-              <CollapsibleTrigger asChild>
-                <Button
-                  variant='ghost'
-                  className='group flex items-center gap-2 rounded-md border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                >
-                  {analysisStarted && !scanRunning ? (
-                    <BrainCircuit className='size-4 text-cyan-500' />
-                  ) : (
-                    <Loader2 className='size-4 animate-spin text-primary' />
-                  )}
-                  <span className='font-medium'>
-                    {analysisStarted && !scanRunning ? '思考完成' : '思考中'}
-                  </span>
-                  <span className='text-xs text-muted-foreground'>
-                    {thinkOpen ? '点击收起' : '点击展开'}
-                  </span>
-                  <ChevronDown
-                    className={cn(
-                      'size-4 transition-transform duration-200',
-                      thinkOpen && 'rotate-180'
-                    )}
-                  />
-                </Button>
-              </CollapsibleTrigger>
-              {hasAnalysisResult && !thinkOpen ? (
-                <span className='text-xs text-muted-foreground'>
-                  预检完成，点击查看分析详情
-                </span>
-              ) : null}
-            </div>
-            <CollapsibleContent className='mt-4 space-y-4'>
-              <PreflightConversationCard workspace={workspace} />
-              <GraphRagGnnWorkspaceCard workspace={workspace} graphRag={answer?.graph_rag ?? assistant.graph_rag} />
-            </CollapsibleContent>
-          </Collapsible>
+        <div className='rounded-md border bg-card p-5 shadow-[var(--shadow-soft)]'>
           <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
           <ModuleLaunchGrid
             modules={visibleModules}
@@ -2125,42 +2232,51 @@ function AgentConversationHome({
             onStart={onStartAnalysis}
             onOpenModule={onOpenModule}
           />
-        </CopilotMessage>
+        </div>
 
-        <CopilotMessage
-          role='assistant'
-          title='溯源报告助手'
-          icon={<FileText className='size-4 text-cyan-600' />}
-        >
-          <Collapsible open={reportOpen} onOpenChange={setReportOpen} className='min-w-0'>
+        {analysisStarted ? (
+        <div className='rounded-md border bg-card p-4 shadow-[var(--shadow-soft)]'>
+          <div className='min-w-0'>
             <div className='flex items-center justify-between gap-4'>
               <p className='text-sm leading-7 text-foreground/90'>
                 <strong>溯源报告已生成</strong>
               </p>
-              <CollapsibleTrigger asChild>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  className='group flex items-center gap-2 rounded-md border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground shrink-0'
-                >
-                  <FileText className='size-4' />
-                  <span className='font-medium'>
-                    {reportOpen ? '收起报告' : '查看报告'}
-                  </span>
-                  <ChevronDown
-                    className={cn(
-                      'size-4 transition-transform duration-200',
-                      reportOpen && 'rotate-180'
-                    )}
-                  />
-                </Button>
-              </CollapsibleTrigger>
+              <Button
+                variant='outline'
+                size='sm'
+                className='group flex shrink-0 items-center gap-2 rounded-md border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                onClick={() => onOpenModule('report')}
+              >
+                <FileText className='size-4' />
+                <span className='font-medium'>查看报告</span>
+                <ChevronRight className='size-4 transition-transform duration-200 group-hover:translate-x-0.5' />
+              </Button>
             </div>
-            <CollapsibleContent className='mt-4 min-w-0 overflow-x-auto'>
-              <ReportPanel workspace={workspace} animationKey={animationKey} />
-            </CollapsibleContent>
-          </Collapsible>
-        </CopilotMessage>
+          </div>
+        </div>
+        ) : null}
+
+        {messages.length ? (
+          messages.map((message, index) => (
+            <Fragment key={`${message.question}-${index}`}>
+            <CopilotMessage
+              role='user'
+              title='你'
+              icon={<User className='size-4' />}
+            >
+              <p>{message.question}</p>
+            </CopilotMessage>
+            <CopilotMessage
+              role='assistant'
+              title={message.model === 'rule-based-investigation-agent' ? '规则调查 Agent' : '安全分析'}
+              icon={<SecurityAiIcon className='size-7' />}
+              action={<CopyAnswerButton text={message.answer} />}
+            >
+              <CopilotMarkdown text={message.answer} />
+            </CopilotMessage>
+            </Fragment>
+          ))
+        ) : null}
 
         {busy ? (
           <div className='flex items-center gap-3 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground'>
@@ -2171,103 +2287,119 @@ function AgentConversationHome({
       </div>
 
       <div className='sticky -bottom-4 z-40 w-full bg-[color:var(--surface-shell)] pt-4 pb-3'>
-        <div className='rounded-md border bg-card p-2 shadow-[var(--shadow-raised)]'>
-          <Textarea
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault()
-                onSubmit()
-              }
-            }}
-            placeholder='询问风险原因、攻击链路、修复优先级或误报可能性'
-            className='min-h-16 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0'
-          />
-          <div className='flex items-center justify-end gap-3 border-t px-2 pt-2'>
-            <Button onClick={onSubmit} disabled={busy || !question.trim()} className={cn('rounded-md', actionButtonClass)}>
-              {busy ? <Loader2 className='size-4 animate-spin' /> : <Send className='size-4' />}
-              发送
-            </Button>
-          </div>
-        </div>
+        <AssistantComposer
+          value={question}
+          onChange={setQuestion}
+          onSubmit={onSubmit}
+          busy={busy}
+          placeholder='询问风险原因、攻击链路、修复优先级或误报可能性'
+        />
       </div>
     </div>
   )
 }
 
-function PreflightConversationCard({ workspace }: { workspace: SecurityWorkspace }) {
-  const preflight = getImportSummary(workspace)
-  const fileStats = preflight?.fileStats
-  const languages = preflight?.languages ?? []
-  const dependencyFiles = preflight?.dependencyFiles ?? []
-  const ciFiles = preflight?.ciFiles ?? []
-  const warnings = preflight?.warnings ?? []
-  const metrics = [
-    ['项目', preflight?.projectName || workspace.workspace.name],
-    ['文件总数', compactNumber(fileStats?.total ?? 0)],
-    ['可扫描文件', compactNumber(fileStats?.scannable ?? 0)],
-    ['依赖清单', `${dependencyFiles.length} 个`],
-    ['CI 配置', `${ciFiles.length} 个`],
-    ['主要语言', languages[0]?.name || '未识别'],
-  ]
+function AssistantComposer({
+  value,
+  onChange,
+  onSubmit,
+  busy,
+  placeholder,
+  compact = false,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  busy: boolean
+  placeholder: string
+  compact?: boolean
+}) {
+  const { textareaRef, adjustHeight } = useAutoResizeTextarea({
+    minHeight: compact ? 54 : 64,
+    maxHeight: 180,
+  })
+
+  const submit = () => {
+    if (busy || !value.trim()) return
+    onSubmit()
+    window.requestAnimationFrame(() => adjustHeight(true))
+  }
 
   return (
-    <div className='space-y-4'>
-      <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
-        {metrics.map(([label, value]) => (
-          <div key={label} className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
-            <div className='text-xs text-muted-foreground'>{label}</div>
-            <div className='mt-1 truncate text-sm font-semibold'>{value}</div>
-          </div>
-        ))}
+    <div className='mx-auto w-full max-w-4xl space-y-3'>
+      <div className='group relative overflow-hidden rounded-2xl border border-cyan-400/25 bg-[linear-gradient(180deg,rgba(14,165,233,0.08),rgba(15,23,42,0.12))] shadow-[0_18px_48px_rgba(2,6,23,0.28)] transition-[border-color,box-shadow] focus-within:border-cyan-300/70 focus-within:shadow-[0_0_0_1px_rgba(34,211,238,0.2),0_18px_58px_rgba(8,145,178,0.22)]'>
+        <div className='pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent opacity-70' />
+        <Textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(event) => {
+            onChange(event.target.value)
+            adjustHeight()
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              submit()
+            }
+          }}
+          placeholder={placeholder}
+          className={cn(
+            'min-h-24 resize-none border-0 bg-transparent py-5 pl-5 pr-16 text-sm leading-7 shadow-none focus-visible:ring-0',
+            'placeholder:text-cyan-100/55',
+            compact && 'min-h-20 py-4'
+          )}
+          style={{ overflow: 'hidden' }}
+        />
+
+        <Button
+          type='button'
+          onClick={submit}
+          disabled={busy || !value.trim()}
+          size='icon'
+          className={cn(
+            'absolute bottom-4 right-4 size-10 rounded-xl border transition-[border-color,background-color,box-shadow,transform]',
+            value.trim()
+              ? 'border-cyan-300/70 bg-cyan-400 text-slate-950 shadow-[0_0_24px_rgba(34,211,238,0.35)] hover:-translate-y-0.5 hover:bg-cyan-300'
+              : 'border-slate-600/55 bg-slate-900/45 text-slate-500'
+          )}
+          aria-label='发送'
+        >
+          {busy ? <Loader2 className='size-4 animate-spin' /> : <ArrowUp className='size-4' />}
+        </Button>
       </div>
-      {languages.length ? (
-        <div className='grid gap-2 sm:grid-cols-2 lg:grid-cols-3'>
-          {languages.slice(0, 3).map((language) => (
-            <div key={language.name} className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
-              <div className='flex items-center justify-between gap-3 text-sm'>
-                <span className='font-medium'>{language.name}</span>
-                <span className='text-muted-foreground'>{Math.round(language.percent)}%</span>
-              </div>
-              <div className='mt-2 h-1.5 overflow-hidden rounded-full bg-muted'>
-                <div className='h-full rounded-full bg-primary' style={{ width: `${language.percent}%` }} />
-              </div>
-              <div className='mt-1 text-xs text-muted-foreground'>{language.files} 个文件</div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-      <div className='grid gap-2 lg:grid-cols-2'>
-        <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
-          <div className='text-xs font-medium text-muted-foreground'>依赖清单</div>
-          <div className='mt-2 space-y-1 text-xs'>
-            {dependencyFiles.slice(0, 4).map((file) => (
-              <div key={file} className='truncate rounded bg-muted/50 px-2 py-1 font-mono'>
-                {file}
-              </div>
-            ))}
-            {!dependencyFiles.length ? <div className='text-muted-foreground'>未发现依赖清单</div> : null}
-          </div>
-        </div>
-        <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
-          <div className='text-xs font-medium text-muted-foreground'>CI/CD 配置</div>
-          <div className='mt-2 space-y-1 text-xs'>
-            {ciFiles.slice(0, 4).map((file) => (
-              <div key={file} className='truncate rounded bg-muted/50 px-2 py-1 font-mono'>
-                {file}
-              </div>
-            ))}
-            {!ciFiles.length ? <div className='text-muted-foreground'>未发现 CI/CD 配置</div> : null}
-          </div>
-        </div>
-      </div>
-      {warnings.length ? (
-        <div className='rounded-md border border-amber-200 bg-amber-50/70 p-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/25 dark:text-amber-100'>
-          {warnings.slice(0, 2).join('；')}
-        </div>
-      ) : null}
     </div>
+  )
+}
+
+function SecurityAiIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox='0 0 200 200'
+      aria-hidden='true'
+      className={className}
+      fill='none'
+      xmlns='http://www.w3.org/2000/svg'
+    >
+      <path
+        d='M109 24c-10 11-17 28-19 48M109 24c12 13 20 30 22 50M109 24c-28 0-52 14-66 35m66-35c17 0 33 5 46 14M33 96h72M42 59c16 13 41 21 67 21 16 0 31-3 44-8M32 95c0 34 21 63 51 75M32 95c0-13 3-25 10-36'
+        stroke='currentColor'
+        strokeWidth='14'
+        strokeLinecap='round'
+        strokeLinejoin='round'
+      />
+      <path
+        d='M124 82l50 16v35c0 27-18 42-50 54-32-12-50-27-50-54V98l50-16z'
+        stroke='currentColor'
+        strokeWidth='14'
+        strokeLinejoin='round'
+      />
+      <path
+        d='M124 120v38M105 139h38'
+        stroke='currentColor'
+        strokeWidth='14'
+        strokeLinecap='round'
+      />
+    </svg>
   )
 }
 
@@ -2653,7 +2785,9 @@ export function OverviewPanel({ workspace }: { workspace: SecurityWorkspace }) {
             />
           </div>
 
-          <GraphRagGnnWorkspaceCard workspace={workspace} graphRag={assistant.graph_rag} />
+          <div className='rounded-md border bg-muted/25 p-3 text-sm text-muted-foreground'>
+            GraphRAG + GNN 智能证据、扫描范围和证据缺口已合并到溯源报告中，避免在总览页重复展示。
+          </div>
         </div>
 
         <Card className='rounded-md'>
@@ -3312,6 +3446,7 @@ function SupplyReachabilityPanel({
     { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
     { id: 'entry', label: '入口命中', value: selectedItem?.evidence.entryHits ?? 0, tone: (selectedItem?.evidence.entryHits ?? 0) > 0 ? 'hit' as const : 'gap' as const },
     { id: 'execution', label: '执行证据', value: selectedItem?.evidence.runtimeEvidence ?? 0, tone: (selectedItem?.evidence.runtimeEvidence ?? 0) > 0 ? 'hit' as const : 'gap' as const },
+    { id: 'external', label: '外部告警', value: selectedItem?.evidence.externalAlerts ?? 0, tone: (selectedItem?.evidence.externalAlerts ?? 0) > 0 ? 'hit' as const : 'gap' as const },
     { id: 'graph', label: '攻击链关联', value: selectedItem?.evidence.attackChainLinks ?? 0, tone: (selectedItem?.evidence.attackChainLinks ?? 0) > 0 ? 'hit' as const : 'gap' as const },
   ]
   const matrixRows = buildUnifiedEvidenceRows(filteredRows)
@@ -3423,7 +3558,9 @@ function SupplyReachabilityPanel({
           totalCount={reachabilityItems.length}
         />
         <DependencyDetailWorkbench
+          workspace={workspace}
           item={selectedItem}
+          onActiveEvidence={setActiveEvidence}
         />
       </div>
     </div>
@@ -3436,6 +3573,7 @@ type ReachabilityWorkbenchStep = {
   value: string | number
   tone: 'hit' | 'risk' | 'gap'
 }
+type ReachabilityEvidenceKind = 'code' | 'entry' | 'execution' | 'external' | 'graph'
 
 function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }) {
   const gnnItems = items.filter((item) => typeof item.dependency.gnn_score === 'number')
@@ -3631,7 +3769,7 @@ function RiskScoreWorkbenchCard({
   const evidenceTotal = Math.max(1, evidenceBar.reduce((sum, item) => sum + item.value, 0))
 
   return (
-    <Card className='group h-[420px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25 xl:h-[420px]'>
+    <Card className='group h-[560px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-red-300/25 xl:h-[560px]'>
       <CardContent className='relative flex h-full flex-col p-4'>
         <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
         <div className='relative flex items-center justify-between gap-3'>
@@ -3738,7 +3876,7 @@ function ReachabilityFlowWorkbench({
   const activeStep = steps.find((step) => step.id === activeEvidence) ?? steps[0]
 
   return (
-    <Card className='flex h-[420px] flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[420px]'>
+    <Card className='flex h-[560px] flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
       <CardHeader className='pb-3'>
         <div className='flex flex-wrap items-start justify-between gap-3'>
           <div className='min-w-0'>
@@ -3797,19 +3935,29 @@ function ReachabilityFlowWorkbench({
 }
 
 function DependencyDetailWorkbench({
+  workspace,
   item,
+  onActiveEvidence,
 }: {
+  workspace: SecurityWorkspace
   item?: ReachabilityAnalysisItem
+  onActiveEvidence: (id: string) => void
 }) {
+  const [detailKind, setDetailKind] = useState<ReachabilityEvidenceKind | null>(null)
+  const openEvidenceDetail = (kind: ReachabilityEvidenceKind) => {
+    onActiveEvidence(kind)
+    setDetailKind(kind)
+  }
+
   return (
     <motion.div
-      className='h-full min-w-0 xl:h-[420px]'
+      className='h-full min-w-0 xl:h-[560px]'
       key={item?.id ?? 'empty-detail'}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.24 }}
     >
-    <Card className='flex h-[420px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[420px]'>
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
       <CardHeader className='pb-3'>
         <CardTitle className='min-w-0 truncate text-base text-foreground'>
           {item ? `${item.name}@${item.currentVersion || '-'}` : '依赖详情'}
@@ -3828,11 +3976,11 @@ function DependencyDetailWorkbench({
           <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
           <DetailRow label='生态' value={item?.packageManager || '-'} />
           <DetailRow label='来源' value={<DependencySourceValue sources={item?.sourceFiles ?? []} />} />
-          <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} />
-          <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} />
-          <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} />
-          <DetailRow label='外部告警' value={item?.evidence.externalAlerts ?? 0} />
-          <DetailRow label='攻击链关联' value={item?.evidence.attackChainLinks ?? 0} />
+          <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} onClick={() => openEvidenceDetail('code')} actionLabel='查看代码引用详情' />
+          <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} onClick={() => openEvidenceDetail('entry')} actionLabel='查看入口命中详情' />
+          <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} onClick={() => openEvidenceDetail('execution')} actionLabel='查看执行证据详情' />
+          <DetailRow label='外部告警' value={item?.evidence.externalAlerts ?? 0} onClick={() => openEvidenceDetail('external')} actionLabel='查看外部告警详情' />
+          <DetailRow label='攻击链关联' value={item?.evidence.attackChainLinks ?? 0} onClick={() => openEvidenceDetail('graph')} actionLabel='查看攻击链关联详情' />
         </div>
         {item ? <ReachabilityGnnEvidence dependency={item.dependency} /> : null}
         {(item?.advisories.length ?? 0) > 0 ? (
@@ -3887,6 +4035,15 @@ function DependencyDetailWorkbench({
         ) : null}
       </CardContent>
     </Card>
+    <ReachabilityEvidenceDetailSheet
+      workspace={workspace}
+      item={item}
+      kind={detailKind}
+      open={Boolean(detailKind)}
+      onOpenChange={(open) => {
+        if (!open) setDetailKind(null)
+      }}
+    />
     </motion.div>
   )
 }
@@ -3916,6 +4073,7 @@ function PathEvidenceCoverage({
   ]
   const visibleRows = rows
   const activeColumnIndex = Math.max(0, columns.findIndex(([id]) => id === activeEvidence))
+  const evidenceGridClass = 'grid w-[252px] shrink-0 grid-cols-6 gap-2'
 
   return (
     <motion.div
@@ -3925,22 +4083,22 @@ function PathEvidenceCoverage({
       transition={{ duration: 0.2 }}
       className='rounded-md border border-border bg-[color:var(--surface-inset)] p-3'
     >
-      <div className='mb-3 flex items-center justify-between gap-3'>
+      <div className='mb-3 grid grid-cols-[minmax(0,1fr)_252px] items-center gap-3'>
         <div className='text-xs font-medium text-muted-foreground'>{activeLabel}</div>
-        <div className='grid grid-cols-6 gap-1.5'>
+        <div className={evidenceGridClass}>
           {columns.map(([id, label]) => (
             <button
               key={id}
               type='button'
               onClick={() => onActiveEvidence(id)}
               className={cn(
-                'rounded-full border px-2 py-0.5 text-[11px] transition-[border-color,background-color,color,transform] hover:-translate-y-0.5',
+                'min-w-0 rounded-full border px-1 py-0.5 text-[11px] transition-[border-color,background-color,color,transform] hover:-translate-y-0.5',
                 activeEvidence === id
                   ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100'
                   : 'border-border bg-[color:var(--surface-inset)] text-muted-foreground hover:border-slate-300/25 hover:text-muted-foreground'
               )}
             >
-              {label}
+              <span className='block truncate'>{label}</span>
             </button>
           ))}
         </div>
@@ -3952,14 +4110,17 @@ function PathEvidenceCoverage({
             type='button'
             onClick={() => onSelectDependency(row.id)}
             className={cn(
-              'grid w-full grid-cols-[minmax(0,1fr)_160px] items-center gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-2.5 py-2 text-left transition-[border-color,background-color] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
+              'grid w-full grid-cols-[minmax(0,1fr)_252px] items-center gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-2.5 py-2 text-left transition-[border-color,background-color] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
               row.id === selectedId && 'border-cyan-300/35 bg-cyan-400/10'
             )}
           >
-            <div className='truncate text-xs font-medium text-muted-foreground' title={row.signal}>
-              {row.signal}
+            <div className='flex min-w-0 items-center gap-2' title={row.signal}>
+              <span className='min-w-0 truncate text-xs font-medium text-muted-foreground'>
+                {row.signal}
+              </span>
+              {row.severity ? <ReachabilitySeverityBadge severity={row.severity} /> : null}
             </div>
-            <div className='grid grid-cols-6 gap-2'>
+            <div className={evidenceGridClass}>
               {row.cells.map((cell, index) => (
                 <span
                   key={`${row.id}-${index}`}
@@ -3988,14 +4149,417 @@ function PathEvidenceCoverage({
   )
 }
 
-function DetailRow({ label, value }: { label: string; value: ReactNode }) {
-  const isTextValue = typeof value === 'string' || typeof value === 'number'
+const reachabilityEvidenceDetailMeta: Record<ReachabilityEvidenceKind, {
+  title: string
+  source: string
+  target: string
+  relation: string
+  summary: string
+  suggestions: string[]
+}> = {
+  code: {
+    title: '代码引用',
+    source: '可疑依赖',
+    target: '项目源码',
+    relation: 'import / require / call',
+    summary: '用于确认依赖是否真的被当前项目源码、配置或扫描结果引用。',
+    suggestions: ['核对 import/require 位置是否在生产路径中', '补充 SARIF、Semgrep 或代码扫描结果', '确认引用是否来自测试代码、示例代码或真实入口'],
+  },
+  entry: {
+    title: '入口命中',
+    source: '暴露入口',
+    target: '可疑依赖',
+    relation: '请求链 / 脚本入口',
+    summary: '用于确认风险是否连接到 API、CLI、postinstall、workflow 或服务入口。',
+    suggestions: ['补充路由、CLI、workflow 或 Dockerfile 入口材料', '确认入口是否可由外部请求或构建流程触发', '标记仅开发环境可达的入口，降低误报'],
+  },
+  execution: {
+    title: '执行证据',
+    source: '执行环境',
+    target: '风险行为',
+    relation: '脚本 / 配置 / 运行印证',
+    summary: '用于判断可疑依赖或脚本是否可能在构建、安装或运行阶段执行。',
+    suggestions: ['补充安装脚本、CI 日志或运行日志', '核查 postinstall、curl、powershell 等高风险命令', '确认扫描命中是否有真实执行上下文'],
+  },
+  external: {
+    title: '外部告警',
+    source: '告警材料',
+    target: '供应链风险',
+    relation: '实体 / 关键词关联',
+    summary: '用于把截图、录音、文本告警中的包名、IP、路径和服务实体关联到当前依赖。',
+    suggestions: ['补充包含包名、IP、接口或命令的告警截图', '确认 OCR/ASR 抽取实体是否与当前依赖一致', '把外部告警时间窗与构建、运行日志对齐'],
+  },
+  graph: {
+    title: '攻击链关联',
+    source: '可疑依赖',
+    target: '攻击链地图',
+    relation: '候选路径关联',
+    summary: '用于确认当前依赖是否已经进入攻击链地图中的候选路径。',
+    suggestions: ['打开攻击链地图复核上下游节点', '补齐路径中缺失的日志、产物或告警证据', '优先处理同时具备代码、执行和图谱印证的依赖'],
+  },
+}
+
+function ReachabilityEvidenceDetailSheet({
+  workspace,
+  item,
+  kind,
+  open,
+  onOpenChange,
+}: {
+  workspace: SecurityWorkspace
+  item?: ReachabilityAnalysisItem
+  kind: ReachabilityEvidenceKind | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const model = kind && item ? buildReachabilityEvidenceDetailModel(workspace, item, kind) : null
+
   return (
-    <div className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2'>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side='right' className='!w-full !max-w-[760px] overflow-hidden p-0 sm:!w-[58vw] sm:!max-w-[760px]'>
+        {model ? (
+          <>
+            <SheetHeader className='border-b border-border px-6 py-5 text-start'>
+              <SheetTitle className='text-xl font-bold tracking-tight'>{model.title}</SheetTitle>
+              <SheetDescription className='sr-only'>{model.summary}</SheetDescription>
+              <div className='mt-4 flex flex-wrap items-center gap-2'>
+                <span className='rounded-full border border-border bg-[color:var(--surface-inset)] px-3 py-1 text-sm font-bold tabular-nums text-foreground'>
+                  {formatPercent(model.confidence)} 置信度
+                </span>
+                <span className='text-sm text-muted-foreground'>{model.count} 条证据</span>
+              </div>
+            </SheetHeader>
+
+            <div className='min-h-0 flex-1 overflow-y-auto px-6 py-6 [scrollbar-width:thin]'>
+              <Tabs defaultValue='overview' className='w-full'>
+                <TabsList className='mb-6'>
+                  <TabsTrigger value='overview'>概览</TabsTrigger>
+                  <TabsTrigger value='evidence'>证据</TabsTrigger>
+                  <TabsTrigger value='context'>上下游</TabsTrigger>
+                  <TabsTrigger value='advice'>建议</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value='overview' className='mt-0'>
+                  <div className='grid gap-4 md:grid-cols-2'>
+                    <ReachabilityEvidenceField label='来源' value={model.source} />
+                    <ReachabilityEvidenceField label='目标' value={model.target} />
+                    <ReachabilityEvidenceField label='关系' value={model.relation} />
+                    <ReachabilityEvidenceField label='置信度' value={formatPercent(model.confidence)} />
+                  </div>
+                  <div className='mt-4 rounded-md border border-border bg-[color:var(--surface-inset)] p-4 text-sm leading-6 text-muted-foreground'>
+                    {model.summary}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value='evidence' className='mt-0 space-y-2'>
+                  {model.evidence.length ? (
+                    model.evidence.map((evidence, index) => (
+                      <ReachabilityEvidenceLine key={`${model.kind}-evidence-${index}-${evidence}`} value={evidence} />
+                    ))
+                  ) : (
+                    <ReachabilityEmptyState text='当前还没有结构化证据，可通过补充文件、代码扫描或攻击链地图继续补齐。' />
+                  )}
+                </TabsContent>
+
+                <TabsContent value='context' className='mt-0 grid gap-4 md:grid-cols-2'>
+                  <ReachabilityDrawerEvidenceList title='上游' items={model.upstream} />
+                  <ReachabilityDrawerEvidenceList title='下游' items={model.downstream} />
+                </TabsContent>
+
+                <TabsContent value='advice' className='mt-0 space-y-2'>
+                  {model.suggestions.map((suggestion) => (
+                    <ReachabilityEvidenceLine key={suggestion} value={suggestion} />
+                  ))}
+                </TabsContent>
+              </Tabs>
+            </div>
+          </>
+        ) : (
+          <>
+            <SheetHeader className='border-b border-border px-6 py-5 text-start'>
+              <SheetTitle className='text-xl font-bold tracking-tight'>证据详情</SheetTitle>
+              <SheetDescription>请先选择一个依赖和证据类型。</SheetDescription>
+            </SheetHeader>
+            <div className='p-6'>
+              <ReachabilityEmptyState text='暂无可展示的证据详情。' />
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function ReachabilityEvidenceField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className='min-w-0 rounded-md border border-border bg-[color:var(--surface-inset)] px-4 py-3'>
+      <div className='text-xs text-muted-foreground'>{label}</div>
+      <div className='mt-2 break-words text-base font-bold text-foreground'>{value || '-'}</div>
+    </div>
+  )
+}
+
+function ReachabilityEvidenceLine({ value }: { value: string }) {
+  return (
+    <div className='rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2 text-sm leading-6 text-[color:var(--type-body)]'>
+      {value}
+    </div>
+  )
+}
+
+function ReachabilityDrawerEvidenceList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className='rounded-md border border-border bg-[color:var(--surface-inset)] p-4'>
+      <div className='text-sm font-bold text-foreground'>{title}</div>
+      <div className='mt-3 space-y-2'>
+        {items.length ? items.map((item) => <ReachabilityEvidenceLine key={`${title}-${item}`} value={item} />) : <ReachabilityEmptyState text='暂无上下游材料。' />}
+      </div>
+    </div>
+  )
+}
+
+function ReachabilityEmptyState({ text }: { text: string }) {
+  return (
+    <div className='rounded-md border border-dashed border-border bg-[color:var(--surface-inset)] px-3 py-6 text-center text-sm text-muted-foreground'>
+      {text}
+    </div>
+  )
+}
+
+function buildReachabilityEvidenceDetailModel(
+  workspace: SecurityWorkspace,
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind
+) {
+  const meta = reachabilityEvidenceDetailMeta[kind]
+  const dependencyLabel = `${item.name}@${item.currentVersion || '-'}`
+  const relatedPaths = relatedAttackPathsForDependency(workspace, item.dependency)
+  const evidence = evidenceRowsForReachabilityKind(workspace, item, kind, relatedPaths)
+  const count = reachabilityEvidenceCount(item, kind)
+  const confidence = reachabilityEvidenceConfidence(item, kind, count, relatedPaths)
+
+  return {
+    kind,
+    title: meta.title,
+    count,
+    confidence,
+    source: reachabilityEvidenceSource(item, kind, meta.source, dependencyLabel),
+    target: reachabilityEvidenceTarget(kind, meta.target, dependencyLabel),
+    relation: meta.relation,
+    summary: reachabilityEvidenceSummary(item, kind, meta.summary, count),
+    evidence,
+    upstream: reachabilityEvidenceUpstream(item, kind, relatedPaths),
+    downstream: reachabilityEvidenceDownstream(workspace, item, kind, relatedPaths),
+    suggestions: meta.suggestions,
+  }
+}
+
+function reachabilityEvidenceCount(item: ReachabilityAnalysisItem, kind: ReachabilityEvidenceKind) {
+  if (kind === 'code') return item.evidence.codeRefs
+  if (kind === 'entry') return item.evidence.entryHits
+  if (kind === 'execution') return item.evidence.runtimeEvidence
+  if (kind === 'external') return item.evidence.externalAlerts
+  return item.evidence.attackChainLinks
+}
+
+function reachabilityEvidenceConfidence(
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind,
+  count: number,
+  relatedPaths: KnowledgeGraphAttackPath[]
+) {
+  if (kind === 'graph' && relatedPaths.length) {
+    return normalizeConfidence(Math.max(...relatedPaths.map((path) => path.confidence ?? 0)))
+  }
+  const reachabilityConfidence = item.dependency.reachability?.confidence
+  if (typeof reachabilityConfidence === 'number' && count > 0) return normalizeConfidence(reachabilityConfidence)
+  if (count > 0 && kind === 'external') return 0.7
+  if (count > 0 && kind === 'execution') return 0.78
+  if (count > 0) return 0.82
+  return 0.35
+}
+
+function normalizeConfidence(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return Math.max(0, Math.min(1, value > 1 ? value / 100 : value))
+}
+
+function reachabilityEvidenceSource(
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind,
+  fallback: string,
+  dependencyLabel: string
+) {
+  if (kind === 'external') return '外部告警材料'
+  if (kind === 'entry') return item.sourceFiles.map(compactDependencySource).join(' / ') || fallback
+  if (kind === 'execution') return '构建 / 安装 / 运行环境'
+  return kind === 'graph' ? dependencyLabel : fallback
+}
+
+function reachabilityEvidenceTarget(kind: ReachabilityEvidenceKind, fallback: string, dependencyLabel: string) {
+  if (kind === 'code' || kind === 'entry') return dependencyLabel
+  if (kind === 'external') return dependencyLabel
+  if (kind === 'graph') return fallback
+  return '风险执行路径'
+}
+
+function reachabilityEvidenceSummary(
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind,
+  fallback: string,
+  count: number
+) {
+  const dependencyLabel = `${item.name}@${item.currentVersion || '-'}`
+  if (count > 0) return `${dependencyLabel} 在「${reachabilityEvidenceDetailMeta[kind].title}」中已有 ${count} 条证据，建议打开证据和上下游标签复核来源。`
+  return `${dependencyLabel} 暂未形成「${reachabilityEvidenceDetailMeta[kind].title}」证据。${fallback}`
+}
+
+function evidenceRowsForReachabilityKind(
+  workspace: SecurityWorkspace,
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind,
+  relatedPaths: KnowledgeGraphAttackPath[]
+) {
+  const reachability = item.dependency.reachability
+  if (kind === 'code') {
+    return uniqueReachabilityEvidenceRows([
+      ...(reachability?.code_evidence ?? []).map(formatReachabilityEvidence),
+      ...(reachability?.call_evidence ?? []).map(formatReachabilityEvidence),
+      ...item.rawEvidence,
+    ])
+  }
+  if (kind === 'entry') {
+    return uniqueReachabilityEvidenceRows((reachability?.attack_surface_evidence ?? []).map(formatReachabilityEvidence))
+  }
+  if (kind === 'execution') {
+    return uniqueReachabilityEvidenceRows([
+      ...(reachability?.call_evidence ?? []).map(formatReachabilityEvidence),
+      ...(reachability?.runtime_evidence ?? []).map(formatReachabilityEvidence),
+      ...item.rawEvidence.filter((evidence) => /postinstall|script|workflow|docker|runner|exec|call|runtime|运行|执行/i.test(evidence)),
+    ])
+  }
+  if (kind === 'external') {
+    return externalAlertEvidenceRows(workspace, item.dependency)
+  }
+  const pathEvidence = relatedPaths.flatMap((path, index) => [
+    `${index + 1}. ${path.title || '候选攻击链'} · 置信度 ${formatPercent(normalizeConfidence(path.confidence ?? 0))}`,
+    path.conclusion || path.description || '',
+    ...(path.evidence_summary ?? []).slice(0, 3).map((evidence) => [evidence.title, evidence.detail, evidence.source].filter(Boolean).join(' · ')),
+  ])
+  return uniqueReachabilityEvidenceRows(pathEvidence)
+}
+
+function externalAlertEvidenceRows(workspace: SecurityWorkspace, dependency: SecurityDependency) {
+  const auditEvidence = workspace.multimodal_audit?.evidence ?? []
+  if (!auditEvidence.length) return []
+
+  const tokens = dependencySearchTokens(dependency)
+  const related = auditEvidence.filter((evidence) => {
+    const text = JSON.stringify(evidence).toLowerCase()
+    return tokens.some((token) => text.includes(token))
+  })
+  const selected = related.length ? related : auditEvidence
+  const rows = selected.flatMap((evidence) => [
+    `${evidence.original_filename || evidence.filename} · ${severityLabel(evidence.risk_level)} · 风险 ${evidence.risk_score}`,
+    ...evidence.findings.slice(0, 2).map((finding) => `${finding.title} · ${finding.source_name} · ${finding.evidence}`),
+    ...evidence.entities.slice(0, 3).map((entity) => `${entity.type}: ${entity.value} · ${entity.evidence}`),
+  ])
+  return uniqueReachabilityEvidenceRows(rows).slice(0, 10)
+}
+
+function relatedAttackPathsForDependency(workspace: SecurityWorkspace, dependency: SecurityDependency) {
+  const tokens = dependencySearchTokens(dependency)
+  return (workspace.graph?.attack_paths ?? []).filter((path) => {
+    const text = attackPathSearchText(path)
+    return tokens.some((token) => text.includes(token))
+  })
+}
+
+function reachabilityEvidenceUpstream(
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind,
+  relatedPaths: KnowledgeGraphAttackPath[]
+) {
+  if (kind === 'graph') {
+    return uniqueReachabilityEvidenceRows(relatedPaths.flatMap((path) => path.path_steps?.map((step) => step.source || '') ?? []))
+  }
+  return uniqueReachabilityEvidenceRows([
+    `${item.packageManager} ${item.currentVersion || '-'}`,
+    ...item.sourceFiles.map(compactDependencySource),
+    ...(item.dependency.signals ?? []),
+  ])
+}
+
+function reachabilityEvidenceDownstream(
+  workspace: SecurityWorkspace,
+  item: ReachabilityAnalysisItem,
+  kind: ReachabilityEvidenceKind,
+  relatedPaths: KnowledgeGraphAttackPath[]
+) {
+  if (kind === 'external') {
+    return externalAlertEvidenceRows(workspace, item.dependency).slice(0, 4)
+  }
+  if (kind === 'graph') {
+    return uniqueReachabilityEvidenceRows(relatedPaths.flatMap((path) => path.path_steps?.map((step) => step.target || '') ?? []))
+  }
+  return uniqueReachabilityEvidenceRows([
+    ...(item.dependency.reachability?.attack_surface_evidence ?? []).map(formatReachabilityEvidence),
+    ...(item.dependency.reachability?.runtime_evidence ?? []).map(formatReachabilityEvidence),
+    ...(item.rawEvidence ?? []),
+  ]).slice(0, 6)
+}
+
+function uniqueReachabilityEvidenceRows(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+}
+
+function ReachabilitySeverityBadge({ severity }: { severity: SecuritySeverity }) {
+  return (
+    <span className={cn(
+      'inline-flex h-5 shrink-0 items-center rounded-full border px-2 text-[11px] font-bold leading-none',
+      severityClasses[severity]
+    )}>
+      {severityLabel(severity)}
+    </span>
+  )
+}
+
+function DetailRow({
+  label,
+  value,
+  onClick,
+  actionLabel,
+}: {
+  label: string
+  value: ReactNode
+  onClick?: () => void
+  actionLabel?: string
+}) {
+  const isTextValue = typeof value === 'string' || typeof value === 'number'
+  const className = cn(
+    'grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2',
+    onClick && 'text-left transition-[border-color,background-color,transform] hover:-translate-y-0.5 hover:border-cyan-300/30 hover:bg-cyan-400/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/40'
+  )
+  const content = (
+    <>
       <span className='whitespace-nowrap text-label text-muted-foreground'>{label}</span>
       <div className='min-w-0 overflow-hidden text-right font-medium text-[color:var(--type-body)]' title={isTextValue ? String(value) : undefined}>
         {isTextValue ? <span className='block truncate'>{value}</span> : value}
       </div>
+    </>
+  )
+
+  if (onClick) {
+    return (
+      <button type='button' className={className} onClick={onClick} aria-label={actionLabel || `查看${label}详情`}>
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className={className}>
+      {content}
     </div>
   )
 }
@@ -4231,6 +4795,7 @@ function buildUnifiedEvidenceRows(items: ReachabilityAnalysisItem[]): Reachabili
     return {
       id: item.id,
       signal: item.name,
+      severity: item.severity,
       cells: [
         matrixCell(true, '命中', '-', item.sourceFiles.join(' / ')),
         matrixCell(item.evidence.codeRefs > 0, String(item.evidence.codeRefs || 0), '-', '代码引用'),
@@ -5945,88 +6510,6 @@ function DependencyVexBadge({ dependency }: { dependency: SecurityDependency }) 
   )
 }
 
-function GraphRagGnnWorkspaceCard({
-  workspace,
-  graphRag,
-}: {
-  workspace: SecurityWorkspace
-  graphRag?: SecurityGraphRagResult | null
-}) {
-  const graph = workspace.graph
-  const dependencies = workspace.dependencies ?? []
-  const gnnDependencies = dependenciesWithGnn(dependencies)
-  const topDependencies = topGnnDependencies(dependencies, 3)
-  const modelTypes = Array.from(new Set(gnnDependencies.map((dependency) => dependency.gnn_model_type).filter(Boolean)))
-  const graphNodeCount = graph?.nodes?.length ?? 0
-  const graphEdgeCount = graph?.edges?.length ?? 0
-  const graphPathCount = graph?.attack_paths?.length ?? 0
-  const channelEntries = Object.entries(graphRag?.channels ?? {}).filter(([, hits]) => hits.length)
-
-  if (!graphNodeCount && !gnnDependencies.length) {
-    return null
-  }
-
-  return (
-    <Card className='rounded-md border-cyan-200/70 bg-cyan-50/40 dark:border-cyan-900/70 dark:bg-cyan-950/15'>
-      <CardHeader className='pb-3'>
-        <CardTitle className='flex items-center gap-2 text-base'>
-          <BrainCircuit className='size-4 text-cyan-600' />
-          GraphRAG + GNN 智能证据
-        </CardTitle>
-      </CardHeader>
-      <CardContent className='space-y-3'>
-        <div className='grid grid-cols-2 gap-2 text-xs sm:grid-cols-4'>
-          <InfoPill label='图谱节点' value={String(graphNodeCount)} />
-          <InfoPill label='图谱边' value={String(graphEdgeCount)} />
-          <InfoPill label='攻击路径' value={String(graphPathCount)} />
-          <InfoPill label='GNN 覆盖' value={`${gnnDependencies.length}/${dependencies.length || 0}`} />
-        </div>
-
-        <div className='flex flex-wrap gap-1'>
-          {modelTypes.slice(0, 3).map((model) => (
-            <Badge key={model} variant='outline' className='rounded-md bg-background text-[10px]'>
-              {model}
-            </Badge>
-          ))}
-          {channelEntries.map(([channel, hits]) => (
-            <Badge key={channel} variant='outline' className='rounded-md bg-background text-[10px]'>
-              {graphRagChannelLabel(channel)} {hits.length}
-            </Badge>
-          ))}
-        </div>
-
-        {topDependencies.length ? (
-          <div className='space-y-2'>
-            {topDependencies.map((dependency) => (
-              <div key={dependencyKey(dependency)} className='rounded-md border bg-background/80 p-2'>
-                <div className='flex items-start justify-between gap-2'>
-                  <div className='min-w-0'>
-                    <div className='truncate text-sm font-medium'>{dependency.name}</div>
-                    <div className='text-[11px] text-muted-foreground'>
-                      {dependency.ecosystem} · {dependency.version || '-'}
-                    </div>
-                  </div>
-                  <Badge
-                    variant='outline'
-                    className={cn('shrink-0 rounded-md text-[10px]', severityClasses[dependencyGnnSeverity(dependency)])}
-                  >
-                    GNN {formatPercent(dependency.gnn_score ?? 0)}
-                  </Badge>
-                </div>
-                {dependency.gnn_explanations?.length ? (
-                  <div className='mt-1 line-clamp-1 text-xs text-muted-foreground'>
-                    {dependency.gnn_explanations[0]}
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        ) : null}
-      </CardContent>
-    </Card>
-  )
-}
-
 function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependency[] }) {
   const gnnDependencies = dependenciesWithGnn(dependencies)
   if (!gnnDependencies.length) {
@@ -6696,34 +7179,28 @@ function PipelinePanel({
     }
   }
 
-  const totalBuildChainRisks = displayModel.source.artifactFindings + displayModel.source.pipelineRisks
+  const totalBuildChainRisks = displayModel.summary.finding_count
 
   return (
     <div className='space-y-4'>
       <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
-        <div className='flex flex-wrap items-center justify-between gap-3'>
-          <div className='flex items-center gap-3 min-w-0'>
-            <span className='grid size-8 shrink-0 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
-              <GitBranch className='size-4' />
-            </span>
-            <div className='min-w-0'>
-              <h2 className='text-lg font-bold text-foreground truncate'>CI/CD 构建链研判</h2>
-              <div className='mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground'>
-                <span>GitHub Actions</span>
-                <span className='opacity-40'>·</span>
-                <span>{displayModel.summary.workflow_count} workflows</span>
-                <span className='opacity-40'>·</span>
-                <span>{displayModel.summary.total_steps} steps</span>
-                {totalBuildChainRisks > 0 && (
-                  <>
-                    <span className='opacity-40'>·</span>
-                    <span className='text-orange-300 font-semibold'>{totalBuildChainRisks} 风险</span>
-                  </>
-                )}
-              </div>
+        <div className='flex flex-wrap items-start justify-between gap-4'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-3'>
+              <span className='grid size-9 place-items-center rounded-md border border-orange-300/25 bg-orange-400/10 text-orange-100'>
+                <GitBranch className='size-5' />
+              </span>
+              <h2 className='text-page-title text-page-title-on-dark'>CI/CD 构建链研判</h2>
+            </div>
+            <div className='mt-2 h-px w-56 bg-gradient-to-r from-orange-300/55 via-orange-300/20 to-transparent' />
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='meta-chip-dark'>GitHub Actions</span>
+              <span className='meta-chip-dark'>{displayModel.summary.workflow_count} workflows</span>
+              <span className='meta-chip-dark'>{displayModel.summary.total_steps} steps</span>
+              <span className='meta-chip-dark'>{totalBuildChainRisks} 风险</span>
             </div>
           </div>
-          <div className='flex items-center gap-1.5'>
+          <div className='flex flex-wrap gap-2'>
             <Button size='sm' className={actionButtonClass} onClick={() => void startCICDScan()} disabled={scanning}>
               {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
               重新扫描
@@ -6733,43 +7210,19 @@ function PipelinePanel({
               {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
               {SUPPLEMENT_FILE_LABEL}
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant='outline' size='sm'>
-                  更多
-                  <ChevronDown className='size-4' />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='end' className='w-48'>
-                <DropdownMenuItem onClick={() => downloadReport(audit?.report || artifactTrust?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}>
-                  <Download className='size-4' />
-                  导出报告
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={!audit} onClick={() => void downloadSarif()}>
-                  <Download className='size-4' />
-                  导出 SARIF
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={!audit || mutating} onClick={() => void establishBaseline()}>
-                  <ShieldCheck className='size-4' />
-                  建立基线
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled={!audit || mutating} onClick={() => void uploadGithubCodeScanning()}>
-                  <IconGithub className='size-4' />
-                  Code Scanning
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button size='sm' variant='outline' onClick={() => downloadReport(audit?.report || artifactTrust?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}>
+              <Download className='size-4' />
+              导出报告
+            </Button>
           </div>
         </div>
-        {displayModel.summary.finding_count || audit ? (
-          <CicdConclusionStrip conclusion={conclusion} audit={displayAudit} findings={findings} />
-        ) : null}
       </section>
 
-      <div className='grid items-stretch gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]'>
+      <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
         <CicdRiskOverviewCard model={displayModel} />
         <CicdFindingNameList
           findings={filteredFindings}
+          totalCount={findings.length}
           selectedFinding={selectedFinding}
           workflows={workflows}
           severityFilter={severityFilter}
@@ -6895,7 +7348,7 @@ function CicdRiskOverviewCard({
   const total = model.summary.finding_count
   const riskScore = model.summary.risk_score
   const riskLevel = model.summary.risk_level
-  const radius = 38
+  const radius = 44
   const circumference = 2 * Math.PI * radius
   const reducedMotion = useReducedMotion()
   const { value: displayScore } = useAnimatedNumber(riskScore, {
@@ -6914,25 +7367,30 @@ function CicdRiskOverviewCard({
     { label: '低危', value: model.summary.low, color: 'bg-cyan-300' },
   ]
   const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
+  const majorRisks = model.summary.critical + model.summary.high
   return (
-    <Card className='h-full surface-raised overflow-hidden rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
-      <CardContent className='p-4'>
-        <div className='flex items-center justify-between gap-2 mb-3'>
-          <div className='flex items-center gap-2 text-sm font-bold text-foreground'><ShieldAlert className='size-4 text-orange-200' />风险评分</div>
-          <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-[11px] font-semibold text-orange-100'>
-            {severityLabel(riskLevel)}
-          </span>
+    <Card className='group h-[560px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-orange-300/25 xl:h-[560px]'>
+      <CardContent className='relative flex h-full flex-col p-4'>
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-label text-muted-foreground'>风险评分</div>
+          <SeverityPill severity={riskLevel} />
         </div>
-        <div className='flex flex-col items-center gap-4'>
-          <div className='relative size-28 shrink-0'>
-            <svg viewBox='0 0 96 96' className='relative size-full -rotate-90'>
-              <circle cx='48' cy='48' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='7' />
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
+            <motion.div
+              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
               <motion.circle
-                cx='48'
-                cy='48'
+                cx='56'
+                cy='56'
                 r={radius}
                 className={cn('fill-none', tone.stroke)}
-                strokeWidth='7'
+                strokeWidth='8'
                 strokeLinecap='round'
                 strokeDasharray={circumference}
                 initial={{ strokeDashoffset: circumference }}
@@ -6942,40 +7400,38 @@ function CicdRiskOverviewCard({
             </svg>
             <div className='absolute inset-0 grid place-items-center'>
               <div className='text-center'>
-                <div className={cn('text-4xl font-black tabular-nums', tone.text)}>{displayScore}</div>
-                <div className='text-[10px] text-muted-foreground'>/100</div>
+                <div className={cn('text-metric text-5xl', tone.text)}>{displayScore}</div>
+                <div className='mt-1 text-label'>风险评分</div>
               </div>
             </div>
           </div>
-          <div className='w-full min-w-0 flex-1 space-y-2'>
-            <div className='flex items-baseline gap-2'>
-              <span className='text-xl font-black text-orange-100 tabular-nums'>{total}</span>
-              <span className='text-xs text-muted-foreground'>项发现</span>
+        </div>
+        <div className='grid grid-cols-3 gap-2'>
+          {[
+            ['风险总数', total, 'text-orange-100'],
+            ['严重高危', majorRisks, 'text-red-100'],
+            ['中低危', model.summary.medium + model.summary.low, 'text-amber-100'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
+              <div className='text-label'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
             </div>
-            <div className='h-2 overflow-hidden rounded-full bg-slate-800/60'>
-              {severityData.map((item) => {
-                const pct = Math.max(item.value > 0 ? 2 : 0, (item.value / riskTotal) * 100)
-                return (
-                  <span
-                    key={item.label}
-                    className={cn('inline-block h-full transition-all duration-500', item.color)}
-                    style={{ width: `${pct}%`, minWidth: item.value > 0 ? '6px' : '0' }}
-                  />
-                )
-              })}
-            </div>
-            <div className='grid grid-cols-3 gap-1.5'>
-              {[
-                ['高危', model.summary.high, 'text-orange-100'],
-                ['中危', model.summary.medium, 'text-amber-100'],
-                ['低危', model.summary.low, 'text-cyan-100'],
-              ].map(([label, value, color]) => (
-                <div key={label} className='rounded border border-border bg-[color:var(--surface-inset)] px-1.5 py-1.5 text-center'>
-                  <div className='text-[10px] text-muted-foreground'>{label}</div>
-                  <div className={cn('mt-0.5 text-lg font-bold tabular-nums', color)}>{value}</div>
-                </div>
-              ))}
-            </div>
+          ))}
+        </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {severityData.map((item) => (
+              <span
+                key={item.label}
+                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / riskTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
+            {severityData.map((item) => (
+              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
+            ))}
           </div>
         </div>
       </CardContent>
@@ -7213,6 +7669,7 @@ function BuildStepDetail({
 
 function CicdFindingNameList({
   findings,
+  totalCount,
   selectedFinding,
   workflows,
   severityFilter,
@@ -7223,6 +7680,7 @@ function CicdFindingNameList({
   onSelect,
 }: {
   findings: CicdFinding[]
+  totalCount: number
   selectedFinding?: CicdFinding
   workflows: string[]
   severityFilter: string
@@ -7235,15 +7693,30 @@ function CicdFindingNameList({
   const filtered = severityFilter !== 'all' || workflowFilter !== 'all'
 
   return (
-    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
       <CardHeader className='pb-3'>
-        <div className='flex flex-wrap items-center justify-between gap-3'>
-          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><ClipboardList className='size-5 text-orange-200' />风险明细</CardTitle>
-          {filtered ? <Button variant='ghost' size='sm' onClick={onReset}>全部</Button> : null}
-        </div>
-        <div className='flex flex-wrap items-center gap-2 pt-2'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-2'>
+              <CardTitle className='text-section-title'>风险明细</CardTitle>
+              <span className='meta-chip'>{findings.length}/{totalCount}</span>
+            </div>
+            <div className='mt-1 truncate text-xs text-muted-foreground'>
+              {selectedFinding ? cicdFindingTitle(selectedFinding) : 'CI/CD 构建链'}
+            </div>
+          </div>
+          <div className='flex flex-wrap items-center justify-end gap-2'>
+            {filtered ? (
+              <button
+                type='button'
+                className='inline-flex h-7 items-center whitespace-nowrap rounded-full border border-cyan-300/40 bg-cyan-400/10 px-2.5 text-[12px] font-bold text-cyan-100 transition-colors'
+                onClick={onReset}
+              >
+                全部
+              </button>
+            ) : null}
           <Select value={severityFilter} onValueChange={onSeverityFilter}>
-            <SelectTrigger size='sm' className='w-[120px] rounded-md border-border bg-[color:var(--surface-inset)]'>
+            <SelectTrigger size='sm' className='h-7 min-w-[104px] rounded-md border-border bg-[color:var(--surface-inset)] text-foreground'>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -7255,7 +7728,7 @@ function CicdFindingNameList({
             </SelectContent>
           </Select>
           <Select value={workflowFilter} onValueChange={onWorkflowFilter}>
-            <SelectTrigger size='sm' className='w-[150px] rounded-md border-border bg-[color:var(--surface-inset)]'>
+            <SelectTrigger size='sm' className='h-7 min-w-[140px] rounded-md border-border bg-[color:var(--surface-inset)] text-foreground'>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -7265,11 +7738,13 @@ function CicdFindingNameList({
               ))}
             </SelectContent>
           </Select>
+          </div>
         </div>
       </CardHeader>
-      <CardContent className='min-h-0'>
+      <CardContent className='min-h-0 flex-1'>
         {findings.length ? (
-          <div className='max-h-[430px] space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+          <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
             {findings.map((finding) => {
               const selected = finding.fingerprint === selectedFinding?.fingerprint
               return (
@@ -7279,18 +7754,18 @@ function CicdFindingNameList({
                   layout
                   onClick={() => onSelect(finding)}
                   className={cn(
-                    'grid w-full grid-cols-[auto_1fr_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left text-xs transition-colors',
+                    'grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]',
                     selected
-                      ? 'border-orange-300/35 bg-orange-400/10 shadow-[inset_3px_0_0_rgba(251,146,60,0.75)]'
-                      : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:bg-[color:var(--surface-panel)]',
+                      ? 'border-cyan-300/35 bg-cyan-400/10'
+                      : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
                   )}
                 >
                   <SeverityPill severity={finding.severity} />
                   <span className='min-w-0 truncate text-sm font-semibold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
-                  <ChevronRight className={cn('size-4 shrink-0 transition-colors', selected ? 'text-orange-200' : 'text-muted-foreground')} />
                 </motion.button>
               )
             })}
+            </div>
           </div>
         ) : (
           <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>无匹配风险</div>
@@ -7313,11 +7788,11 @@ function CicdFindingDetailPanel({
 }) {
   if (!finding) {
     return (
-      <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
         <CardHeader className='pb-3'>
-          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><FileSearch className='size-5 text-cyan-200' />风险属性</CardTitle>
+          <CardTitle className='min-w-0 truncate text-base text-foreground'>风险属性</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className='min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
           <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
             {totalCount ? '选择左侧风险查看原因、证据和修复建议。' : '当前筛选条件下没有风险。'}
           </div>
@@ -7327,34 +7802,35 @@ function CicdFindingDetailPanel({
   }
 
   return (
-    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
       <CardHeader className='pb-3'>
-        <div className='flex flex-wrap items-start justify-between gap-3'>
-          <div className='min-w-0'>
-            <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><FileSearch className='size-5 text-cyan-200' />风险属性</CardTitle>
-            <div className='mt-2 min-w-0 truncate text-sm font-semibold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</div>
-            <div className='mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground'>
-              <span className='truncate' title={compactWorkflowPath(finding.workflow)}>{compactWorkflowPath(finding.workflow)}</span>
-              {(finding.job_name || finding.job_id) ? <span>·</span> : null}
-              {(finding.job_name || finding.job_id) ? <span className='truncate' title={finding.job_name || finding.job_id || ''}>{finding.job_name || finding.job_id}</span> : null}
-            </div>
-          </div>
-          <SeverityPill severity={finding.severity} />
-        </div>
+        <CardTitle className='min-w-0 truncate text-base text-foreground' title={cicdFindingTitle(finding)}>
+          {cicdFindingTitle(finding)}
+        </CardTitle>
       </CardHeader>
-      <CardContent className='space-y-3'>
+      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+        <div className='flex flex-wrap gap-2'>
+          <SeverityPill severity={finding.severity} />
+          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
+            风险 {finding.score ?? 0}
+          </span>
+          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
+            {finding.scanner || 'CI/CD'}
+          </span>
+        </div>
+        <div className='grid gap-2 text-sm'>
+          <DetailRow label='Workflow' value={compactWorkflowPath(finding.workflow) || '-'} />
+          <DetailRow label='Job' value={finding.job_name || finding.job_id || '-'} />
+          <DetailRow label='Step' value={finding.step_name || cicdPrimaryNodeLabel(finding)} />
+          <DetailRow label='规则' value={finding.rule_id || '-'} />
+        </div>
         <CicdInfoBlock title='风险原因' text={cicdReasonText(finding)} />
         <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
         <CicdInfoBlock title='修复建议' text={cicdRecommendationText(finding)} tone='action' />
-        <div className='flex items-center justify-between gap-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2 text-[11px] text-muted-foreground'>
-          <span className='min-w-0 truncate' title={finding.step_name || cicdPrimaryNodeLabel(finding)}>
-            {finding.step_name || cicdPrimaryNodeLabel(finding)}
-          </span>
-          <Button variant='ghost' size='sm' disabled={disabled} onClick={() => onIgnore(finding)} className='h-7 shrink-0 text-[11px]'>
-            <EyeOff className='size-3.5' />
-            忽略
-          </Button>
-        </div>
+        <Button variant='outline' className='w-full' disabled={disabled} onClick={() => onIgnore(finding)}>
+          <EyeOff className='size-4' />
+          忽略此风险
+        </Button>
       </CardContent>
     </Card>
   )
@@ -7445,13 +7921,19 @@ function CicdInfoBlock({
   mono?: boolean
   tone?: 'default' | 'action'
 }) {
+  const isAction = tone === 'action'
   return (
-    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', tone === 'action' ? 'action-advice' : 'border-border bg-[color:var(--surface-inset)]')}>
-      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', tone === 'action' ? 'text-orange-100' : 'text-[color:var(--type-body)]')}>
-        {tone === 'action' ? <ShieldCheck className='size-4' /> : null}
+    <div className={cn(
+      'min-w-0 overflow-hidden rounded-md border p-3',
+      isAction
+        ? 'border-cyan-300/30 bg-cyan-400/10 text-cyan-50'
+        : 'border-border bg-[color:var(--surface-inset)]'
+    )}>
+      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', isAction ? 'text-cyan-100' : 'text-[color:var(--type-body)]')}>
+        {isAction ? <ShieldCheck className='size-4' /> : null}
         {title}
       </div>
-      <div className={cn('break-words text-body [overflow-wrap:anywhere]', mono && 'code-evidence', tone === 'action' && 'font-semibold text-orange-50')}>
+      <div className={cn('break-words text-body [overflow-wrap:anywhere]', mono && 'code-evidence', isAction && 'font-semibold text-cyan-50')}>
         {text}
       </div>
     </div>
@@ -7887,17 +8369,6 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
     optionalConfigured,
   })
   const selectedMaterialKey = `${artifactFile?.name ?? ''}|${attestationFile?.name ?? ''}`
-  const currentScanId = activeResult?.scan_id ?? null
-  const scoreSource =
-    currentScanId && currentScanId === lastUploadedScanId && selectedMaterialKey === lastUploadedMaterialKey
-      ? 'fresh'
-      : requiredFilesReady
-        ? 'pending'
-        : isPreview
-          ? 'preview'
-          : activeResult?.scan_id
-            ? 'previous'
-            : 'empty'
   function handleIssueClick(issueId: string) { setActiveIssueId(issueId) }
 
   async function verifyGate() {
@@ -7924,19 +8395,27 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   }
 
   return <div className='min-w-0 space-y-4'>
-    <section className='flex flex-wrap items-start justify-between gap-4'>
-      <div className='min-w-0'>
-        <h1 className='text-page-title flex items-center gap-3'><Fingerprint className='size-7 text-cyan-300' />产物可信门禁</h1>
-        <div className='mt-3 flex flex-wrap gap-2'>
-          <span className='meta-chip-dark' title={activeResult?.artifact}>{artifactFile?.name ?? activeResult?.artifact ?? '待上传产物'}</span>
-          <span className='meta-chip-dark' title={activeResult?.digest}>{activeResult?.digest ? shortDigest(activeResult.digest) : 'Digest 待计算'}</span>
-          <span className='meta-chip-dark'>{activeResult?.provenance.workflow ? compactWorkflowPath(activeResult.provenance.workflow) : 'Workflow 未解析'}</span>
-          {isPreview ? <span className='meta-chip-dark'>预览数据</span> : null}
+    <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+      <div className='flex flex-wrap items-start justify-between gap-4'>
+        <div className='min-w-0'>
+          <div className='flex items-center gap-3'>
+            <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+              <Fingerprint className='size-5' />
+            </span>
+            <h2 className='text-page-title text-page-title-on-dark'>产物可信门禁</h2>
+          </div>
+          <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
+          <div className='mt-3 flex flex-wrap items-center gap-2'>
+            <span className='meta-chip-dark' title={activeResult?.artifact}>{artifactFile?.name ?? activeResult?.artifact ?? '待上传产物'}</span>
+            <span className='meta-chip-dark' title={activeResult?.digest}>{activeResult?.digest ? shortDigest(activeResult.digest) : 'Digest 待计算'}</span>
+            <span className='meta-chip-dark'>{activeResult?.provenance.workflow ? compactWorkflowPath(activeResult.provenance.workflow) : 'Workflow 未解析'}</span>
+            {isPreview ? <span className='meta-chip-dark'>预览数据</span> : null}
+          </div>
         </div>
-      </div>
-      <div className='flex flex-wrap gap-2'>
-        <Button className={actionButtonClass} size='sm' onClick={() => setSupplementOpen(true)}><Plus />补充文件</Button>
-        <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download />导出报告</Button>
+        <div className='flex flex-wrap gap-2'>
+          <Button className={actionButtonClass} size='sm' onClick={() => setSupplementOpen(true)}><Plus className='size-4' />补充文件</Button>
+          <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download className='size-4' />导出报告</Button>
+        </div>
       </div>
     </section>
 
@@ -7962,20 +8441,18 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
       </DialogContent>
     </Dialog>
 
-    <div className='grid min-w-0 items-stretch gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]'>
+    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
       <ArtifactGateOverviewCard
         score={score}
         displayedScore={displayedScore}
         result={activeResult}
-        scoreSource={scoreSource}
-        artifactName={artifactFile?.name}
-        attestationName={attestationFile?.name}
         failCount={failCount}
         missingCount={missingCount}
         warnCount={warnCount}
       />
       <ArtifactIssueList
         checks={issueChecks}
+        totalCount={checks.length}
         selectedCheck={activeIssue}
         onSelect={handleIssueClick}
       />
@@ -8081,9 +8558,6 @@ function ArtifactGateOverviewCard({
   score,
   displayedScore,
   result,
-  scoreSource,
-  artifactName,
-  attestationName,
   failCount,
   missingCount,
   warnCount,
@@ -8091,35 +8565,91 @@ function ArtifactGateOverviewCard({
   score: number
   displayedScore: number
   result?: ArtifactTrustResult
-  scoreSource: ArtifactTrustScoreSource
-  artifactName?: string
-  attestationName?: string
   failCount: number
   missingCount: number
   warnCount: number
 }) {
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  const reducedMotion = useReducedMotion()
+  const clampedScore = Math.max(0, Math.min(100, score))
+  const gateSeverity: SecuritySeverity =
+    score >= 90 ? 'low' : score >= 75 ? 'medium' : score >= 55 ? 'high' : 'critical'
+  const tone = riskGaugeTone(gateSeverity)
+  const passCount = result?.summary?.passed ?? result?.checks.filter((check) => check.status === 'pass').length ?? 0
+  const statusData = [
+    { label: '失败', value: failCount, color: 'bg-red-400' },
+    { label: '缺失', value: missingCount, color: 'bg-orange-400' },
+    { label: '警告', value: warnCount, color: 'bg-amber-300' },
+    { label: '通过', value: passCount, color: 'bg-emerald-300' },
+  ]
+  const statusTotal = Math.max(1, statusData.reduce((sum, item) => sum + item.value, 0))
+
   return (
-    <Card className='h-full min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
-      <CardContent className='space-y-4 p-5'>
-        <div className='flex items-center justify-between gap-3'>
-          <span className='text-section-title !text-[20px]'>发布门禁</span>
+    <Card className='group h-[560px] min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-cyan-300/25 xl:h-[560px]'>
+      <CardContent className='relative flex h-full flex-col p-4'>
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-label text-muted-foreground'>门禁评分</div>
           <ArtifactGateBadge score={score} />
         </div>
-        <ArtifactTrustScoreSourceBar
-          result={result}
-          source={scoreSource}
-          artifactName={artifactName}
-          attestationName={attestationName}
-        />
-        <div>
-          <div className={cn('text-metric', score >= 90 ? 'text-emerald-200' : 'text-red-200')}>{displayedScore}<span className='ml-2 text-xl text-muted-foreground'>/ 100</span></div>
-          <div className='mt-4 h-3 overflow-hidden rounded-full border border-white/10 bg-[color:var(--surface-inset)]'><motion.div className={cn('h-full rounded-full', score >= 90 ? 'bg-emerald-400' : 'bg-gradient-to-r from-red-500 to-orange-300')} initial={{ width: 0 }} animate={{ width: `${score}%` }} transition={{ duration: 0.85, ease: 'easeOut' }} /></div>
-          <div className='mt-4 text-body'>{score >= 90 ? '核心验证通过，可进入发布审批。' : '签名验签缺失且 attestation 超出策略时效，建议阻断发布。'}</div>
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
+            <motion.div
+              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
+              <motion.circle
+                cx='56'
+                cy='56'
+                r={radius}
+                className={cn('fill-none', tone.stroke)}
+                strokeWidth='8'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                initial={{ strokeDashoffset: circumference }}
+                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - clampedScore / 100) }}
+                transition={{ duration: 1.2, ease: 'easeOut' }}
+              />
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className={cn('text-metric text-5xl', tone.text)}>{displayedScore}</div>
+                <div className='mt-1 text-label'>门禁评分</div>
+              </div>
+            </div>
+          </div>
         </div>
         <div className='grid grid-cols-3 gap-2 text-center'>
-          <GateMetric label='失败' value={failCount} />
-          <GateMetric label='缺失' value={missingCount} />
-          <GateMetric label='警告' value={warnCount} />
+          {[
+            ['失败', failCount, 'text-red-100'],
+            ['缺失', missingCount, 'text-orange-100'],
+            ['警告', warnCount, 'text-amber-100'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
+              <div className='text-label'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {statusData.map((item) => (
+              <span
+                key={item.label}
+                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / statusTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
+            {statusData.map((item) => (
+              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
+            ))}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -8128,40 +8658,57 @@ function ArtifactGateOverviewCard({
 
 function ArtifactIssueList({
   checks,
+  totalCount,
   selectedCheck,
   onSelect,
 }: {
   checks: ArtifactTrustCheck[]
+  totalCount: number
   selectedCheck?: ArtifactTrustCheck
   onSelect: (name: string) => void
 }) {
   return (
-    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
       <CardHeader className='pb-3'>
-        <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><ShieldAlert className='size-5 text-amber-300' />失败、缺失与警告项</CardTitle>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-2'>
+              <CardTitle className='text-section-title'>门禁项</CardTitle>
+              <span className='meta-chip'>{checks.length}/{totalCount}</span>
+            </div>
+            <div className='mt-1 truncate text-xs text-muted-foreground'>
+              {selectedCheck ? artifactCheckTitle(selectedCheck.name) : '产物可信门禁'}
+            </div>
+          </div>
+        </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className='min-h-0 flex-1'>
         {checks.length ? (
-          <div className='max-h-[430px] space-y-1.5 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+          <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
             {checks.map((check) => {
               const selected = check.name === selectedCheck?.name
+              const severity = check.severity ? normalizeSeverity(check.severity) : undefined
               return (
-                <button
+                <motion.button
                   key={check.name}
                   type='button'
+                  layout
                   onClick={() => onSelect(check.name)}
                   className={cn(
-                    'grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors',
+                    'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]',
                     selected
-                      ? 'border-cyan-300/45 bg-cyan-400/10 shadow-[inset_3px_0_0_rgba(34,211,238,0.75)]'
-                      : 'border-slate-400/12 bg-[color:var(--surface-inset)] hover:border-slate-300/30',
+                      ? 'border-cyan-300/35 bg-cyan-400/10'
+                      : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
                   )}
                 >
+                  {severity ? <SeverityPill severity={severity} /> : <span className='inline-flex h-[26px] min-w-[44px] items-center justify-center rounded-full border border-slate-300/20 px-2.5 text-[13px] font-bold text-muted-foreground'>信息</span>}
                   <span className='min-w-0 truncate text-sm font-semibold text-foreground' title={artifactCheckTitle(check.name)}>{artifactCheckTitle(check.name)}</span>
                   <span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span>
-                </button>
+                </motion.button>
               )
             })}
+            </div>
           </div>
         ) : (
           <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>未发现失败、缺失或警告项</div>
@@ -8180,11 +8727,11 @@ function ArtifactIssueDetailPanel({
 }) {
   if (!check) {
     return (
-      <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
+      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
         <CardHeader className='pb-3'>
-          <CardTitle className='flex items-center gap-2 text-section-title text-foreground'><FileSearch className='size-5 text-cyan-200' />风险属性</CardTitle>
+          <CardTitle className='min-w-0 truncate text-base text-foreground'>风险属性</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className='min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
           <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
             {totalCount ? '选择左侧条目查看属性。' : '当前没有需要处理的门禁项。'}
           </div>
@@ -8192,10 +8739,34 @@ function ArtifactIssueDetailPanel({
       </Card>
     )
   }
+  const detail = artifactCheckExplanation(check)
+  const severity = check.severity ? normalizeSeverity(check.severity) : undefined
+
   return (
-    <Card className='h-full min-w-0 rounded-md border-slate-400/15 bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.18)]'>
-      <CardContent className='space-y-3 p-5'>
-        <ArtifactDetailPanel detail={getIssueDetail(check)} />
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='min-w-0 truncate text-base text-foreground' title={artifactCheckTitle(check.name)}>
+          {artifactCheckTitle(check.name)}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+        <div className='flex flex-wrap gap-2'>
+          <span className={cn('inline-flex h-[26px] min-w-[44px] shrink-0 items-center justify-center rounded-full border px-2.5 text-[13px] font-bold leading-none', artifactCheckClass(check.status))}>
+            {artifactCheckLabel(check.status)}
+          </span>
+          {severity ? <SeverityPill severity={severity} /> : null}
+          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
+            Artifact Gate
+          </span>
+        </div>
+        <div className='grid gap-2 text-sm'>
+          <DetailRow label='状态' value={artifactCheckLabel(check.status)} />
+          <DetailRow label='风险等级' value={severity ? severityLabel(severity) : '信息'} />
+          <DetailRow label='关联检查' value={check.name} />
+        </div>
+        <CicdInfoBlock title='风险原因' text={detail.impact} />
+        <CicdInfoBlock title='关键证据' text={check.evidence || '-'} mono />
+        <CicdInfoBlock title='修复建议' text={detail.action} tone='action' />
       </CardContent>
     </Card>
   )
@@ -8685,64 +9256,43 @@ function applyMultimodalAuditToWorkspace(workspace: SecurityWorkspace, result: M
   }
 }
 
-function formatLocalTime(isoString: string) {
-  try {
-    const d = new Date(isoString)
-    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-  } catch { return isoString.slice(11, 16) }
+type DisplayedLogEvent = SecurityLogEvent & {
+  id?: string
+  evidence?: string
+  fingerprint?: string
+  dedupe_key?: string
+  occurrences?: number
+  realtime?: boolean
 }
 
-function LogTrendChart({ trend }: { trend: RealtimeLogTrendPoint[] }) {
-  const peak = useMemo(() => {
-    if (!trend.length) return null
-    let maxVal = 0; let maxBucket = ''
-    for (const t of trend) {
-      const total = (t.events ?? 0) + (t.findings ?? 0)
-      if (total > maxVal) { maxVal = total; maxBucket = t.bucket }
-    }
-    return maxVal > 0 ? formatLocalTime(maxBucket) : null
-  }, [trend])
+function logSourceLabel(source: LogAuditSource) {
+  if (source === 'web') return 'Web access'
+  if (source === 'app') return 'App log'
+  if (source === 'auth') return 'Auth log'
+  return '自动识别'
+}
 
-  return (
-    <div className='rounded-md border border-border bg-[color:var(--surface-card)] p-4'>
-      <div className='flex items-center justify-between'>
-        <span className='text-section-title !text-[20px]'>异常趋势与风险峰值</span>
-        {peak ? (
-          <span className='meta-chip-dark'>{peak} 峰值</span>
-        ) : (
-          <span className='text-xs text-muted-foreground'>等待实时数据</span>
-        )}
-      </div>
-      <div className='mt-3 h-[220px]'>
-        {trend.length > 0 ? (
-          <ResponsiveContainer width='100%' height='100%'>
-            <AreaChart data={trend}>
-              <CartesianGrid strokeDasharray='3 3' vertical={false} />
-              <XAxis
-                dataKey='bucket'
-                tickFormatter={formatLocalTime}
-                interval="preserveStartEnd"
-                tick={{ fontSize: 10 }}
-              />
-              <YAxis width={28} tick={{ fontSize: 10 }} />
-              <Tooltip
-                labelFormatter={(value) => {
-                  try { return new Date(String(value)).toLocaleString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) }
-                  catch { return String(value).replace('T', ' ').slice(0, 19) }
-                }}
-              />
-              <Area type='monotone' dataKey='events' name='事件' stroke='#22d3ee' fill='#22d3ee' fillOpacity={0.1} />
-              <Area type='monotone' dataKey='findings' name='风险' stroke='#fb7185' fill='#fb7185' fillOpacity={0.2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>
-            暂无趋势数据，上传日志文件后将显示实时时间轴
-          </div>
-        )}
-      </div>
-    </div>
-  )
+function runtimeRiskLevel(score: number): SecuritySeverity {
+  if (score >= 90) return 'critical'
+  if (score >= 75) return 'high'
+  if (score >= 55) return 'medium'
+  return 'low'
+}
+
+function logConfidencePercent(log: DisplayedLogEvent) {
+  const confidence = log.confidence ?? 0
+  return Math.round(confidence <= 1 ? confidence * 100 : confidence)
+}
+
+function logRecommendationText(log: DisplayedLogEvent) {
+  const text = `${log.signal} ${log.event} ${log.evidence}`.toLowerCase()
+  if (/外联|egress|dst_ip|beacon|connect/.test(text)) {
+    return '先核查访问来源与账号行为；对异常外联会话执行隔离，再结合敏感路径访问记录复核攻击链影响范围。'
+  }
+  if (/login|auth|401|403|爆破|失败/.test(text)) {
+    return '核查来源 IP、账号失败次数和登录窗口，必要时临时限制来源并复核账号凭据风险。'
+  }
+  return '复核日志上下文、请求来源和关联资产，确认是否需要阻断会话、隔离实例或补充运行期证据。'
 }
 
 function LogsPanel({
@@ -8759,41 +9309,19 @@ function LogsPanel({
   onScanned: (audit: LogAuditResult) => void
 }) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const logFileInputRef = useRef<HTMLInputElement>(null)
   const [source, setSource] = useState<LogAuditSource>('auto')
   const [scanning, setScanning] = useState(false)
   const [realtime, setRealtime] = useState<RealtimeLogPayload | null>(null)
   const [trend, setTrend] = useState<RealtimeLogTrendPoint[]>([])
   const [realtimeBusy, setRealtimeBusy] = useState(false)
+  const [baselineBusy, setBaselineBusy] = useState(false)
   const [activeLogEventId, setActiveLogEventId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
-  const displayedLogs: Array<
-    SecurityLogEvent & {
-      id?: string
-      evidence?: string
-      fingerprint?: string
-      dedupe_key?: string
-      occurrences?: number
-      realtime?: boolean
-    }
-  > = realtimeFindings.length
-    ? realtimeFindings.map((finding) => ({
-        id: finding.id,
-        time: finding.time,
-        source: finding.source,
-        event: finding.event,
-        severity: finding.severity,
-        signal: finding.signal,
-        confidence: finding.confidence,
-        evidence: finding.evidence,
-        fingerprint: finding.fingerprint,
-        dedupe_key: finding.dedupe_key,
-        occurrences: finding.occurrences,
-        realtime: true,
-      }))
-    : fileFindings.length
+  const displayedLogs: DisplayedLogEvent[] = fileFindings.length
       ? fileFindings.map((finding) => ({
         id: finding.id,
         time: finding.time,
@@ -8804,9 +9332,24 @@ function LogsPanel({
         confidence: finding.confidence,
         evidence: finding.evidence,
       }))
+    : realtimeFindings.length
+      ? realtimeFindings.map((finding) => ({
+          id: finding.id,
+          time: finding.time,
+          source: finding.source,
+          event: finding.event,
+          severity: finding.severity,
+          signal: finding.signal,
+          confidence: finding.confidence,
+          evidence: finding.evidence,
+          fingerprint: finding.fingerprint,
+          dedupe_key: finding.dedupe_key,
+          occurrences: finding.occurrences,
+          realtime: true,
+        }))
     : logs
 
-  const runtimeSeverity = (log: (typeof displayedLogs)[number]): SecuritySeverity => {
+  const runtimeSeverity = (log: DisplayedLogEvent): SecuritySeverity => {
     const raw = String(log.severity ?? '').toLowerCase()
     if (raw === 'critical' || raw === 'high' || raw === '严重' || raw === '高危') return 'high'
     if (raw === 'medium' || raw === '中危') return 'medium'
@@ -8826,6 +9369,27 @@ function LogsPanel({
     if (filteredLogs[0]) setActiveLogEventId(filteredLogs[0].id ?? `${filteredLogs[0].time}-${filteredLogs[0].event}`)
   }, [severityFilter])
 
+  const hasAuditResult = Boolean(audit)
+  const totalLogFiles = audit?.summary.file_count ?? auditFiles.length
+  const parsedEventCount = audit?.summary.parsed_events ?? realtime?.summary.event_count ?? logs.length
+  const findingCount = audit?.summary.finding_count ?? realtime?.summary.finding_count ?? displayedLogs.length
+  const runtimeRiskScore = audit?.summary.risk_score ?? realtime?.summary.risk_score ?? 0
+  const conclusionText = findingCount
+    ? activeLog
+      ? `发现 ${activeLog.signal} 相关运行期异常，可作为攻击链运行期印证证据。`
+      : '发现运行期风险事件，可结合日志上下文复核攻击链影响范围。'
+    : hasAuditResult
+      ? '已完成日志解析，当前未发现需要处置的运行期风险事件。'
+      : '上传应用日志、访问日志或鉴权日志后，系统会解析风险事件并生成运行期印证证据。'
+  const conclusionTags = findingCount && activeLog
+    ? [activeLog.source, activeLog.signal]
+    : hasAuditResult
+      ? ['已完成解析']
+      : ['等待日志文件']
+  const selectedLogFileCount = totalLogFiles || selectedFiles.length
+  const sourceName = logSourceLabel(source)
+  const canCreateBaseline = findingCount > 0
+
   async function refreshRealtimeLogs(showToast = true) {
     setRealtimeBusy(true)
     try {
@@ -8835,22 +9399,22 @@ function LogsPanel({
       ])
       setRealtime(eventsPayload)
       setTrend(trendPayload.trend ?? [])
-      if (showToast) toast.success(`实时日志已刷新，当前 ${eventsPayload.summary?.finding_count ?? 0} 项风险`)
+      if (showToast) toast.success(`日志状态已刷新，当前 ${eventsPayload.summary?.finding_count ?? 0} 项风险`)
     } catch (error) {
-      if (showToast) toast.error(error instanceof Error ? error.message : '实时日志刷新失败')
+      if (showToast) toast.error(error instanceof Error ? error.message : '日志状态刷新失败')
     } finally {
       setRealtimeBusy(false)
     }
   }
 
-  async function startLogScan() {
-    if (!selectedFiles.length) {
+  async function startLogScan(files = selectedFiles) {
+    if (!files.length) {
       toast.error('请选择至少一个日志文件')
       return
     }
     setScanning(true)
     try {
-      onScanned(await runLogAuditScan({ files: selectedFiles, source, workspaceId }))
+      onScanned(await runLogAuditScan({ files, source, workspaceId }))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '日志扫描失败')
     } finally {
@@ -8858,64 +9422,22 @@ function LogsPanel({
     }
   }
 
-  async function sendSampleRealtimeEvents() {
-    setRealtimeBusy(true)
-    try {
-      const base = new Date(Date.now() - 3 * 60 * 1000)
-      const denied = Array.from({ length: 22 }, (_, index) => ({
-        source: 'web',
-        timestamp: new Date(base.getTime() + index * 5000).toISOString(),
-        src_ip: '203.0.113.10',
-        method: 'GET',
-        path: '/login',
-        status: 401,
-        message: 'login failed',
-      }))
-      const sample = [
-        ...denied,
-        {
-          source: 'web',
-          timestamp: new Date(base.getTime() + 130000).toISOString(),
-          src_ip: '203.0.113.20',
-          method: 'GET',
-          path: '/admin/export?format=csv',
-          status: 200,
-          message: 'admin export requested',
-        },
-        {
-          source: 'web',
-          timestamp: new Date(base.getTime() + 135000).toISOString(),
-          src_ip: '203.0.113.21',
-          method: 'GET',
-          path: "/products?id=1%20union%20select%20sleep(5)",
-          status: 500,
-          message: 'SQL probe union select sleep(5)',
-        },
-        {
-          source: 'app',
-          timestamp: new Date(base.getTime() + 140000).toISOString(),
-          src_ip: '10.1.8.12',
-          dst_ip: '93.184.216.34',
-          message: 'payment worker outbound connect to 93.184.216.34 after deploy',
-        },
-      ]
-      const payload = await ingestRealtimeLogs({ events: sample })
-      setRealtime(payload)
-      const trendPayload = await loadRealtimeLogTrend('minute', 60)
-      setTrend(trendPayload.trend ?? [])
-      await onRealtimeChanged()
-      toast.success(`已发送 ${payload.accepted ?? sample.length} 条实时样例，发现 ${payload.summary?.finding_count ?? 0} 项风险`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : '实时样例发送失败')
-    } finally {
-      setRealtimeBusy(false)
-    }
+  async function handleLogFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (!files.length) return
+    setSelectedFiles(files)
+    await startLogScan(files)
   }
 
   async function createBaseline() {
-    setRealtimeBusy(true)
+    if (!canCreateBaseline) {
+      toast.error('当前没有可纳入基线的日志风险事件')
+      return
+    }
+    setBaselineBusy(true)
     try {
-      const payload = await createRealtimeLogBaseline('前端手动建立实时日志基线')
+      const payload = await createRealtimeLogBaseline('前端手动建立日志风险基线')
       setRealtime(payload)
       const trendPayload = await loadRealtimeLogTrend('minute', 60)
       setTrend(trendPayload.trend ?? [])
@@ -8924,7 +9446,7 @@ function LogsPanel({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '建立基线失败')
     } finally {
-      setRealtimeBusy(false)
+      setBaselineBusy(false)
     }
   }
 
@@ -8949,186 +9471,356 @@ function LogsPanel({
   void ignoreFinding
 
   return (
-    <div className={cn(moduleSplitGridClass, 'xl:grid-cols-[minmax(0,1fr)_420px]')}>
-      <div className={moduleMainColumnClass}>
-        <Card className={cn(moduleCardClass, 'overflow-hidden')}>
-          <CardHeader>
-            <div className='flex flex-wrap items-center justify-between gap-3'>
-              <div>
-                <CardTitle className='flex items-center gap-2 text-base'>
-                  <Search className='size-4 text-cyan-600' />
-                  日志异常识别
-                </CardTitle>
-              </div>
-              <div className='flex flex-wrap items-center gap-2'>
-                <Button size='sm' className={actionButtonClass} onClick={() => void sendSampleRealtimeEvents()} disabled={realtimeBusy}>
-                  {realtimeBusy ? <Loader2 className='animate-spin' /> : <Send />}
-                  发送实时样例
-                </Button>
-                <Button size='sm' className={actionButtonClass} onClick={() => void createBaseline()} disabled={realtimeBusy}>
-                  <ShieldCheck />
-                  建立基线
-                </Button>
-                <Select value={source} onValueChange={(value) => setSource(value as LogAuditSource)}>
-                  <SelectTrigger size='sm' className='w-[132px]'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='auto'>自动识别</SelectItem>
-                    <SelectItem value='web'>Web access</SelectItem>
-                    <SelectItem value='app'>App log</SelectItem>
-                    <SelectItem value='auth'>Auth log</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  type='file'
-                  multiple
-                  accept='.log,.txt,.json,.jsonl'
-                  className={cn('w-[260px]', fileInputClass)}
-                  onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
-                />
-                <Button size='sm' className={actionButtonClass} onClick={() => void startLogScan()} disabled={scanning || !selectedFiles.length}>
-                  {scanning ? <Loader2 className='animate-spin' /> : <FileSearch />}
-                  上传日志印证
-                </Button>
-                <Button
-                  size='sm'
-                  variant='outline'
-                  onClick={() => void refreshRealtimeLogs()}
-                  disabled={realtimeBusy}
-                >
-                  {realtimeBusy ? <Loader2 className='animate-spin' /> : <RefreshCw />}
-                  刷新实时
-                </Button>
-              </div>
+    <div className='space-y-4'>
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+        <div className='flex flex-wrap items-start justify-between gap-4'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-3'>
+              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+                <Search className='size-5' />
+              </span>
+              <h2 className='text-page-title text-page-title-on-dark'>日志运行期印证</h2>
             </div>
-          </CardHeader>
-          <CardContent className='space-y-4'>
-            <div className='grid gap-4 xl:grid-cols-[minmax(250px,30fr)_minmax(0,50fr)_minmax(220px,20fr)]'>
-              <div className='rounded-md border border-red-400/25 bg-red-950/20 p-5'><div className='text-section-title !text-[20px]'>运行期风险结论</div><div className='mt-4 text-metric text-red-200'>{realtime?.summary.risk_score ?? audit?.summary.risk_score ?? 0}</div><div className='mt-3 text-body'>发现敏感路径访问与异常外联 IP，可作为攻击链运行期印证证据。</div><div className='mt-4 flex flex-wrap gap-2'><span className='meta-chip-dark'>GET /admin/export</span><span className='meta-chip-dark'>异常外联 IP</span></div></div>
-              <LogTrendChart trend={trend ?? []} />
-              <div className='rounded-md border border-border bg-[color:var(--surface-inset)] p-5'><div className='text-section-title !text-[20px]'>实时管道</div>{['实时接入','本地缓冲','规则引擎','风险趋势'].map(item => <div key={item} className='mt-3 flex items-center justify-between text-body'><span>{item}</span><span className='size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.6)]' /></div>)}</div>
+            <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='meta-chip-dark'>{sourceName}</span>
+              <span className='meta-chip-dark'>{selectedLogFileCount} 日志文件</span>
+              <span className='meta-chip-dark'>{parsedEventCount} 解析事件</span>
+              <span className='meta-chip-dark'>{findingCount} 风险事件</span>
+              {realtime?.state.baseline ? <span className='meta-chip-dark'>基线 {realtime.state.baseline.finding_count ?? 0} 项</span> : null}
             </div>
-            <div className='grid gap-3 md:grid-cols-4'>
-              <AuditMetric label='实时事件' value={realtime?.summary.event_count ?? 0} tone='cyan' />
-              <AuditMetric label='实时风险' value={realtime?.summary.finding_count ?? 0} tone='orange' />
-              <AuditMetric label='忽略误报' value={realtime?.state.ignored_count ?? 0} tone='slate' />
-              <AuditMetric label='实时评分' value={realtime?.summary.risk_score ?? 0} tone='red' />
-            </div>
+          </div>
+          <div className='flex flex-wrap items-center justify-end gap-2'>
+            <Select value={source} onValueChange={(value) => setSource(value as LogAuditSource)}>
+              <SelectTrigger size='sm' className='h-8 w-[132px] rounded-md border-border bg-[color:var(--surface-inset)] text-foreground'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='auto'>自动识别</SelectItem>
+                <SelectItem value='web'>Web access</SelectItem>
+                <SelectItem value='app'>App log</SelectItem>
+                <SelectItem value='auth'>Auth log</SelectItem>
+              </SelectContent>
+            </Select>
+            <input
+              ref={logFileInputRef}
+              type='file'
+              multiple
+              accept='.log,.txt,.json,.jsonl'
+              className='hidden'
+              onChange={(event) => void handleLogFileChange(event)}
+            />
+            <Button size='sm' className={actionButtonClass} onClick={() => logFileInputRef.current?.click()} disabled={scanning}>
+              {scanning ? <Loader2 className='size-4 animate-spin' /> : <FileSearch className='size-4' />}
+              上传日志
+            </Button>
+            <Button size='sm' variant='outline' onClick={() => void refreshRealtimeLogs()} disabled={realtimeBusy}>
+              {realtimeBusy ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+              刷新状态
+            </Button>
+            <Button size='sm' variant='outline' onClick={() => void createBaseline()} disabled={baselineBusy || !canCreateBaseline}>
+              {baselineBusy ? <Loader2 className='size-4 animate-spin' /> : <ShieldCheck className='size-4' />}
+              建立基线
+            </Button>
+          </div>
+        </div>
+      </section>
 
-            {audit ? <div className='grid gap-3 md:grid-cols-4'>
-              <AuditMetric label='日志文件' value={audit.summary.file_count} tone='cyan' />
-              <AuditMetric label='解析事件' value={audit.summary.parsed_events} tone='slate' />
-              <AuditMetric label='风险事件' value={audit.summary.finding_count} tone='orange' />
-              <AuditMetric label='风险评分' value={audit.summary.risk_score} tone='red' />
-            </div> : null}
-
-            {realtime?.state.baseline ? (
-              <Badge variant='outline' className='w-fit rounded-md'>
-                基线 {realtime.state.baseline.finding_count ?? 0} 项 · {(realtime.state.baseline.created_at ?? '').slice(0, 16).replace('T', ' ')}
-              </Badge>
-            ) : null}
-
-            {auditFiles.length ? (
-              <div className='grid gap-2 md:grid-cols-2'>
-                {auditFiles.map((file) => (
-                  <div key={`${file.filename}-${file.source}`} className='rounded-md border px-3 py-2 text-xs'>
-                    <div className='font-medium'>{file.source}</div>
-                    <div className='truncate text-muted-foreground'>
-                      {file.filename} · {file.parsed_lines}/{file.total_lines}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <Card className={moduleCardClass}>
-          <CardHeader>
-            <div className='flex flex-wrap items-center justify-between gap-3'><CardTitle className='flex items-center gap-2 text-section-title !text-[20px]'>
-              <ShieldAlert className='size-4 text-red-600' />
-              运行期风险事件
-            </CardTitle><Select value={severityFilter} onValueChange={(value) => setSeverityFilter(value as SecuritySeverity | 'all')}><SelectTrigger size='sm' className='h-8 w-[112px]'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='all'>全部等级</SelectItem><SelectItem value='high'>高危</SelectItem><SelectItem value='medium'>中危</SelectItem><SelectItem value='low'>低危</SelectItem></SelectContent></Select></div>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>异常时间</TableHead>
-                  <TableHead>日志来源</TableHead>
-                  <TableHead>风险事件</TableHead>
-                  <TableHead>置信度</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredLogs.map((log) => (
-                  <TableRow key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`} onClick={() => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)} className={cn('cursor-pointer transition-colors hover:bg-[color:var(--surface-inset)]', activeLog === log && 'bg-cyan-400/10')}>
-                    <TableCell className='w-[170px] whitespace-nowrap font-mono text-xs text-muted-foreground'>{log.time}</TableCell>
-                    <TableCell>
-                      <Badge variant='outline' className='rounded-md'>
-                        {log.source}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className='max-w-0'><div className='truncate text-base font-semibold text-foreground' title={log.event}>{log.event}</div><div className='mt-1'><Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(log)])}>{log.signal}</Badge></div></TableCell>
-                    <TableCell className='w-[90px] text-right text-lg font-bold text-foreground'>{Math.round((log.confidence ?? 0) * 100)}%</TableCell>
-                  </TableRow>
-                ))}
-                {!filteredLogs.length ? (
-                  <TableRow>
-                    <TableCell colSpan={4} className='h-24 text-center text-sm text-muted-foreground'>
-                      暂无符合条件的运行期风险事件
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className={moduleSidebarColumnClass}>
-        <Card className={cn(moduleCardClass, 'min-h-[620px]')}>
-          <CardHeader className='pb-3'>
-            <CardTitle className='text-section-title !text-[20px]'>当前事件详情</CardTitle>
-          </CardHeader>
-          <CardContent className='flex h-full flex-col space-y-4 p-5'>
-            {activeLog ? (
-              <>
-                <div className='text-risk-title leading-tight'>{activeLog.event}</div>
-                <div className='flex flex-wrap gap-2'>
-                  <Badge variant='outline' className={cn('rounded-full', severityClasses[runtimeSeverity(activeLog)])}>
-                    {activeLog.signal}
-                  </Badge>
-                  <span className='meta-chip-dark'>{Math.round((activeLog.confidence ?? 0) * 100)}%</span>
-                </div>
-                <div className='grid gap-2'>
-                  {[
-                    ['日志来源', activeLog.source],
-                    ['异常时间', activeLog.time],
-                    ['攻击链节点', activeLog.signal],
-                  ].map(([label, value]) => (
-                    <div key={label} className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-400/10 px-4 py-3'>
-                      <span className='text-label whitespace-nowrap'>{label}</span>
-                      <span className='min-w-0 break-words text-right text-value' title={value}>{value}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className='code-evidence min-w-0 whitespace-pre-wrap break-words px-4 py-3 leading-6' title={activeLog.evidence}>
-                  {activeLog.evidence || '未提供证据片段'}
-                </div>
-                <div className='action-advice mt-auto p-5'>
-                  <div className='font-bold'>建议处理</div>
-                  <div className='mt-2 leading-7'>先核查访问来源与账号行为；对异常外联会话执行隔离，再结合敏感路径访问记录复核攻击链影响范围。</div>
-                </div>
-              </>
-            ) : (
-              <div className='text-body'>当前筛选下无风险事件。</div>
-            )}
-          </CardContent>
-        </Card>
+      <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
+        <LogRiskOverviewCard
+          score={runtimeRiskScore}
+          files={selectedLogFileCount}
+          parsedEvents={parsedEventCount}
+          findingCount={findingCount}
+          logs={displayedLogs}
+          conclusionText={conclusionText}
+          conclusionTags={conclusionTags}
+          runtimeSeverity={runtimeSeverity}
+        />
+        <LogEventListCard
+          logs={filteredLogs}
+          totalCount={displayedLogs.length}
+          activeLog={activeLog}
+          severityFilter={severityFilter}
+          onSeverityFilter={setSeverityFilter}
+          onSelect={(log) => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)}
+          runtimeSeverity={runtimeSeverity}
+        />
+        <LogEventDetailWorkbench
+          log={activeLog}
+          totalCount={filteredLogs.length}
+          runtimeSeverity={runtimeSeverity}
+        />
       </div>
     </div>
+  )
+}
+
+function LogRiskOverviewCard({
+  score,
+  files,
+  parsedEvents,
+  findingCount,
+  logs,
+  conclusionText,
+  conclusionTags,
+  runtimeSeverity,
+}: {
+  score: number
+  files: number
+  parsedEvents: number
+  findingCount: number
+  logs: DisplayedLogEvent[]
+  conclusionText: string
+  conclusionTags: string[]
+  runtimeSeverity: (log: DisplayedLogEvent) => SecuritySeverity
+}) {
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  const clampedScore = Math.max(0, Math.min(100, score))
+  const riskLevel = runtimeRiskLevel(score)
+  const tone = riskGaugeTone(riskLevel)
+  const reducedMotion = useReducedMotion()
+  const { value: displayScore } = useAnimatedNumber(score, {
+    stiffness: 90,
+    damping: 18,
+    delayMs: 120,
+    durationMs: 1500,
+    respectReducedMotion: false,
+    resetKey: `${score}-${findingCount}-${parsedEvents}`,
+  })
+  const severityData = [
+    { label: '高危', value: logs.filter((log) => runtimeSeverity(log) === 'high').length, color: 'bg-red-400' },
+    { label: '中危', value: logs.filter((log) => runtimeSeverity(log) === 'medium').length, color: 'bg-amber-300' },
+    { label: '低危', value: logs.filter((log) => runtimeSeverity(log) === 'low').length, color: 'bg-cyan-300' },
+  ]
+  const severityTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
+
+  return (
+    <Card className='group h-[560px] min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-cyan-300/25 xl:h-[560px]'>
+      <CardContent className='relative flex h-full flex-col p-4'>
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-label text-muted-foreground'>风险评分</div>
+          <SeverityPill severity={riskLevel} />
+        </div>
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
+            <motion.div
+              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
+              <motion.circle
+                cx='56'
+                cy='56'
+                r={radius}
+                className={cn('fill-none', tone.stroke)}
+                strokeWidth='8'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                initial={{ strokeDashoffset: circumference }}
+                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - clampedScore / 100) }}
+                transition={{ duration: 1.2, ease: 'easeOut' }}
+              />
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className={cn('text-metric text-5xl', tone.text)}>{displayScore}</div>
+                <div className='mt-1 text-label'>风险评分</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className='mb-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2'>
+          <div className='line-clamp-2 text-xs leading-5 text-muted-foreground' title={conclusionText}>{conclusionText}</div>
+          <div className='mt-2 flex flex-wrap gap-1.5'>
+            {conclusionTags.slice(0, 2).map((tag) => <span key={tag} className='meta-chip'>{tag}</span>)}
+          </div>
+        </div>
+        <div className='grid grid-cols-3 gap-2'>
+          {[
+            ['日志文件', files, 'text-cyan-100'],
+            ['解析事件', parsedEvents, 'text-slate-100'],
+            ['风险事件', findingCount, 'text-orange-100'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
+              <div className='text-label'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {severityData.map((item) => (
+              <span
+                key={item.label}
+                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / severityTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
+            {severityData.map((item) => (
+              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
+            ))}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function LogEventListCard({
+  logs,
+  totalCount,
+  activeLog,
+  severityFilter,
+  onSeverityFilter,
+  onSelect,
+  runtimeSeverity,
+}: {
+  logs: DisplayedLogEvent[]
+  totalCount: number
+  activeLog?: DisplayedLogEvent
+  severityFilter: SecuritySeverity | 'all'
+  onSeverityFilter: (value: SecuritySeverity | 'all') => void
+  onSelect: (log: DisplayedLogEvent) => void
+  runtimeSeverity: (log: DisplayedLogEvent) => SecuritySeverity
+}) {
+  return (
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
+      <CardHeader className='pb-3'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-2'>
+              <CardTitle className='text-section-title'>运行期风险事件</CardTitle>
+              <span className='meta-chip'>{logs.length}/{totalCount}</span>
+            </div>
+            <div className='mt-1 truncate text-xs text-muted-foreground'>
+              {activeLog ? activeLog.event : '日志印证'}
+            </div>
+          </div>
+          <Select value={severityFilter} onValueChange={(value) => onSeverityFilter(value as SecuritySeverity | 'all')}>
+            <SelectTrigger size='sm' className='h-7 min-w-[104px] rounded-md border-border bg-[color:var(--surface-inset)] text-foreground'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部等级</SelectItem>
+              <SelectItem value='high'>高危</SelectItem>
+              <SelectItem value='medium'>中危</SelectItem>
+              <SelectItem value='low'>低危</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+      <CardContent className='min-h-0 flex-1'>
+        {logs.length ? (
+          <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
+              {logs.map((log) => {
+                const selected = (log.id ?? `${log.time}-${log.event}`) === (activeLog?.id ?? `${activeLog?.time}-${activeLog?.event}`)
+                return (
+                  <motion.button
+                    key={`${log.time}-${log.event}-${log.signal}-${log.fingerprint ?? ''}`}
+                    type='button'
+                    layout
+                    onClick={() => onSelect(log)}
+                    className={cn(
+                      'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]',
+                      selected
+                        ? 'border-cyan-300/35 bg-cyan-400/10'
+                        : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
+                    )}
+                  >
+                    <SeverityPill severity={runtimeSeverity(log)} />
+                    <div className='min-w-0'>
+                      <div className='truncate text-sm font-semibold text-foreground' title={log.event}>{log.event}</div>
+                      <div className='mt-0.5 truncate text-[11px] text-muted-foreground' title={`${log.source} · ${log.time}`}>
+                        {log.source} · {log.time}
+                      </div>
+                    </div>
+                    <span className='meta-chip tabular-nums'>{logConfidencePercent(log)}%</span>
+                  </motion.button>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>暂无符合条件的运行期风险事件</div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function LogEvidenceBlock({ text }: { text: string }) {
+  return (
+    <div className='min-w-0 overflow-hidden rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
+      <div className='mb-2 text-sm font-bold text-[color:var(--type-body)]'>关键证据</div>
+      <pre
+        className='max-h-[220px] min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-md border border-cyan-300/25 bg-[color:var(--surface-panel)] px-3 py-2 font-mono text-xs font-semibold leading-5 text-cyan-50 [overflow-wrap:anywhere] [scrollbar-width:thin]'
+        title={text}
+      >
+        {text}
+      </pre>
+    </div>
+  )
+}
+
+function LogEventDetailWorkbench({
+  log,
+  totalCount,
+  runtimeSeverity,
+}: {
+  log?: DisplayedLogEvent
+  totalCount: number
+  runtimeSeverity: (log: DisplayedLogEvent) => SecuritySeverity
+}) {
+  if (!log) {
+    return (
+      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
+        <CardHeader className='pb-3'>
+          <CardTitle className='min-w-0 truncate text-base text-foreground'>当前事件详情</CardTitle>
+        </CardHeader>
+        <CardContent className='min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
+            {totalCount ? '选择左侧事件查看日志证据。' : '当前筛选下无风险事件。'}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const severity = runtimeSeverity(log)
+  return (
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='min-w-0 truncate text-base text-foreground' title={log.event}>
+          {log.event}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+        <div className='flex flex-wrap gap-2'>
+          <SeverityPill severity={severity} />
+          <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs font-medium text-orange-100'>
+            {log.signal}
+          </span>
+          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
+            {logConfidencePercent(log)}%
+          </span>
+        </div>
+        <div className='grid gap-2 text-sm'>
+          <DetailRow label='日志来源' value={log.source || '-'} />
+          <DetailRow label='异常时间' value={log.time || '-'} />
+          <DetailRow label='攻击节点' value={log.signal || '-'} />
+        </div>
+        <LogEvidenceBlock text={log.evidence || '未提供证据片段'} />
+        <CicdInfoBlock title='建议处理' text={logRecommendationText(log)} tone='action' />
+      </CardContent>
+    </Card>
   )
 }
 
@@ -13436,7 +14128,7 @@ function CopilotPanel({
   workspace,
   question,
   setQuestion,
-  answer,
+  messages,
   busy,
   onSubmit,
   onWorkspaceUpdated,
@@ -13444,24 +14136,18 @@ function CopilotPanel({
   workspace: SecurityWorkspace
   question: string
   setQuestion: (value: string) => void
-  answer: SecurityAssistantResponse | null
+  messages: SecurityAssistantResponse[]
   busy: boolean
   onSubmit: () => void
   onWorkspaceUpdated: (workspace: SecurityWorkspace) => void
 }) {
   const assistant = getAssistantPayload(workspace)
-  const retrieval = answer?.retrieval?.length ? answer.retrieval : assistant.retrieval
-  const nextActions = answer?.next_actions?.length ? answer.next_actions : assistant.next_actions
-  const modelName = answer?.model || 'demo-rag-security-analyst'
-  const graphRag = answer?.graph_rag ?? assistant.graph_rag ?? null
+  const latestMessage = messages[messages.length - 1]
+  const retrieval = latestMessage?.retrieval?.length ? latestMessage.retrieval : assistant.retrieval
+  const nextActions = latestMessage?.next_actions?.length ? latestMessage.next_actions : assistant.next_actions
+  const modelName = latestMessage?.model || 'demo-rag-security-analyst'
+  const graphRag = latestMessage?.graph_rag ?? assistant.graph_rag ?? null
   const hasDeepseek = modelName.toLowerCase().includes('deepseek')
-  const promptSuggestions = [
-    '解释本次 Agent 为什么判定存在供应链攻击风险',
-    '当前攻击路径最薄弱的证据是什么？',
-    '哪些证据能证明这不是误报？',
-    '把下一步处置按优先级列出来',
-    assistant.default_question,
-  ].filter(Boolean)
 
   return (
     <div className='space-y-4'>
@@ -13473,7 +14159,7 @@ function CopilotPanel({
           <div className='flex flex-wrap items-center justify-between gap-3'>
             <div className='flex items-center gap-3'>
               <div className='grid size-10 place-items-center rounded-md border bg-background shadow-sm'>
-                <Bot className='size-5 text-cyan-600' />
+                <SecurityAiIcon className='size-8 text-cyan-500' />
               </div>
               <div>
                 <CardTitle className='flex items-center gap-2 text-base'>
@@ -13489,33 +14175,31 @@ function CopilotPanel({
         <CardContent className='p-0'>
           <ScrollArea className='h-[560px] min-h-[420px] max-h-[58svh]'>
             <div className='mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-5 sm:px-6'>
-              <CopilotMessage
-                role='assistant'
-                title='SupplyGuard KG'
-                icon={<Bot className='size-4' />}
-              >
-                <CopilotMarkdown text={assistant.answer} />
-              </CopilotMessage>
-
-              {answer ? (
-                <>
+              {messages.length ? (
+                messages.map((message, index) => (
+                  <Fragment key={`${message.question}-${index}`}>
                   <CopilotMessage
                     role='user'
                     title='你'
                     icon={<User className='size-4' />}
                   >
-                    <p>{answer.question}</p>
+                    <p>{message.question}</p>
                   </CopilotMessage>
                   <CopilotMessage
                     role='assistant'
                     title='安全分析'
-                    icon={<BrainCircuit className='size-4' />}
-                    action={<CopyAnswerButton text={answer.answer} />}
+                    icon={<SecurityAiIcon className='size-7' />}
+                    action={<CopyAnswerButton text={message.answer} />}
                   >
-                    <CopilotMarkdown text={answer.answer} />
+                    <CopilotMarkdown text={message.answer} />
                   </CopilotMessage>
-                </>
-              ) : null}
+                  </Fragment>
+                ))
+              ) : (
+                <div className='rounded-md border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground'>
+                  暂无对话记录。发送问题后，这里会保留本项目的问答历史。
+                </div>
+              )}
 
               {busy ? (
                 <div className='flex items-center gap-3 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground'>
@@ -13527,42 +14211,14 @@ function CopilotPanel({
           </ScrollArea>
 
           <div className='border-t bg-background px-4 py-3'>
-            <div className='mx-auto w-full max-w-4xl space-y-2.5'>
-              <div className='flex flex-wrap gap-2'>
-                {promptSuggestions.map((prompt) => (
-                  <Button
-                    key={prompt}
-                    variant='outline'
-                    size='sm'
-                    className='h-8 rounded-md text-xs'
-                    onClick={() => setQuestion(prompt)}
-                  >
-                    <MessageSquare className='size-3.5' />
-                    {prompt}
-                  </Button>
-                ))}
-              </div>
-              <div className='rounded-md border bg-muted/20 p-2 shadow-sm'>
-                <Textarea
-                  value={question}
-                  onChange={(event) => setQuestion(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      onSubmit()
-                    }
-                  }}
-                  placeholder='询问风险原因、攻击链路、修复优先级或误报可能性'
-                  className='min-h-14 resize-none border-0 bg-transparent px-2 py-2 text-sm shadow-none focus-visible:ring-0'
-                />
-                <div className='flex items-center justify-end gap-3 border-t px-2 pt-2'>
-                  <Button onClick={onSubmit} disabled={busy || !question.trim()} className={cn('rounded-md', actionButtonClass)}>
-                    {busy ? <Loader2 className='animate-spin' /> : <Send />}
-                    分析
-                  </Button>
-                </div>
-              </div>
-            </div>
+            <AssistantComposer
+              value={question}
+              onChange={setQuestion}
+              onSubmit={onSubmit}
+              busy={busy}
+              placeholder='继续追问证据链、攻击路径、修复顺序或误报可能性'
+              compact
+            />
           </div>
         </CardContent>
       </Card>
@@ -13631,7 +14287,7 @@ function CopilotMessage({
   return (
     <div className={cn('flex gap-3', role === 'user' && 'justify-end')}>
       {role === 'assistant' ? (
-        <div className='grid size-9 shrink-0 place-items-center rounded-md border bg-background text-cyan-600 shadow-sm'>
+        <div className='grid size-12 shrink-0 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-sky-400 shadow-[inset_0_0_18px_rgba(34,211,238,0.12),0_10px_28px_rgba(2,6,23,0.22)]'>
           {icon}
         </div>
       ) : null}

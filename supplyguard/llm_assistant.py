@@ -26,6 +26,20 @@ DEEPSEEK_SYSTEM_PROMPT = (
     "\u5e76\u5efa\u8bae\u4e0b\u4e00\u6b65\u9a8c\u8bc1\u3002"
 )
 
+DEEPSEEK_INVESTIGATION_AGENT_PROMPT = (
+    "你是 SupplyGuard KG 的安全调查 Agent 规划器。\n"
+    "你的职责是基于后端已经生成的 investigationAgent 状态，用中文解释调查计划、"
+    "证据缺口、下一步动作和报告结论。\n"
+    "严格限制：\n"
+    "- 你不能要求执行任意 shell 命令，不能编造不存在的扫描器。\n"
+    "- 底层扫描只能由后端已注册工具完成：code_audit、dependency_audit、"
+    "cicd_audit、artifact_trust、log_audit、multimodal_audit、workspace_report。\n"
+    "- 如果需要继续调查，只能建议调用这些工具或补充对应材料。\n"
+    "- 不要编造工作空间里没有的 CVE、IP、commit、文件路径或扫描结论。\n"
+    "- 如果证据不足，要明确说明缺口、缺口作用和下一步补证顺序。\n"
+    "输出要求：先给直接结论，再给规划/解释，最后给可执行下一步。"
+)
+
 
 def deepseek_enabled() -> bool:
     return bool(DEEPSEEK_API_KEY)
@@ -82,6 +96,65 @@ async def ask_deepseek_security_assistant(
     }
 
 
+async def ask_deepseek_investigation_agent(
+    question: str,
+    workspace: dict[str, Any],
+    investigation: dict[str, Any],
+) -> dict[str, Any] | None:
+    """用大模型解释规则 Agent 状态，但不让大模型直接执行底层扫描。"""
+
+    if not deepseek_enabled():
+        return None
+
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": DEEPSEEK_INVESTIGATION_AGENT_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "请基于当前调查状态回答用户问题。\n\n"
+                    f"用户问题：{question}\n\n"
+                    "可用后端工具：\n"
+                    "- code_audit：代码审查\n"
+                    "- dependency_audit：供应链/SBOM/VEX 分析\n"
+                    "- cicd_audit：CI/CD 链路分析\n"
+                    "- artifact_trust：产物可信和 provenance/attestation 验证\n"
+                    "- log_audit：构建/运行日志印证\n"
+                    "- multimodal_audit：截图、录屏、语音、人工文本证据\n"
+                    "- workspace_report：图谱与报告生成\n\n"
+                    "调查状态与工作空间摘要：\n"
+                    f"{build_investigation_context(workspace, investigation)}"
+                ),
+            },
+        ],
+        "thinking": {"type": "disabled"},
+        "temperature": 0.2,
+        "max_tokens": 1000,
+    }
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=DEEPSEEK_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            f"{DEEPSEEK_BASE_URL}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+        response.raise_for_status()
+
+    data = response.json()
+    content = extract_chat_content(data)
+    if not content:
+        return None
+    return {
+        "answer": content,
+        "model": str(data.get("model") or DEEPSEEK_MODEL),
+    }
+
+
 def build_assistant_context(
     workspace: dict[str, Any],
     retrieval: list[str],
@@ -111,6 +184,29 @@ def build_assistant_context(
             "top_edges": safe_slice(graph_rag.get("top_edges"), limit=6),
             "top_attack_paths": safe_slice(graph_rag.get("top_attack_paths"), limit=3),
         }
+    return short_json(context, limit=12000)
+
+
+def build_investigation_context(workspace: dict[str, Any], investigation: dict[str, Any]) -> str:
+    context = {
+        "workspace": workspace.get("workspace"),
+        "summary": workspace.get("summary"),
+        "scan_suite": workspace.get("scanSuite"),
+        "investigation": {
+            "status": investigation.get("status"),
+            "goal": investigation.get("goal"),
+            "summary": investigation.get("summary"),
+            "modules": safe_slice(investigation.get("modules"), limit=10),
+            "evidenceGaps": safe_slice(investigation.get("evidenceGaps"), limit=8),
+            "nextActions": safe_slice(investigation.get("nextActions"), limit=8),
+            "questions": safe_slice(investigation.get("questions"), limit=6),
+        },
+        "top_findings": safe_slice(workspace.get("findings"), limit=6),
+        "attack_paths": safe_slice(
+            (workspace.get("graph") or {}).get("attack_paths") if isinstance(workspace.get("graph"), dict) else None,
+            limit=3,
+        ),
+    }
     return short_json(context, limit=12000)
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   motion, AnimatePresence, useReducedMotion, useSpring,
 } from 'motion/react'
@@ -104,6 +104,196 @@ function ToolDot({tools}:{tools:MultimodalAuditResult['tools']}){
   </UiTooltip>
 }
 
+function normalizeMultimodalRiskLevel(score: number, level?: string): SecuritySeverity {
+  if (level === 'critical' || level === 'high' || level === 'medium' || level === 'low') return level
+  if (score >= 90) return 'critical'
+  if (score >= 75) return 'high'
+  if (score >= 55) return 'medium'
+  return 'low'
+}
+
+function externalGaugeTone(severity: SecuritySeverity) {
+  if (severity === 'critical') return { glow: 'bg-red-500/10', pulse: 'bg-red-500/15', stroke: 'stroke-red-400', text: 'text-red-100' }
+  if (severity === 'high') return { glow: 'bg-orange-500/10', pulse: 'bg-orange-500/15', stroke: 'stroke-orange-400', text: 'text-orange-100' }
+  if (severity === 'medium') return { glow: 'bg-amber-500/10', pulse: 'bg-amber-500/15', stroke: 'stroke-amber-400', text: 'text-amber-100' }
+  return { glow: 'bg-emerald-500/10', pulse: 'bg-emerald-500/15', stroke: 'stroke-emerald-400', text: 'text-emerald-100' }
+}
+
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  const isTextValue = typeof value === 'string' || typeof value === 'number'
+  return (
+    <div className='grid min-w-0 grid-cols-[88px_minmax(0,1fr)] items-center gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2'>
+      <span className='whitespace-nowrap text-[12px] font-semibold text-muted-foreground'>{label}</span>
+      <div className='min-w-0 overflow-hidden text-right text-sm font-semibold text-[color:var(--type-body)]' title={isTextValue ? String(value) : undefined}>
+        {isTextValue ? <span className='block truncate'>{value}</span> : value}
+      </div>
+    </div>
+  )
+}
+
+function ExternalInfoBlock({
+  title,
+  children,
+  tone = 'default',
+}: {
+  title: string
+  children: ReactNode
+  tone?: 'default' | 'risk' | 'action'
+}) {
+  const toneClass =
+    tone === 'risk'
+      ? 'border-red-300/25 bg-red-500/10 text-red-50'
+      : tone === 'action'
+        ? 'border-cyan-300/30 bg-cyan-400/10 text-cyan-50'
+        : 'border-border bg-[color:var(--surface-inset)]'
+  const titleClass =
+    tone === 'risk'
+      ? 'text-red-100'
+      : tone === 'action'
+        ? 'text-cyan-100'
+        : 'text-[color:var(--type-body)]'
+  return (
+    <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', toneClass)}>
+      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', titleClass)}>
+        {tone === 'action' ? <ShieldCheck className='size-4' /> : null}
+        {title}
+      </div>
+      <div className='break-words text-sm leading-6 [overflow-wrap:anywhere]'>{children}</div>
+    </div>
+  )
+}
+
+function ExternalEvidenceBlock({ finding }: { finding: MultimodalFindingRow }) {
+  const snippet = finding.entities.find(entity => entity.evidence)?.evidence || finding.matched_keywords.join(' · ') || '未提供证据片段'
+  return (
+    <ExternalInfoBlock title='关键证据'>
+      <div className='space-y-3'>
+        {finding.matched_keywords.length > 0 && (
+          <div>
+            <div className='mb-1.5 text-[11px] text-muted-foreground'>命中关键词</div>
+            <div className='flex flex-wrap gap-1.5'>
+              {finding.matched_keywords.map(keyword => (
+                <span key={keyword} className='rounded-md border border-cyan-300/15 bg-cyan-400/10 px-2 py-0.5 font-mono text-[10px] text-cyan-100'>{keyword}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        {finding.entities.length > 0 && (
+          <div>
+            <div className='mb-1.5 text-[11px] text-muted-foreground'>关联实体</div>
+            <div className='flex flex-wrap gap-1.5'>
+              {finding.entities.map((entity, index) => (
+                <span key={`${entity.type}-${entity.value}-${index}`} className={cn('rounded-md border px-2 py-0.5 text-[10px] font-semibold', eColor(entity.type).border, eColor(entity.type).bg)}>
+                  {tLabel(entity.type)}:<span className='ml-1 font-mono'>{entity.value}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <pre className='max-h-[170px] min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-md border border-cyan-300/20 bg-[color:var(--surface-panel)] px-3 py-2 font-mono text-xs font-semibold leading-5 text-cyan-50 [overflow-wrap:anywhere] [scrollbar-width:thin]'>
+          {snippet}
+        </pre>
+      </div>
+    </ExternalInfoBlock>
+  )
+}
+
+function MultimodalRiskOverviewCard({
+  score,
+  level,
+  evidenceCount,
+  findingCount,
+  derivedCount,
+  findings,
+}: {
+  score: number
+  level: SecuritySeverity
+  evidenceCount: number
+  findingCount: number
+  derivedCount: number
+  findings: MultimodalFindingRow[]
+}) {
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  const reducedMotion = useReducedMotion()
+  const tone = externalGaugeTone(level)
+  const clampedScore = Math.max(0, Math.min(100, score))
+  const severityData = [
+    { label: '严重', value: findings.filter(f => f.severity === 'critical').length, color: 'bg-red-400' },
+    { label: '高危', value: findings.filter(f => f.severity === 'high').length, color: 'bg-orange-400' },
+    { label: '中危', value: findings.filter(f => f.severity === 'medium').length, color: 'bg-amber-300' },
+    { label: '低危', value: findings.filter(f => f.severity === 'low').length, color: 'bg-cyan-300' },
+  ]
+  const severityTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
+  return (
+    <Card className='group h-[560px] min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-cyan-300/25 xl:h-[560px]'>
+      <CardContent className='relative flex h-full flex-col p-4'>
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-[12px] font-semibold text-muted-foreground'>风险评分</div>
+          <SevBadge s={level} />
+        </div>
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
+            <motion.div
+              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
+              <motion.circle
+                cx='56'
+                cy='56'
+                r={radius}
+                className={cn('fill-none', tone.stroke)}
+                strokeWidth='8'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                initial={{ strokeDashoffset: circumference }}
+                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - clampedScore / 100) }}
+                transition={{ duration: 1.2, ease: 'easeOut' }}
+              />
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className={cn('text-5xl font-black tabular-nums tracking-tight', tone.text)}>{score}</div>
+                <div className='mt-1 text-[12px] font-semibold text-muted-foreground'>风险评分</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className='grid grid-cols-3 gap-2'>
+          {[
+            ['证据材料', evidenceCount, 'text-cyan-100'],
+            ['风险发现', findingCount, 'text-red-100'],
+            ['派生产物', derivedCount, 'text-amber-100'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
+              <div className='text-[12px] font-semibold text-muted-foreground'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {severityData.map((item) => (
+              <span
+                key={item.label}
+                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / severityTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px] font-semibold text-muted-foreground'>
+            {severityData.map((item) => <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>)}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ── Detail Sheet ── */
 function DetailSheet({evidence,open,onClose}:{evidence:MultimodalEvidence|null;open:boolean;onClose:()=>void}){
   const [tab,setTab]=useState('overview')
@@ -186,14 +376,18 @@ function MultimodalFindingNameList({
   onSourceFilterChange: (value: MultimodalSourceType | 'all') => void
   onClearEntityFilter: () => void
 }) {
-  return <Card className="surface-raised flex h-full min-h-[360px] flex-col">
-    <CardHeader className="shrink-0 space-y-3 pb-3">
-      <div className="flex items-center justify-between gap-3">
-        <CardTitle className="flex min-w-0 items-center gap-2 text-base font-bold tracking-tight">
-          <ShieldAlert className={cn('size-4 shrink-0', findings.some(f => f.severity === 'critical') ? 'text-red-400' : 'text-amber-400')} />
-          <span className="truncate">风险发现</span>
-          <Badge variant="outline" className="text-[11px]">{findings.length}</Badge>
-        </CardTitle>
+  return <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]">
+    <CardHeader className="shrink-0 pb-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className='min-w-0'>
+          <div className='flex items-center gap-2'>
+            <CardTitle className="text-section-title">风险发现</CardTitle>
+            <span className='meta-chip'>{findings.length}</span>
+          </div>
+          <div className='mt-1 truncate text-xs text-muted-foreground'>
+            {selectedKey ? findings.find(f => multimodalFindingKey(f) === selectedKey)?.title ?? '外部告警证据' : '外部告警证据'}
+          </div>
+        </div>
         {entityFilter && <Badge variant="secondary" className="shrink-0 gap-1 text-[11px]">
           实体:{entityFilter}
           <button type="button" onClick={onClearEntityFilter}><X className="size-3" /></button>
@@ -215,7 +409,7 @@ function MultimodalFindingNameList({
           })}
         </div>
         <Select value={sourceFilter} onValueChange={v => onSourceFilterChange(v as MultimodalSourceType | 'all')}>
-          <SelectTrigger className="h-7 w-24 text-[11px]"><SelectValue placeholder="全部类型" /></SelectTrigger>
+          <SelectTrigger className="h-7 w-24 rounded-md border-border bg-[color:var(--surface-inset)] text-[11px] text-foreground"><SelectValue placeholder="全部类型" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">全部</SelectItem>
             <SelectItem value="image">图像</SelectItem>
@@ -225,7 +419,9 @@ function MultimodalFindingNameList({
         </Select>
       </div>
     </CardHeader>
-    <CardContent className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pb-4 pr-2 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+    <CardContent className="min-h-0 flex-1">
+      <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+        <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
       <AnimatePresence mode="popLayout">
         {findings.length === 0 ? <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
           <ShieldCheck className="size-10 text-muted-foreground/20" />
@@ -243,14 +439,21 @@ function MultimodalFindingNameList({
             exit={{ opacity: 0, scale: .96, transition: { duration: .15 } }}
             transition={{ delay: Math.min(index * .015, .25), duration: .3, ease: [.16, 1, .3, 1] }}
             onClick={() => onSelect(key)}
-            className={cn('group relative w-full rounded-xl border p-3 text-left transition-all duration-300 hover:-translate-y-0.5 active:scale-[0.99]', selected ? 'border-cyan-400/35 bg-cyan-950/25 shadow-[0_0_22px_rgba(6,182,212,0.08)]' : 'border-border/40 surface-base hover:border-cyan-500/20')}
+            className={cn('grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]', selected ? 'border-cyan-300/35 bg-cyan-400/10' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]')}
           >
-            <div className={cn('absolute left-0 top-0 bottom-0 w-1 rounded-l-xl', finding.severity === 'critical' ? 'bg-red-500/50' : finding.severity === 'high' ? 'bg-orange-500/40' : finding.severity === 'medium' ? 'bg-amber-500/35' : 'bg-emerald-500/35')} />
-            <div className="pl-3 text-sm font-bold leading-snug text-foreground">{finding.title}</div>
+            <SevBadge s={finding.severity} />
+            <div className='min-w-0'>
+              <div className="truncate text-sm font-semibold text-foreground" title={finding.title}>{finding.title}</div>
+              <div className='mt-0.5 truncate text-[11px] text-muted-foreground' title={`${finding.source_name} · ${finding.rule_id}`}>
+                {finding.source_name} · {finding.score}分
+              </div>
+            </div>
           </motion.button>
         })}
       </AnimatePresence>
       {findings.length > 25 && <div className="pt-3 text-center text-[11px] text-muted-foreground">显示前25条，共{findings.length}条。使用筛选缩小范围。</div>}
+        </div>
+      </div>
     </CardContent>
   </Card>
 }
@@ -269,84 +472,54 @@ function MultimodalFindingDetailPanel({
   onEntityFilter: (value: string) => void
 }) {
   if (!finding) {
-    return <Card className="surface-raised flex h-full min-h-[360px] flex-col">
-      <CardContent className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-        <ShieldCheck className="size-10 text-muted-foreground/20" />
-        选择一项风险后查看属性。
+    return <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]">
+      <CardHeader className='pb-3'>
+        <CardTitle className='min-w-0 truncate text-base text-foreground'>风险属性</CardTitle>
+      </CardHeader>
+      <CardContent className="min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+        <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
+          选择一项风险后查看属性。
+        </div>
       </CardContent>
     </Card>
   }
   const Icon = SRC_ICONS[finding.source_type]
-  return <Card className="surface-raised flex h-full min-h-[360px] flex-col">
+  return <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]">
     <CardHeader className="shrink-0 pb-3">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <CardTitle className="flex items-center gap-2 text-base font-bold tracking-tight">
-            <Siren className="size-4 text-red-400" />
-            风险属性
-          </CardTitle>
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-            <SevBadge s={finding.severity} pulse={finding.severity === 'critical'} />
-            <span className="font-mono">{finding.rule_id}</span>
-            <span>·</span>
-            <span>{finding.score}分</span>
-          </div>
-        </div>
+        <CardTitle className="min-w-0 truncate text-base text-foreground" title={finding.title}>
+          {finding.title}
+        </CardTitle>
         {evidence && <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1.5 text-[11px]" onClick={() => onOpenEvidence(finding)}>
           <Eye className="size-3.5" />
           原始材料
         </Button>}
       </div>
     </CardHeader>
-    <CardContent className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain pb-4 pr-2 [scrollbar-gutter:stable] [scrollbar-width:thin]">
-      <div className="rounded-xl border border-border/35 surface-base p-4">
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">风险名称</div>
-        <div className="mt-2 text-sm font-bold leading-relaxed">{finding.title}</div>
+    <CardContent className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+      <div className="flex flex-wrap gap-2">
+        <SevBadge s={finding.severity} pulse={finding.severity === 'critical'} />
+        <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
+          风险 {finding.score}
+        </span>
+        <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
+          {SRC_LABEL[finding.source_type]}
+        </span>
       </div>
-      <div className="rounded-xl border border-red-500/15 bg-red-950/15 p-4">
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-red-300">风险原因</div>
-        <p className="mt-2 text-sm leading-6 text-red-50/80">
+      <div className='grid gap-2 text-sm'>
+        <DetailRow label='来源' value={finding.source_name} />
+        <DetailRow label='规则' value={finding.rule_id} />
+        <DetailRow label='类型' value={SRC_LABEL[finding.source_type]} />
+      </div>
+      <ExternalInfoBlock title='风险原因' tone='risk'>
+        <p>
           外部告警材料触发 {SEV[finding.severity].label} 规则，说明截图、文本或告警内容中出现了与供应链攻击相关的异常行为或敏感线索。
         </p>
-      </div>
-      <div className="rounded-xl border border-cyan-500/15 surface-inset p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-cyan-300">关键证据</div>
-          <span className="flex items-center gap-1.5 rounded-full border border-border/35 px-2 py-0.5 text-[11px] text-muted-foreground">
-            <Icon className="size-3" />
-            {finding.source_name}
-          </span>
-        </div>
-        <div className="mt-3 space-y-3">
-          {finding.matched_keywords.length > 0 && <div>
-            <div className="mb-1.5 text-[11px] text-muted-foreground">命中关键词</div>
-            <div className="flex flex-wrap gap-1.5">{finding.matched_keywords.map(keyword => <span key={keyword} className="rounded-md border border-cyan-500/10 surface-base px-2 py-0.5 font-mono text-[10px] text-cyan-300">{keyword}</span>)}</div>
-          </div>}
-          {finding.entities.length > 0 && <div>
-            <div className="mb-1.5 text-[11px] text-muted-foreground">关联实体</div>
-            <div className="flex flex-wrap gap-1.5">
-              {finding.entities.map((entity, index) => <button
-                key={`${entity.type}-${entity.value}-${index}`}
-                type="button"
-                onClick={() => onEntityFilter(entity.value)}
-                className={cn('rounded-md border px-2 py-0.5 text-[10px] font-medium transition-all duration-200 hover:scale-[1.03] active:scale-[0.97]', entityFilter === entity.value ? 'border-cyan-400/50 bg-cyan-950/40 text-cyan-200' : eColor(entity.type).border + ' ' + eColor(entity.type).bg + ' text-foreground/70 hover:text-foreground')}
-              >
-                {tLabel(entity.type)}:<span className="font-bold">{entity.value}</span>
-              </button>)}
-            </div>
-          </div>}
-          {finding.entities.some(entity => entity.evidence) && <div>
-            <div className="mb-1.5 text-[11px] text-muted-foreground">证据片段</div>
-            <div className="rounded-lg border border-border/30 bg-black/20 px-3 py-2 font-mono text-[11px] leading-relaxed text-cyan-50/70">
-              {short(finding.entities.find(entity => entity.evidence)?.evidence, 260)}
-            </div>
-          </div>}
-        </div>
-      </div>
-      <div className="rounded-xl border border-amber-500/15 bg-amber-950/15 p-4">
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-300">修复建议</div>
-        <p className="mt-2 text-sm leading-6 text-amber-50/80">{finding.recommendation}</p>
-      </div>
+      </ExternalInfoBlock>
+      <ExternalEvidenceBlock finding={finding} />
+      <ExternalInfoBlock title='修复建议' tone='action'>
+        <p className='font-semibold'>{finding.recommendation}</p>
+      </ExternalInfoBlock>
     </CardContent>
   </Card>
 }
@@ -415,141 +588,143 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
   const handleDrop=(e:React.DragEvent)=>{e.preventDefault();e.stopPropagation();const fs=Array.from(e.dataTransfer.files??[]);if(fs.length){setFiles(fs);upload(fs)}}
 
   const hasEv=ev.length>0; const hasF=fRows.length>0
-  const riskLevel=(sum?.risk_level as string)||'low'; const riskScore=sum?.risk_score??0
+  const riskScore=sum?.risk_score??0
+  const riskLevel=normalizeMultimodalRiskLevel(riskScore, sum?.risk_level as string | undefined)
+  const evidenceCount=sum?.evidence_count??ev.length
+  const findingCount=fRows.length
+  const derivedCount=sum?.derived_count??ev.reduce((total,item)=>total+item.derived.length,0)
 
   const ani=rm?{}:{initial:{opacity:0,y:12},animate:{opacity:1,y:0},transition:{duration:.45,ease:[.16,1,.3,1]}}
 
   /* ── EMPTY / MAIN ── */
   return <>
-    {(!hasEv&&!uploading)?<motion.div {...ani} className="space-y-6">
-    {/* Upload zone: recessed tray */}
-    <div className="flex flex-col items-center gap-6 rounded-2xl surface-inset border-2 border-dashed border-border/50 bg-subtle-grid px-10 py-14 transition-all duration-500">
-      <motion.div className="flex size-16 items-center justify-center rounded-2xl bg-cyan-950/40 ring-1 ring-cyan-500/15" whileHover={{scale:1.04}} transition={{type:'spring',stiffness:300,damping:20}}>
-        <Upload className="size-7 text-cyan-400/80"/>
-      </motion.div>
-      <div className="text-center">
-        <h2 className="text-xl font-bold tracking-tight">外部告警证据工作台</h2>
-        <p className="mt-1.5 text-sm text-muted-foreground max-w-md">上传截图或粘贴文本 —— 自动 OCR 识别、实体抽取、规则命中</p>
+  {!hasEv && !uploading ? (
+    <motion.div {...ani} className="space-y-6">
+      <div
+        onDragOver={handleDO}
+        onDrop={handleDrop}
+        className="flex flex-col items-center gap-6 rounded-2xl border-2 border-dashed border-border/50 bg-subtle-grid px-10 py-14 transition-all duration-500 surface-inset"
+      >
+        <motion.div
+          className="flex size-16 items-center justify-center rounded-2xl bg-cyan-950/40 ring-1 ring-cyan-500/15"
+          whileHover={{scale:1.04}}
+          transition={{type:'spring',stiffness:300,damping:20}}
+        >
+          <Upload className="size-7 text-cyan-400/80"/>
+        </motion.div>
+        <div className="text-center">
+          <h2 className="text-xl font-bold tracking-tight">外部告警证据工作台</h2>
+          <p className="mt-1.5 max-w-md text-sm text-muted-foreground">上传截图或粘贴文本 —— 自动 OCR 识别、实体抽取、规则命中</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3 py-1"><ImageIcon className="size-3"/>图像</span>
+          <span className="flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3 py-1"><FileText className="size-3"/>文本</span>
+          <span className="text-muted-foreground/50">≤100 MB/文件</span>
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="flex cursor-pointer items-center gap-2 rounded-xl border border-cyan-500/25 bg-cyan-950/35 px-4 py-2 text-sm font-medium text-cyan-200 transition-all duration-300 hover:-translate-y-0.5 hover:border-cyan-400/50 hover:bg-cyan-900/50 hover:text-white hover:shadow-[0_0_20px_rgba(6,182,212,0.14)] active:translate-y-0 active:scale-[0.98]">
+              <Upload className="size-4"/>上传证据
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" className="w-40 border-cyan-500/15 surface-overlay">
+            <DropdownMenuItem onClick={() => fileInputRef.current?.click()} className="flex cursor-pointer items-center gap-2.5">
+              <Camera className="size-4 text-cyan-400"/>照片
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setTextDialogOpen(true)} className="flex cursor-pointer items-center gap-2.5">
+              <FileText className="size-4 text-cyan-400"/>输入文本
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={e=>{const fs=Array.from(e.target.files??[]);if(fs.length){setFiles(fs);upload(fs)}}}/>
       </div>
-      <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3 py-1"><ImageIcon className="size-3"/>图像</span>
-        <span className="flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3 py-1"><FileText className="size-3"/>文本</span>
-        <span className="text-muted-foreground/50">≤100 MB/文件</span>
-      </div>
-      {/* Unified dropdown button */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className={cn('flex cursor-pointer items-center gap-2 rounded-xl border border-cyan-500/25 bg-cyan-950/35 px-4 py-2 text-sm font-medium text-cyan-200 transition-all duration-300 hover:border-cyan-400/50 hover:bg-cyan-900/50 hover:text-white hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(6,182,212,0.14)] active:scale-[0.98] active:translate-y-0')}>
-            <Upload className="size-4"/>上传证据
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="center" className="w-40 surface-overlay border-cyan-500/15">
-          <DropdownMenuItem onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2.5 cursor-pointer">
-            <Camera className="size-4 text-cyan-400"/>照片
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setTextDialogOpen(true)} className="flex items-center gap-2.5 cursor-pointer">
-            <FileText className="size-4 text-cyan-400"/>输入文本
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={e=>{const fs=Array.from(e.target.files??[]);if(fs.length){setFiles(fs);upload(fs)}}}/>
-    </div>
-    {tools.length>0&&<div className="flex items-center justify-between rounded-lg surface-base px-4 py-2.5"><ToolDot tools={tools}/>{sum?.storage_relative_dir&&<span className="text-[11px] text-muted-foreground truncate max-w-xs">{sum.storage_relative_dir}</span>}</div>}
-  </motion.div>:<motion.div {...ani} className="space-y-5">
-    {/* ══ COMMAND BAR: recessed tray ══ */}
-    <div onDragOver={handleDO} onDrop={handleDrop} className={cn('relative rounded-2xl surface-inset px-5 py-3.5 flex flex-wrap items-center gap-3 transition-all duration-500',uploading&&'border-cyan-500/30 shadow-[0_0_28px_rgba(6,182,212,0.08)]')}>
-      {/* Upload btn: dropdown with two options */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className={cn('flex cursor-pointer items-center gap-2 rounded-xl border border-cyan-500/25 bg-cyan-950/35 px-4 py-2 text-sm font-medium text-cyan-200 transition-all duration-300 hover:border-cyan-400/50 hover:bg-cyan-900/50 hover:text-white hover:-translate-y-0.5 hover:shadow-[0_0_20px_rgba(6,182,212,0.14)] active:scale-[0.98] active:translate-y-0')}>
-            <Upload className="size-4"/>上传证据
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-40 surface-overlay border-cyan-500/15">
-          <DropdownMenuItem onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2.5 cursor-pointer">
-            <Camera className="size-4 text-cyan-400"/>照片
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setTextDialogOpen(true)} className="flex items-center gap-2.5 cursor-pointer">
-            <FileText className="size-4 text-cyan-400"/>输入文本
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={e=>{const fs=Array.from(e.target.files??[]);if(fs.length){setFiles(fs);upload(fs)}}}/>
-      <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-[11px] hover:-translate-y-0.5 transition-transform active:scale-[0.97]" onClick={refresh} disabled={refreshing}>{refreshing?<Loader2 className="size-3.5 animate-spin"/>:<RefreshCw className="size-3.5"/>}刷新</Button>
-      {files.length>0&&<motion.span initial={{opacity:0,scale:.9}} animate={{opacity:1,scale:1}} className="flex items-center gap-1.5 rounded-full border border-cyan-500/20 bg-cyan-950/30 px-3 py-1 text-[11px] text-cyan-300"><Loader2 className="size-3 animate-spin"/>{files.length} 个文件</motion.span>}
-      <div className="flex-1"/>
-      {tools.length>0&&<ToolDot tools={tools}/>}
-      <span className="flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/20 px-3 py-1 text-[11px] text-muted-foreground"><Images className="size-3"/>{ev.length} 证据</span>
-    </div>
-
-    {/* ══ RISK SCORE + FINDINGS + ATTRIBUTES: 3-column grid ══ */}
-    {(hasEv||hasF)&&<div className={cn('grid-cols-1 gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]', hasEv&&hasF?'grid items-stretch':'')}>
-      {/* Risk score card - left column */}
-      {hasEv&&<Card className="surface-raised flex flex-col">
-        <CardContent className="flex flex-1 flex-col items-center justify-center px-4 py-4">
-          <span className="text-[10px] font-medium uppercase tracking-widest text-muted-foreground">综合风险评分</span>
-          <div className="relative w-40 aspect-square my-3">
-            <svg className="absolute inset-0 -rotate-90 overflow-visible" viewBox="0 0 200 200">
-              <circle cx="100" cy="100" r="84" fill="none" stroke="currentColor" strokeWidth="7" className="text-border/8"/>
-              <circle cx="100" cy="100" r="84" fill="none" stroke="currentColor" strokeWidth="11" strokeLinecap="round"
-                strokeDasharray="528" strokeDashoffset={528-riskScore/100*528}
-                className={riskLevel==='critical'?'text-red-400':riskLevel==='high'?'text-orange-400':riskLevel==='medium'?'text-amber-400':'text-emerald-400'}
-                style={{filter:'blur(8px)',opacity:.35}}/>
-              <circle cx="100" cy="100" r="84" fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="round"
-                strokeDasharray="528" strokeDashoffset={528-riskScore/100*528}
-                className={cn(riskLevel==='critical'?'text-red-400 drop-shadow-[0_0_10px_currentColor]':riskLevel==='high'?'text-orange-400 drop-shadow-[0_0_10px_currentColor]':riskLevel==='medium'?'text-amber-400 drop-shadow-[0_0_10px_currentColor]':'text-emerald-400 drop-shadow-[0_0_10px_currentColor]')}/>
-            </svg>
-            <span className={cn('absolute inset-0 grid place-items-center text-[clamp(2.8rem,10cqi,5.6rem)] font-black tabular-nums tracking-tighter leading-none',riskLevel==='critical'?'text-red-400':riskLevel==='high'?'text-orange-400':riskLevel==='medium'?'text-amber-400':'text-emerald-400')}>{riskScore}</span>
+      {tools.length>0&&<div className="flex items-center justify-between rounded-lg px-4 py-2.5 surface-base"><ToolDot tools={tools}/>{sum?.storage_relative_dir&&<span className="max-w-xs truncate text-[11px] text-muted-foreground">{sum.storage_relative_dir}</span>}</div>}
+    </motion.div>
+  ) : (
+    <motion.div {...ani} className="space-y-4">
+      <section
+        onDragOver={handleDO}
+        onDrop={handleDrop}
+        className={cn('rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur', uploading && 'border-cyan-300/30')}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-3">
+              <span className="grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100">
+                <Images className="size-5" />
+              </span>
+              <h2 className="text-page-title text-page-title-on-dark">外部告警证据</h2>
+            </div>
+            <div className="mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent" />
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="meta-chip-dark">{evidenceCount} 证据</span>
+              <span className="meta-chip-dark">{findingCount} 风险发现</span>
+              <span className="meta-chip-dark">{derivedCount} 派生产物</span>
+              <span className="meta-chip-dark">{riskScore} 风险评分</span>
+            </div>
           </div>
-          <span className={cn('rounded-full px-3 py-0.5 text-[11px] font-bold',riskLevel==='critical'?'bg-red-950/50 text-red-300 ring-1 ring-red-500/25':riskLevel==='high'?'bg-orange-950/50 text-orange-300 ring-1 ring-orange-500/25':riskLevel==='medium'?'bg-amber-950/50 text-amber-300 ring-1 ring-amber-500/25':'bg-emerald-950/50 text-emerald-300 ring-1 ring-emerald-500/25')}>{riskLevel==='critical'?'严重风险':riskLevel==='high'?'高风险':riskLevel==='medium'?'中风险':'低风险'}</span>
-        </CardContent>
-      </Card>}
-      {hasF&&<MultimodalFindingNameList
-        findings={ff}
-        selectedKey={selectedFinding ? multimodalFindingKey(selectedFinding) : null}
-        severityFilter={sevF}
-        sourceFilter={srcF}
-        entityFilter={eFilt}
-        reducedMotion={rm}
-        onSelect={setSelectedFindingKey}
-        onSeverityFilterChange={setSevF}
-        onSourceFilterChange={setSrcF}
-        onClearEntityFilter={() => setEFilt(null)}
-      />}
-      {hasF&&<MultimodalFindingDetailPanel
-        finding={selectedFinding}
-        evidence={selectedFindingEvidence}
-        entityFilter={eFilt}
-        onOpenEvidence={(finding) => {
-          const source = ev.find(e => e.original_filename === finding.source_name && e.findings.some(item => item.id === finding.id))
-          if (source) setDetail(source)
-        }}
-        onEntityFilter={(value) => setEFilt(eFilt === value ? null : value)}
-      />}
-    </div>}
-
-
-
-
-    {/* ══ RAW DATA: recessed, collapsed ══ */}
-    <Collapsible open={rawOpen} onOpenChange={setRawOpen}>
-      <div className={cn('rounded-2xl surface-inset transition-all duration-300',rawOpen&&'border-cyan-500/10')}>
-        <CollapsibleTrigger asChild>
-          <button type="button" className={cn('flex w-full items-center justify-between px-5 py-3.5 text-left text-sm font-medium transition-all duration-200 hover:bg-white/[0.02] rounded-2xl',rawOpen&&'border-b border-border/30 rounded-b-none')}>
-            <span className="flex items-center gap-2.5"><span className="flex size-7 items-center justify-center rounded-lg bg-muted/30"><FileSearch className="size-3.5 text-muted-foreground"/></span><span>原始数据<span className="ml-2 text-[11px] text-muted-foreground font-normal">规则命中 · 派生产物 · 存储</span></span></span>
-            <ChevronRight className={cn('size-4 text-muted-foreground transition-transform duration-300',rawOpen&&'rotate-90')}/>
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent><div className="space-y-5 p-5">
-          {ev.some(e=>e.derived.length>0)&&<div><h4 className="mb-2.5 text-sm font-bold">派生产物</h4><div className="flex flex-wrap gap-2">{ev.flatMap(e=>e.derived.map((d,i)=><div key={`${e.evidence_id}-${i}`} className="flex items-center gap-2 rounded-md border border-border/30 bg-black/20 px-3 py-1.5 text-[11px]"><span className="font-medium">{d.kind}</span><span className="text-muted-foreground">via {d.tool}</span><span className="font-mono text-muted-foreground">{fmtBytes(d.size_bytes)}</span></div>))}</div></div>}
-          {fRows.length>0&&<div><h4 className="mb-2.5 text-sm font-bold">原始规则命中 ({fRows.length})</h4><div className="max-h-80 overflow-auto rounded-xl border border-border/30"><table className="w-full text-[11px]"><thead className="sticky top-0 z-10 bg-muted/60 backdrop-blur"><tr className="[&>th]:px-3 [&>th]:py-2 [&>th]:text-left [&>th]:font-medium [&>th]:text-muted-foreground"><th>等级</th><th>规则ID</th><th>关键词</th><th>来源</th><th className="text-right">分数</th></tr></thead><tbody className="divide-y divide-border/15">{fRows.map(f=><tr key={f.id} className="hover:bg-muted/15 transition-colors"><td className="px-3 py-2"><SevBadge s={f.severity}/></td><td className="px-3 py-2 font-mono">{f.rule_id}</td><td className="px-3 py-2 max-w-[200px] truncate font-mono text-muted-foreground" title={f.matched_keywords.join(', ')}>{f.matched_keywords.slice(0,3).join(', ')}{f.matched_keywords.length>3&&` +${f.matched_keywords.length-3}`}</td><td className="px-3 py-2 text-muted-foreground truncate max-w-[140px]">{f.source_name}</td><td className="px-3 py-2 text-right font-bold tabular-nums">{f.score}</td></tr>)}</tbody></table></div></div>}
-          {sum&&<div className="flex flex-wrap items-center gap-4 rounded-lg surface-inset px-4 py-3 text-[11px] text-muted-foreground"><span className="flex items-center gap-1.5"><Boxes className="size-3"/>存储:<span className="font-mono text-foreground/60">{sum.storage_relative_dir}</span></span><span>总大小:<span className="font-mono text-foreground/60">{fmtBytes(sum.total_size_bytes)}</span></span>{sum.duration_seconds&&<span>耗时:<span className="font-mono text-foreground/60">{sum.duration_seconds}s</span></span>}</div>}
-        </div></CollapsibleContent>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" className="border-primary/70 bg-primary text-primary-foreground shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-300 hover:-translate-y-0.5 hover:border-ring hover:bg-primary/90 hover:text-primary-foreground active:translate-y-0 active:scale-[0.98]">
+                  <Upload className="size-4" />
+                  上传证据
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40 surface-overlay border-cyan-500/15">
+                <DropdownMenuItem onClick={() => fileInputRef.current?.click()} className="flex cursor-pointer items-center gap-2.5">
+                  <Camera className="size-4 text-cyan-400" />照片
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTextDialogOpen(true)} className="flex cursor-pointer items-center gap-2.5">
+                  <FileText className="size-4 text-cyan-400" />输入文本
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <input ref={fileInputRef} type="file" multiple accept="image/*" className="hidden" onChange={e=>{const fs=Array.from(e.target.files??[]);if(fs.length){setFiles(fs);upload(fs)}}}/>
+            <Button variant="outline" size="sm" onClick={refresh} disabled={refreshing}>
+              {refreshing?<Loader2 className="size-4 animate-spin"/>:<RefreshCw className="size-4"/>}
+              刷新
+            </Button>
+            {tools.length>0&&<ToolDot tools={tools}/>}
+          </div>
+        </div>
+      </section>
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]">
+        <MultimodalRiskOverviewCard
+          score={riskScore}
+          level={riskLevel}
+          evidenceCount={evidenceCount}
+          findingCount={findingCount}
+          derivedCount={derivedCount}
+          findings={fRows}
+        />
+        <MultimodalFindingNameList
+          findings={ff}
+          selectedKey={selectedFinding ? multimodalFindingKey(selectedFinding) : null}
+          severityFilter={sevF}
+          sourceFilter={srcF}
+          entityFilter={eFilt}
+          reducedMotion={rm}
+          onSelect={setSelectedFindingKey}
+          onSeverityFilterChange={setSevF}
+          onSourceFilterChange={setSrcF}
+          onClearEntityFilter={() => setEFilt(null)}
+        />
+        <MultimodalFindingDetailPanel
+          finding={selectedFinding}
+          evidence={selectedFindingEvidence}
+          entityFilter={eFilt}
+          onOpenEvidence={(finding) => {
+            const source = ev.find(e => e.original_filename === finding.source_name && e.findings.some(item => item.id === finding.id))
+            if (source) setDetail(source)
+          }}
+          onEntityFilter={(value) => setEFilt(eFilt === value ? null : value)}
+        />
       </div>
-    </Collapsible>
+    </motion.div>
+  )}
 
-    {/* ══ LOADING OVERLAY ══ */}
-    <AnimatePresence>{uploading&&<motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+  <AnimatePresence>{uploading&&<motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
       <motion.div initial={{scale:.92,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:.95,opacity:0}} className="flex flex-col items-center gap-4 rounded-2xl surface-raised px-10 py-8">
         <motion.div animate={{rotate:360}} transition={{repeat:Infinity,duration:1.4,ease:'linear'}}><Loader2 className="size-10 text-cyan-400"/></motion.div>
         <span className="text-sm font-bold">正在处理证据</span>
@@ -557,8 +732,6 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
         <div className="flex gap-1.5">{[0,1,2].map(i=><motion.span key={i} className="size-2 rounded-full bg-cyan-500/40" animate={{opacity:[.3,1,.3],scale:[.8,1.2,.8]}} transition={{repeat:Infinity,duration:1.1,delay:i*.2}}/>)}</div>
       </motion.div>
     </motion.div>}</AnimatePresence>
-
-    </motion.div>}
   <DetailSheet evidence={detail} open={!!detail} onClose={()=>setDetail(null)}/>
   {/* ══ TEXT INPUT DIALOG ══ */}
   <Dialog open={textDialogOpen} onOpenChange={setTextDialogOpen}>
