@@ -1,0 +1,24 @@
+{
+  "conversationId": "conv_20260630_162438_eeef492c",
+  "title": "3CX X_TRADER replay",
+  "workspaceId": "ws_20260630_162438_647d2b3c",
+  "importId": "imp_ddee8a298247",
+  "projectName": "3CX X_TRADER replay",
+  "sourceType": "local",
+  "sourcePath": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo",
+  "createdAt": "2026-06-30T16:24:38.496211+00:00",
+  "updatedAt": "2026-06-30T16:24:38.496211+00:00",
+  "summary": {
+    "scanStatus": "low",
+    "riskScore": null,
+    "riskLevel": "preflight",
+    "attackPaths": null,
+    "dependencies": 0,
+    "findings": 0,
+    "preflightFiles": 11,
+    "preflightScannable": 7,
+    "dependencyFiles": 3,
+    "ciFiles": 1,
+    "primaryLanguage": "JSON"
+  }
+}

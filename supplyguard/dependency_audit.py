@@ -51,8 +51,8 @@ MAX_MANIFESTS = 300
 COMMAND_TIMEOUT_SECONDS = 45
 CDXGEN_TIMEOUT_SECONDS = 120
 OSV_TIMEOUT_SECONDS = 60
-SUPPORTED_MANIFESTS = {"package.json", "requirements.txt"}
-SUPPORTED_LOCKFILES = {"package-lock.json", "requirements.lock.txt"}
+SUPPORTED_MANIFESTS = {"gemfile", "package.json", "requirements.txt"}
+SUPPORTED_LOCKFILES = {"gemfile.lock", "package-lock.json", "requirements.lock.txt"}
 INSTALL_SCRIPT_NAMES = {"preinstall", "install", "postinstall", "prepare"}
 NPM_DEPENDENCY_FIELDS = {
     "dependencies": "runtime",
@@ -89,6 +89,7 @@ VENV_NAMES = {".venv", "venv", "env"}
 
 SOURCE_CODE_EXTENSIONS = {
     ".py",
+    ".rb",
     ".js",
     ".jsx",
     ".ts",
@@ -122,18 +123,22 @@ PYTHON_IMPORT_ALIASES = {
 SERVER_FRAMEWORK_PACKAGES = {
     "pypi": {"django", "fastapi", "flask", "starlette", "uvicorn"},
     "npm": {"@nestjs/core", "express", "fastify", "koa", "next"},
+    "rubygems": {"rails", "sinatra", "rack", "puma"},
 }
 AUTH_PACKAGES = {
     "pypi": {"authlib", "passlib", "pyjwt", "python-jose"},
     "npm": {"jsonwebtoken", "next-auth", "passport"},
+    "rubygems": {"devise", "jwt", "omniauth"},
 }
 HTTP_CLIENT_PACKAGES = {
     "pypi": {"aiohttp", "httpx", "requests", "urllib3"},
     "npm": {"axios", "got", "node-fetch", "request"},
+    "rubygems": {"faraday", "httparty", "rest-client"},
 }
 DESERIALIZATION_PACKAGES = {
     "pypi": {"pyyaml"},
     "npm": {"serialize-javascript"},
+    "rubygems": {"psych", "oj", "multi_json"},
 }
 CYCLONEDX_STATE_BY_VEX_STATUS = {
     "affected": "exploitable",
@@ -230,6 +235,22 @@ LOCAL_VULNERABILITIES: list[dict[str, str]] = [
         "severity": "medium",
         "summary": "Local demo policy flags older FastAPI ranges before 0.115.6.",
     },
+    {
+        "id": "LOCAL-DEMO-GEM-0001",
+        "ecosystem": "rubygems",
+        "name": "rack",
+        "affected": "<2.2.13",
+        "severity": "high",
+        "summary": "Local demo advisory for old Rack ranges.",
+    },
+    {
+        "id": "LOCAL-DEMO-GEM-0002",
+        "ecosystem": "rubygems",
+        "name": "rails",
+        "affected": "<7.0.8",
+        "severity": "medium",
+        "summary": "Local demo policy flags older Rails ranges before 7.0.8.",
+    },
 ]
 
 POPULAR_PACKAGES = {
@@ -269,6 +290,22 @@ POPULAR_PACKAGES = {
         "checkov",
         "pyyaml",
         "python-multipart",
+    },
+    "rubygems": {
+        "rails",
+        "rack",
+        "sinatra",
+        "puma",
+        "devise",
+        "nokogiri",
+        "sidekiq",
+        "faraday",
+        "httparty",
+        "jwt",
+        "rspec",
+        "rubocop",
+        "bundler",
+        "psych",
     },
 }
 
@@ -318,6 +355,17 @@ KNOWN_LICENSES = {
         "python-multipart": "Apache-2.0",
         "pyyaml": "MIT",
         "uvicorn": "BSD-3-Clause",
+    },
+    "rubygems": {
+        "bundler": "MIT",
+        "devise": "MIT",
+        "faraday": "MIT",
+        "nokogiri": "MIT",
+        "puma": "BSD-3-Clause",
+        "rack": "MIT",
+        "rails": "MIT",
+        "rspec": "MIT",
+        "sinatra": "MIT",
     },
 }
 
@@ -436,6 +484,7 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
         lockfiles.append(external_requirements_lock)
     requirements_locks = [path for path in lockfiles if path.name.lower() == "requirements.lock.txt"]
     package_locks = [path for path in lockfiles if path.name.lower() == "package-lock.json"]
+    gem_locks = [path for path in lockfiles if path.name.lower() == "gemfile.lock"]
 
     dependencies: list[DependencyRecord] = []
     if payload.mode != "sbom":
@@ -450,7 +499,7 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
     external_sboms: list[dict[str, Any]] = []
     if payload.mode in {"auto", "lockfile", "sbom"}:
         if payload.include_cdxgen:
-            for project_dir in node_project_dirs(target):
+            for project_dir in cdxgen_project_dirs(target):
                 result = run_cdxgen(project_dir, target, scan_id)
                 dependencies.extend(result.records)
                 warnings.extend(result.warnings)
@@ -475,6 +524,7 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
         osv_targets: list[Path] = []
         osv_targets.extend(package_locks)
         osv_targets.extend(requirements_locks)
+        osv_targets.extend(gem_locks)
         for sbom in external_sboms:
             sbom_path = write_temp_sbom(scan_id, sbom)
             osv_targets.append(sbom_path)
@@ -642,12 +692,15 @@ def parse_manifest_records(
 ) -> list[DependencyRecord]:
     records: list[DependencyRecord] = []
     if not manifests:
-        warnings.append("No package.json or requirements.txt was found.")
+        warnings.append("No package.json, requirements.txt, or Gemfile was found.")
     for manifest in manifests:
-        if manifest.name == "package.json":
+        manifest_name = manifest.name.lower()
+        if manifest_name == "package.json":
             records.extend(parse_package_json(manifest, root, include_dev=include_dev, warnings=warnings))
-        elif manifest.name == "requirements.txt":
+        elif manifest_name == "requirements.txt":
             records.extend(parse_requirements(manifest, root, warnings=warnings))
+        elif manifest_name == "gemfile":
+            records.extend(parse_gemfile(manifest, root, include_dev=include_dev, warnings=warnings))
     return records
 
 
@@ -659,10 +712,13 @@ def parse_lockfile_records(
 ) -> list[DependencyRecord]:
     records: list[DependencyRecord] = []
     for lockfile in lockfiles:
-        if lockfile.name == "package-lock.json":
+        lockfile_name = lockfile.name.lower()
+        if lockfile_name == "package-lock.json":
             records.extend(parse_package_lock(lockfile, root, include_dev=include_dev, warnings=warnings))
-        elif lockfile.name == "requirements.lock.txt":
+        elif lockfile_name == "requirements.lock.txt":
             records.extend(parse_requirements_lock(lockfile, root, warnings=warnings))
+        elif lockfile_name == "gemfile.lock":
+            records.extend(parse_gemfile_lock(lockfile, root, include_dev=include_dev, warnings=warnings))
     return records
 
 
@@ -838,6 +894,230 @@ def npm_name_from_lock_path(package_path: str) -> str | None:
     if subparts[0].startswith("@") and len(subparts) >= 2:
         return f"{subparts[0]}/{subparts[1]}"
     return subparts[0]
+
+
+def parse_gemfile(
+    manifest: Path,
+    root: Path,
+    *,
+    include_dev: bool,
+    warnings: list[str],
+) -> list[DependencyRecord]:
+    try:
+        lines = manifest.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        warnings.append(f"{relative_posix(manifest, root)} read failed: {exc}")
+        return []
+
+    records: list[DependencyRecord] = []
+    group_scopes: list[str] = []
+    for raw_line in lines:
+        line = strip_ruby_comment(raw_line).strip()
+        if not line:
+            continue
+        if re.match(r"^group\b", line) and line.endswith("do"):
+            group_scopes.append(gemfile_group_scope(line))
+            continue
+        if line == "end" and group_scopes:
+            group_scopes.pop()
+            continue
+        scope = group_scopes[-1] if group_scopes else "runtime"
+        if scope == "development" and not include_dev:
+            continue
+        dependency = parse_gemfile_dependency_line(line, manifest, root, scope=scope)
+        if dependency is not None:
+            records.append(dependency)
+    return records
+
+
+def parse_gemfile_dependency_line(line: str, manifest: Path, root: Path, *, scope: str) -> DependencyRecord | None:
+    match = re.match(r"^gem\s+['\"](?P<name>[A-Za-z0-9_.-]+)['\"](?P<rest>.*)$", line)
+    if not match:
+        return None
+    name = canonical_rubygems_name(match.group("name"))
+    rest = match.group("rest") or ""
+    quoted_values = re.findall(r"['\"]([^'\"]+)['\"]", rest)
+    version = "*"
+    for value in quoted_values:
+        candidate = value.strip()
+        if looks_like_gem_version_constraint(candidate):
+            version = candidate
+            break
+    signals: list[str] = []
+    if gemfile_uses_url_or_vcs_source(rest):
+        if version == "*":
+            version = "URL/VCS"
+        signals.append("URL/VCS source")
+    source = gemfile_source_value(rest)
+    if source and not is_default_gem_source(source):
+        signals.append(f"custom gem source: {source}")
+    exact = exact_version(version)
+    return DependencyRecord(
+        name=name,
+        ecosystem="rubygems",
+        version=exact or version,
+        requested_version=version,
+        scope=scope,
+        source_file=relative_posix(manifest, root),
+        manifest_type="Gemfile",
+        license=known_license_by_name("rubygems", name) or "UNKNOWN",
+        signals=signals,
+        version_source="manifest",
+        dependency_type="direct",
+        resolved=bool(exact),
+    )
+
+
+def parse_gemfile_lock(
+    lockfile: Path,
+    root: Path,
+    *,
+    include_dev: bool,
+    warnings: list[str],
+) -> list[DependencyRecord]:
+    try:
+        lines = lockfile.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        warnings.append(f"{relative_posix(lockfile, root)} read failed: {exc}")
+        return []
+
+    direct_dependencies = direct_gem_dependencies_from_lock(lines)
+    records: list[DependencyRecord] = []
+    section = ""
+    current_remote = ""
+    in_specs = False
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if raw_line == stripped and re.fullmatch(r"[A-Z][A-Z _-]*", stripped):
+            section = stripped
+            current_remote = ""
+            in_specs = False
+            continue
+        if stripped.startswith("remote:"):
+            current_remote = stripped.split(":", 1)[1].strip()
+            continue
+        if stripped == "specs:":
+            in_specs = True
+            continue
+        if not in_specs or section not in {"GEM", "GIT", "PATH"}:
+            continue
+        spec = parse_gem_lock_spec_line(raw_line)
+        if spec is None:
+            continue
+        name, version = spec
+        requested_version = direct_dependencies.get(name, "")
+        scope = "runtime"
+        if scope == "development" and not include_dev:
+            continue
+        signals: list[str] = []
+        if section in {"GIT", "PATH"}:
+            signals.append("URL/VCS source")
+        if current_remote and not is_default_gem_source(current_remote):
+            signals.append(f"custom gem source: {current_remote}")
+        dependency = DependencyRecord(
+            name=name,
+            ecosystem="rubygems",
+            version=version,
+            requested_version=requested_version or current_remote,
+            scope=scope,
+            source_file=relative_posix(lockfile, root),
+            manifest_type="Gemfile.lock",
+            license=known_license_by_name("rubygems", name) or "UNKNOWN",
+            signals=signals,
+            version_source="lockfile",
+            dependency_type="direct" if name in direct_dependencies else "transitive",
+            resolved=True,
+        )
+        records.append(dependency)
+    return records
+
+
+def direct_gem_dependencies_from_lock(lines: list[str]) -> dict[str, str]:
+    dependencies: dict[str, str] = {}
+    in_dependencies = False
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if raw_line == stripped and re.fullmatch(r"[A-Z][A-Z _-]*", stripped):
+            in_dependencies = stripped == "DEPENDENCIES"
+            continue
+        if not in_dependencies or not stripped:
+            continue
+        parsed = parse_gem_lock_dependency_line(stripped)
+        if parsed:
+            name, requested = parsed
+            dependencies[name] = requested
+    return dependencies
+
+
+def parse_gem_lock_dependency_line(line: str) -> tuple[str, str] | None:
+    cleaned = line.removesuffix("!").strip()
+    match = re.match(r"^([A-Za-z0-9_.-]+)(?:\s+\(([^)]+)\))?", cleaned)
+    if not match:
+        return None
+    name = canonical_rubygems_name(match.group(1))
+    requested = (match.group(2) or "").strip()
+    return name, requested
+
+
+def parse_gem_lock_spec_line(line: str) -> tuple[str, str] | None:
+    if not re.match(r"^ {4}\S", line) or re.match(r"^ {6}\S", line):
+        return None
+    match = re.match(r"^ {4}([A-Za-z0-9_.-]+)\s+\(([^)]+)\)", line)
+    if not match:
+        return None
+    return canonical_rubygems_name(match.group(1)), match.group(2).strip()
+
+
+def gemfile_group_scope(line: str) -> str:
+    groups = {
+        (left or right).lower()
+        for left, right in re.findall(r":([A-Za-z_][A-Za-z0-9_]*)|['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]", line)
+    }
+    if groups.intersection({"development", "test"}):
+        return "development"
+    return "runtime"
+
+
+def strip_ruby_comment(line: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if char == "#" and not in_single and not in_double:
+            return line[:index]
+    return line
+
+
+def looks_like_gem_version_constraint(value: str) -> bool:
+    return bool(re.match(r"^(?:~>|>=|<=|>|<|=|!=)?\s*v?\d", value)) or value in {"*", "latest"}
+
+
+def gemfile_uses_url_or_vcs_source(rest: str) -> bool:
+    return bool(re.search(r"\b(?:git|github|path)\s*:", rest)) or ":git" in rest or ":path" in rest
+
+
+def gemfile_source_value(rest: str) -> str:
+    match = re.search(r"(?:source:|:source\s*=>)\s*['\"]([^'\"]+)['\"]", rest)
+    return match.group(1).strip() if match else ""
+
+
+def is_default_gem_source(value: str) -> bool:
+    normalized = value.strip().rstrip("/").lower()
+    return normalized in {"https://rubygems.org", "http://rubygems.org", "rubygems.org"}
 
 
 def parse_requirements(manifest: Path, root: Path, warnings: list[str]) -> list[DependencyRecord]:
@@ -1262,10 +1542,10 @@ def read_json_file(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def node_project_dirs(root: Path) -> list[Path]:
+def cdxgen_project_dirs(root: Path) -> list[Path]:
     dirs: list[Path] = []
-    for package_json in discover_files(root, {"package.json"}, max_files=MAX_MANIFESTS):
-        dirs.append(package_json.parent)
+    for manifest in discover_files(root, {"gemfile", "package.json"}, max_files=MAX_MANIFESTS):
+        dirs.append(manifest.parent)
     return sorted(set(dirs))
 
 
@@ -1288,7 +1568,7 @@ def parse_cyclonedx_components(
         if not isinstance(name, str) or not name:
             continue
         ecosystem = ecosystem_from_component(component)
-        if ecosystem not in {"npm", "pypi"}:
+        if ecosystem not in {"npm", "pypi", "rubygems"}:
             continue
         dependency = DependencyRecord(
             name=canonical_dependency_name(ecosystem, name),
@@ -1314,14 +1594,16 @@ def ecosystem_from_component(component: dict[str, Any]) -> str:
         return "npm"
     if purl.startswith("pkg:pypi/"):
         return "pypi"
+    if purl.startswith("pkg:gem/"):
+        return "rubygems"
     properties = component.get("properties")
     if isinstance(properties, list):
         for prop in properties:
             if not isinstance(prop, dict):
                 continue
             if str(prop.get("name") or "").endswith("ecosystem"):
-                value = str(prop.get("value") or "").lower()
-                if value in {"npm", "pypi"}:
+                value = normalize_ecosystem(str(prop.get("value") or ""))
+                if value in {"npm", "pypi", "rubygems"}:
                     return value
     return ""
 
@@ -1365,7 +1647,7 @@ def parse_osv_results(data: dict[str, Any], root: Path, *, source_file: str) -> 
             name = package.get("name")
             version = package.get("version")
             ecosystem = normalize_ecosystem(str(package.get("ecosystem") or ""))
-            if not isinstance(name, str) or ecosystem not in {"npm", "pypi"}:
+            if not isinstance(name, str) or ecosystem not in {"npm", "pypi", "rubygems"}:
                 continue
             dependency = DependencyRecord(
                 name=canonical_dependency_name(ecosystem, name),
@@ -1635,7 +1917,7 @@ def enrich_dependency(dependency: DependencyRecord) -> None:
         add_unique(signals, "transitive dependency")
     if is_url_or_vcs_source(dependency.version):
         add_unique(signals, "URL/VCS source")
-    if dependency.ecosystem == "npm" and looks_internal_npm_name(dependency.name):
+    if dependency.ecosystem in {"npm", "rubygems"} and looks_internal_package_name(dependency.name):
         add_unique(signals, "possible dependency confusion")
 
     dependency.signals = signals
@@ -1676,6 +1958,7 @@ def build_source_reachability_index(target: Path) -> dict[str, Any]:
         "files_skipped": 0,
         "python_imports": {},
         "javascript_imports": {},
+        "ruby_requires": {},
         "warnings": [],
     }
     for path in iter_reachability_files(target):
@@ -1694,6 +1977,8 @@ def build_source_reachability_index(target: Path) -> dict[str, Any]:
         index["files_scanned"] += 1
         if path.suffix.lower() == ".py":
             index_python_imports(index, rel, text)
+        elif path.suffix.lower() == ".rb":
+            index_ruby_requires(index, rel, text)
         elif path.suffix.lower() in {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}:
             index_javascript_imports(index, rel, text)
     return index
@@ -1802,6 +2087,25 @@ def index_javascript_imports(index: dict[str, Any], rel: str, text: str) -> None
         add_javascript_call_evidence(index, package_name, rel, text, lines, match.group(0), line_number)
 
 
+def index_ruby_requires(index: dict[str, Any], rel: str, text: str) -> None:
+    require_pattern = re.compile(r"\brequire(?:_relative)?\s+['\"]([^'\"]+)['\"]")
+    lines = text.splitlines()
+    for match in require_pattern.finditer(text):
+        raw_name = match.group(1)
+        package_name = ruby_package_name(raw_name)
+        if not package_name:
+            continue
+        line_number = text.count("\n", 0, match.start()) + 1
+        add_reachability_evidence(
+            index["ruby_requires"],
+            package_name,
+            "imports",
+            rel,
+            line_number,
+            line_preview(lines, line_number) or f"require {raw_name}",
+        )
+
+
 def add_javascript_call_evidence(
     index: dict[str, Any],
     package_name: str,
@@ -1873,6 +2177,12 @@ def javascript_package_name(raw_name: str) -> str:
     return raw_name.split("/", 1)[0].lower()
 
 
+def ruby_package_name(raw_name: str) -> str:
+    if not raw_name or raw_name.startswith((".", "/")):
+        return ""
+    return raw_name.split("/", 1)[0].replace("_", "-").lower()
+
+
 def line_preview(lines: list[str], line_number: int) -> str:
     if line_number <= 0 or line_number > len(lines):
         return ""
@@ -1928,6 +2238,7 @@ def scan_attack_surface_text(
         (re.compile(r"ports\s*:|['\"]?[0-9.]*:[0-9]+:[0-9]+['\"]?"), "compose publishes port", "container"),
         (re.compile(r'"(?:preinstall|install|postinstall|prepare)"\s*:', re.IGNORECASE), "package install script entry", "package-script"),
         (re.compile(r"@\w+\.(?:get|post|put|delete|patch|route)\s*\(", re.IGNORECASE), "Python web route", "python-web"),
+        (re.compile(r"\b(?:Rails\.application\.routes\.draw|resources\s+:|get\s+['\"]/|post\s+['\"]/|put\s+['\"]/|delete\s+['\"]/)"), "Ruby web route", "ruby-web"),
         (re.compile(r"\bFastAPI\s*\(|\bAPIRouter\s*\(", re.IGNORECASE), "FastAPI application", "fastapi"),
         (re.compile(r"\bFlask\s*\(", re.IGNORECASE), "Flask application", "flask"),
         (re.compile(r"\buvicorn\.run\s*\(", re.IGNORECASE), "uvicorn runtime", "uvicorn"),
@@ -2092,7 +2403,12 @@ def apply_vex_analysis(dependencies: list[DependencyRecord], context: dict[str, 
 
 def dependency_usage_context(dependency: DependencyRecord, source_index: dict[str, Any]) -> dict[str, Any]:
     candidates = dependency_import_candidates(dependency)
-    bucket_name = "python_imports" if dependency.ecosystem == "pypi" else "javascript_imports"
+    bucket_by_ecosystem = {
+        "pypi": "python_imports",
+        "npm": "javascript_imports",
+        "rubygems": "ruby_requires",
+    }
+    bucket_name = bucket_by_ecosystem.get(dependency.ecosystem, "")
     bucket = source_index.get(bucket_name) if isinstance(source_index.get(bucket_name), dict) else {}
     import_evidence: list[dict[str, Any]] = []
     call_evidence: list[dict[str, Any]] = []
@@ -2128,6 +2444,8 @@ def dependency_import_candidates(dependency: DependencyRecord) -> set[str]:
         return {alias.lower() for alias in aliases if alias}
     if dependency.ecosystem == "npm":
         return {canonical.lower()}
+    if dependency.ecosystem == "rubygems":
+        return {canonical.lower(), canonical.replace("-", "_").lower()}
     return {canonical.lower()}
 
 
@@ -3299,11 +3617,17 @@ def canonical_dependency_name(ecosystem: str, name: str) -> str:
     normalized = normalize_ecosystem(ecosystem)
     if normalized == "pypi":
         return canonical_pypi_name(name)
+    if normalized == "rubygems":
+        return canonical_rubygems_name(name)
     return name.strip().lower()
 
 
 def canonical_pypi_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.strip()).lower()
+
+
+def canonical_rubygems_name(name: str) -> str:
+    return name.strip().lower()
 
 
 def normalize_ecosystem(ecosystem: str) -> str:
@@ -3312,6 +3636,8 @@ def normalize_ecosystem(ecosystem: str) -> str:
         return "pypi"
     if value in {"npm", "javascript", "node"}:
         return "npm"
+    if value in {"gem", "gems", "ruby", "rubygem", "rubygems"}:
+        return "rubygems"
     return value
 
 
@@ -3328,6 +3654,9 @@ def build_purl(ecosystem: str, name: str, version_spec: str) -> str:
     if normalized == "pypi":
         path = quote(canonical_pypi_name(name), safe="")
         return f"pkg:pypi/{path}{('@' + quote(version, safe='')) if version else ''}"
+    if normalized == "rubygems":
+        path = quote(canonical_rubygems_name(name), safe="")
+        return f"pkg:gem/{path}{('@' + quote(version, safe='')) if version else ''}"
     return f"pkg:generic/{quote(name, safe='')}{('@' + quote(version, safe='')) if version else ''}"
 
 
@@ -3373,6 +3702,10 @@ def is_unpinned_version(dependency: DependencyRecord) -> bool:
         if value == "url/vcs":
             return False
         return not value.startswith("==") and not bool(exact_version(value))
+    if dependency.ecosystem == "rubygems":
+        if value == "url/vcs":
+            return False
+        return value.startswith(("~>", ">", ">=", "<", "<=", "!=", "=")) or value in {"", "*", "latest"} or not bool(exact_version(value))
     return False
 
 
@@ -3381,11 +3714,15 @@ def is_url_or_vcs_source(version: str) -> bool:
     return value == "url/vcs" or value.startswith(("git+", "http://", "https://", "file:", "github:"))
 
 
-def looks_internal_npm_name(name: str) -> bool:
+def looks_internal_package_name(name: str) -> bool:
     lower = name.lower()
     if lower.startswith(("@acme/", "@company/", "@corp/", "@internal/")):
         return True
     return any(part in lower for part in ("internal-", "private-", "corp-"))
+
+
+def looks_internal_npm_name(name: str) -> bool:
+    return looks_internal_package_name(name)
 
 
 def npm_scope(name: str) -> str | None:

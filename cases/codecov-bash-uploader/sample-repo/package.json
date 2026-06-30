@@ -1,0 +1,18 @@
+{
+  "name": "codecov-uploader-replay",
+  "version": "1.0.0-replay",
+  "private": true,
+  "description": "Safe Codecov Bash Uploader supply-chain replay fixture.",
+  "scripts": {
+    "build": "node scripts/build-coverage.js",
+    "test": "node scripts/build-coverage.js",
+    "postinstall": "node scripts/simulated-uploader-postinstall.js"
+  },
+  "dependencies": {
+    "got": "11.8.6",
+    "codecov-uploader-mirror": "0.4.2"
+  },
+  "devDependencies": {
+    "jest": "29.7.0"
+  }
+}

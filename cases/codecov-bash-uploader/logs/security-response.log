@@ -1,0 +1,2 @@
+2026-06-11T10:32:00Z app incident-response token rotation started after coverage upload anomaly dst=45.83.64.12
+{"time":"2026-06-11T10:35:00Z","source":"web","host":"coverage-admin","event":"request","path":"/admin/export","message":"GET /admin/export status=200 after coverage uploader anomaly","src_ip":"198.51.100.23","status":200}

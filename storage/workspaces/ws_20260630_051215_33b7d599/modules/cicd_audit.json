@@ -1,0 +1,328 @@
+{
+  "scan_id": "cicd-20260630070216",
+  "generated_at": "2026-06-30T07:02:16.790758+00:00",
+  "target_path": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain",
+  "target": {
+    "importId": "imp_d603a60916d9",
+    "projectName": "5",
+    "sourceType": "local",
+    "path": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain"
+  },
+  "workflows": [],
+  "summary": {
+    "workflow_count": 0,
+    "job_count": 0,
+    "total_steps": 0,
+    "finding_count": 3,
+    "risk_score": 75,
+    "risk_level": "high",
+    "critical": 0,
+    "high": 2,
+    "medium": 1,
+    "low": 0,
+    "by_rule": {
+      "zizmor.unpinned-uses": 2,
+      "zizmor.artipacked": 1
+    },
+    "tools": [
+      {
+        "name": "zizmor",
+        "available": true,
+        "version": "zizmor 1.25.2",
+        "error": null,
+        "state": "ok"
+      },
+      {
+        "name": "actionlint",
+        "available": true,
+        "version": "1.7.12",
+        "error": "No workflow files found",
+        "state": "skipped"
+      }
+    ],
+    "duration_seconds": 1.44,
+    "target": {
+      "importId": "imp_d603a60916d9",
+      "projectName": "5",
+      "sourceType": "local",
+      "path": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain"
+    },
+    "target_key": "import:imp_d603a60916d9",
+    "ignored": 0,
+    "ignored_total": 0,
+    "baseline_exists": false,
+    "baseline_total": 0,
+    "baseline_created_at": null,
+    "new": 3,
+    "fixed": 0,
+    "trend": [
+      {
+        "scan_id": "cicd-20260630070216",
+        "generated_at": "2026-06-30T07:02:16.790758+00:00",
+        "target_key": "import:imp_d603a60916d9",
+        "projectName": "5",
+        "total": 3,
+        "critical": 0,
+        "high": 2,
+        "medium": 1,
+        "low": 0,
+        "new": 3,
+        "fixed": 0,
+        "ignored": 0,
+        "tools": [
+          "zizmor",
+          "actionlint"
+        ]
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "CI-541A60DC",
+      "rule_id": "zizmor.unpinned-uses",
+      "title": "zizmor: unpinned-uses",
+      "severity": "high",
+      "score": 75,
+      "workflow": "sample-repo/.github/workflows/desktop-release.yml",
+      "job_id": "desktop-build",
+      "job_name": "desktop-build",
+      "step_index": 1,
+      "step_name": null,
+      "line": 13,
+      "evidence": "actions/checkout@v3",
+      "reason": "unpinned action reference: action is not pinned to a hash (required by blanket policy)",
+      "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。",
+      "fingerprint": "603fe57942abe80fe181d7557bffcc77c088503c2f9e54795d87ab7b9504223e",
+      "scanner": "zizmor",
+      "confidence": "high"
+    },
+    {
+      "id": "CI-1480C512",
+      "rule_id": "zizmor.unpinned-uses",
+      "title": "zizmor: unpinned-uses",
+      "severity": "high",
+      "score": 75,
+      "workflow": "sample-repo/.github/workflows/desktop-release.yml",
+      "job_id": "desktop-build",
+      "job_name": "desktop-build",
+      "step_index": 2,
+      "step_name": null,
+      "line": 14,
+      "evidence": "vendor/electron-builder@v2",
+      "reason": "unpinned action reference: action is not pinned to a hash (required by blanket policy)",
+      "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。",
+      "fingerprint": "8843fe1287b565f293806b436c7b2ac38e9598fb82f1bafcb18ac4b3aca87409",
+      "scanner": "zizmor",
+      "confidence": "high"
+    },
+    {
+      "id": "CI-EB7DBD7A",
+      "rule_id": "zizmor.artipacked",
+      "title": "zizmor: artipacked",
+      "severity": "medium",
+      "score": 62,
+      "workflow": "sample-repo/.github/workflows/desktop-release.yml",
+      "job_id": "desktop-build",
+      "job_name": "desktop-build",
+      "step_index": 1,
+      "step_name": null,
+      "line": 13,
+      "evidence": "uses: actions/checkout@v3",
+      "reason": "credential persistence through GitHub Actions artifacts: does not set persist-credentials: false",
+      "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#artipacked 修复该 GitHub Actions 风险。",
+      "fingerprint": "88366cfb11bbee2a6097ca9c81d21ca4052a631ea052bd868d7ffa6b360285dd",
+      "scanner": "zizmor",
+      "confidence": "low"
+    }
+  ],
+  "scanners": [
+    {
+      "name": "zizmor",
+      "available": true,
+      "command": "C:\\Users\\86189\\Desktop\\sysml2\\.venv\\Scripts\\zizmor.exe",
+      "version": "zizmor 1.25.2",
+      "error": null,
+      "state": "ok"
+    },
+    {
+      "name": "actionlint",
+      "available": true,
+      "command": "C:\\Users\\86189\\Desktop\\sysml2\\.venv\\Scripts\\actionlint.exe",
+      "version": "1.7.12",
+      "error": "No workflow files found",
+      "state": "skipped"
+    }
+  ],
+  "sarif": {
+    "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+    "version": "2.1.0",
+    "runs": [
+      {
+        "tool": {
+          "driver": {
+            "name": "SupplyGuard CI/CD Audit",
+            "informationUri": "https://zizmor.sh/",
+            "rules": [
+              {
+                "id": "zizmor.unpinned-uses",
+                "name": "zizmor: unpinned-uses",
+                "shortDescription": {
+                  "text": "zizmor: unpinned-uses"
+                },
+                "fullDescription": {
+                  "text": "unpinned action reference: action is not pinned to a hash (required by blanket policy)"
+                },
+                "help": {
+                  "text": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。"
+                },
+                "properties": {
+                  "scanner": "zizmor",
+                  "severity": "high"
+                }
+              },
+              {
+                "id": "zizmor.artipacked",
+                "name": "zizmor: artipacked",
+                "shortDescription": {
+                  "text": "zizmor: artipacked"
+                },
+                "fullDescription": {
+                  "text": "credential persistence through GitHub Actions artifacts: does not set persist-credentials: false"
+                },
+                "help": {
+                  "text": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#artipacked 修复该 GitHub Actions 风险。"
+                },
+                "properties": {
+                  "scanner": "zizmor",
+                  "severity": "medium"
+                }
+              }
+            ]
+          }
+        },
+        "automationDetails": {
+          "id": "imp_d603a60916d9"
+        },
+        "results": [
+          {
+            "ruleId": "zizmor.unpinned-uses",
+            "level": "error",
+            "message": {
+              "text": "zizmor: unpinned-uses: actions/checkout@v3"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "sample-repo/.github/workflows/desktop-release.yml"
+                  },
+                  "region": {
+                    "startLine": 13
+                  }
+                }
+              }
+            ],
+            "partialFingerprints": {
+              "primaryLocationLineHash": "603fe57942abe80fe181d7557bffcc77c088503c2f9e54795d87ab7b9504223e"
+            },
+            "properties": {
+              "scanner": "zizmor",
+              "confidence": "high",
+              "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。",
+              "job_id": "desktop-build",
+              "step_name": null
+            }
+          },
+          {
+            "ruleId": "zizmor.unpinned-uses",
+            "level": "error",
+            "message": {
+              "text": "zizmor: unpinned-uses: vendor/electron-builder@v2"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "sample-repo/.github/workflows/desktop-release.yml"
+                  },
+                  "region": {
+                    "startLine": 14
+                  }
+                }
+              }
+            ],
+            "partialFingerprints": {
+              "primaryLocationLineHash": "8843fe1287b565f293806b436c7b2ac38e9598fb82f1bafcb18ac4b3aca87409"
+            },
+            "properties": {
+              "scanner": "zizmor",
+              "confidence": "high",
+              "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。",
+              "job_id": "desktop-build",
+              "step_name": null
+            }
+          },
+          {
+            "ruleId": "zizmor.artipacked",
+            "level": "warning",
+            "message": {
+              "text": "zizmor: artipacked: uses: actions/checkout@v3"
+            },
+            "locations": [
+              {
+                "physicalLocation": {
+                  "artifactLocation": {
+                    "uri": "sample-repo/.github/workflows/desktop-release.yml"
+                  },
+                  "region": {
+                    "startLine": 13
+                  }
+                }
+              }
+            ],
+            "partialFingerprints": {
+              "primaryLocationLineHash": "88366cfb11bbee2a6097ca9c81d21ca4052a631ea052bd868d7ffa6b360285dd"
+            },
+            "properties": {
+              "scanner": "zizmor",
+              "confidence": "low",
+              "recommendation": "参考 zizmor 审计 https://docs.zizmor.sh/audits/#artipacked 修复该 GitHub Actions 风险。",
+              "job_id": "desktop-build",
+              "step_name": null
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "state": {
+    "target_key": "import:imp_d603a60916d9",
+    "ignored": [],
+    "baseline": null,
+    "baselines": {},
+    "trend": [
+      {
+        "scan_id": "cicd-20260630070216",
+        "generated_at": "2026-06-30T07:02:16.790758+00:00",
+        "target_key": "import:imp_d603a60916d9",
+        "projectName": "5",
+        "total": 3,
+        "critical": 0,
+        "high": 2,
+        "medium": 1,
+        "low": 0,
+        "new": 3,
+        "fixed": 0,
+        "ignored": 0,
+        "tools": [
+          "zizmor",
+          "actionlint"
+        ]
+      }
+    ]
+  },
+  "report": "# CI/CD 构建流程风险报告\n\n生成时间：2026-06-30 07:02:18 UTC\n扫描目标：C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\n\n## 摘要\n\n- Workflow 数量：0\n- Job 数量：0\n- Step 数量：0\n- 风险数量：3\n- 严重：0\n- 高危：2\n- 中危：1\n- 低危：0\n\n## 扫描到的 Workflow\n\n- 未发现 GitHub Actions workflow。\n\n## 扫描器\n\n| 工具 | 状态 | 版本 | 运行状态 | 说明 |\n| --- | --- | --- | --- | --- |\n| zizmor | 可用 | zizmor 1.25.2 | ok | - |\n| actionlint | 可用 | 1.7.12 | skipped | No workflow files found |\n\n## 风险明细\n\n| 扫描器 | Workflow | Job | Step | 等级 | 风险原因 | 证据 | 修复建议 |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| zizmor | sample-repo/.github/workflows/desktop-release.yml | desktop-build | - | high | unpinned action reference: action is not pinned to a hash (required by blanket policy) | actions/checkout@v3 (line 13) | 参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。 |\n| zizmor | sample-repo/.github/workflows/desktop-release.yml | desktop-build | - | high | unpinned action reference: action is not pinned to a hash (required by blanket policy) | vendor/electron-builder@v2 (line 14) | 参考 zizmor 审计 https://docs.zizmor.sh/audits/#unpinned-uses 修复该 GitHub Actions 风险。 |\n| zizmor | sample-repo/.github/workflows/desktop-release.yml | desktop-build | - | medium | credential persistence through GitHub Actions artifacts: does not set persist-credentials: false | uses: actions/checkout@v3 (line 13) | 参考 zizmor 审计 https://docs.zizmor.sh/audits/#artipacked 修复该 GitHub Actions 风险。 |\n\n## 扫描提示\n\n- 未找到 .github/workflows/*.yml 或 *.yaml workflow 文件。\n",
+  "warnings": [
+    "未找到 .github/workflows/*.yml 或 *.yaml workflow 文件。"
+  ]
+}

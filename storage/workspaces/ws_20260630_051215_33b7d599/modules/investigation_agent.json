@@ -1,0 +1,137 @@
+{
+  "agentType": "rule-based-security-investigation",
+  "status": "need_user_input",
+  "updatedAt": "2026-06-30T07:05:03.481165+00:00",
+  "goal": "判断项目供应链、构建链、产物可信和运行期证据是否形成风险闭环。",
+  "modules": [
+    {
+      "id": "code_audit",
+      "name": "代码审查",
+      "target": "code",
+      "status": "skipped",
+      "statusLabel": "跳过",
+      "reason": "本次调查请求关闭了该模块。",
+      "signals": 0
+    },
+    {
+      "id": "dependency_audit",
+      "name": "供应链",
+      "target": "supply",
+      "status": "skipped",
+      "statusLabel": "跳过",
+      "reason": "本次调查请求关闭了该模块。",
+      "signals": 0
+    },
+    {
+      "id": "cicd_audit",
+      "name": "CI/CD 链路",
+      "target": "pipeline",
+      "status": "skipped",
+      "statusLabel": "跳过",
+      "reason": "本次调查请求关闭了该模块。",
+      "signals": 0
+    },
+    {
+      "id": "artifact_trust",
+      "name": "产物可信",
+      "target": "artifact",
+      "status": "completed",
+      "statusLabel": "完成",
+      "reason": "已验证 artifact、provenance/attestation 和可信策略。",
+      "signals": 4
+    },
+    {
+      "id": "log_audit",
+      "name": "日志印证",
+      "target": "logs",
+      "status": "completed",
+      "statusLabel": "完成",
+      "reason": "已用构建或运行日志印证风险是否触发。",
+      "signals": 2
+    },
+    {
+      "id": "multimodal_audit",
+      "name": "多模态证据",
+      "target": "multimodal",
+      "status": "needs_input",
+      "statusLabel": "待补",
+      "reason": "缺少外部告警截图、录屏、语音或人工证据，当前只能依赖静态扫描和日志。",
+      "signals": 0
+    },
+    {
+      "id": "workspace_report",
+      "name": "图谱与报告",
+      "target": "report",
+      "status": "completed",
+      "statusLabel": "完成",
+      "reason": "已生成工作空间报告和图谱摘要。",
+      "signals": 3
+    }
+  ],
+  "evidenceGaps": [
+    {
+      "id": "multimodal-evidence-materials",
+      "module": "多模态证据",
+      "severity": "low",
+      "reason": "缺少外部告警截图、录屏、语音或人工证据，当前只能依赖静态扫描和日志。",
+      "question": "当前为什么需要补充多模态证据材料？",
+      "missingItems": [
+        "告警截图",
+        "日志平台截图",
+        "录屏",
+        "语音说明",
+        "人工补充文本"
+      ],
+      "whereToFind": [
+        "告警平台截图",
+        "日志平台截图",
+        "构建失败截图",
+        "复现录屏",
+        "人工研判记录"
+      ],
+      "uploadTo": "多模态证据",
+      "targetModule": "multimodal",
+      "proves": "补充外部告警和人工研判材料，提高报告可解释性和答辩可信度。"
+    }
+  ],
+  "nextActions": [
+    {
+      "priority": "low",
+      "title": "补充多模态证据材料",
+      "action": "缺少外部告警截图、录屏、语音或人工证据，当前只能依赖静态扫描和日志。",
+      "targetModule": "multimodal",
+      "missingItems": [
+        "告警截图",
+        "日志平台截图",
+        "录屏",
+        "语音说明",
+        "人工补充文本"
+      ],
+      "actionKind": "request_evidence",
+      "payload": {
+        "gapId": "multimodal-evidence-materials"
+      }
+    }
+  ],
+  "summary": {
+    "moduleCount": 7,
+    "completed": 3,
+    "needsInput": 1,
+    "pending": 0,
+    "failed": 0,
+    "evidenceGapCount": 1,
+    "nextActionTitle": "补充多模态证据材料",
+    "riskScore": 100,
+    "riskLevel": "critical"
+  },
+  "questions": [
+    "下一步该做什么？",
+    "现在为什么待补充？",
+    "要补充哪些多模态证据材料？",
+    "为什么建议：补充多模态证据材料？"
+  ],
+  "lastScan": {
+    "status": "completed",
+    "errors": []
+  }
+}

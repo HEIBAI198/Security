@@ -1,6 +1,6 @@
 # APT Supply Chain Replay Cases
 
-This directory contains two defensive replay cases for the contest topic
+This directory contains four defensive replay cases for the contest topic
 `APT 供应链攻击检测与溯源系统`.
 
 The cases do not contain real malware, real exploit payloads, or live attacker
@@ -14,6 +14,8 @@ report generation.
 | --- | --- | --- |
 | `solarwinds-sunburst` | CISA SolarWinds advisory and MITRE C0024 | Build/update chain contamination, artifact trust failure, runtime egress |
 | `3cx-supply-chain` | Mandiant 3CX report and MITRE C0057 | Cascaded X_TRADER to 3CX build compromise, desktop artifact risk, endpoint egress |
+| `codecov-bash-uploader` | Codecov Bash Uploader security update and CISA alert | CI uploader script contamination, workflow secret exposure risk, artifact trust failure |
+| `event-stream-flatmap` | npm event-stream incident write-up | npm transitive dependency compromise, install script signal, runtime sensitive API evidence |
 
 ## One-command replay
 
@@ -28,6 +30,8 @@ Run one case:
 ```powershell
 .\scripts\run-case-replay.ps1 -Case solarwinds
 .\scripts\run-case-replay.ps1 -Case 3cx
+.\scripts\run-case-replay.ps1 -Case codecov
+.\scripts\run-case-replay.ps1 -Case eventstream
 ```
 
 Run both:
@@ -52,6 +56,8 @@ Import one local directory:
 ```text
 cases/solarwinds-sunburst/sample-repo
 cases/3cx-supply-chain/sample-repo
+cases/codecov-bash-uploader/sample-repo
+cases/event-stream-flatmap/sample-repo
 ```
 
 Then review:

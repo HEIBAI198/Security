@@ -1,0 +1,2 @@
+{"time":"2026-06-11T09:42:10Z","source":"app","host":"wallet-api-01","event":"egress","message":"wallet service outbound callback observed to 203.0.113.77 during dependency incident window","dst_ip":"203.0.113.77","status":0}
+{"time":"2026-06-11T09:43:15Z","source":"web","host":"wallet-api-01","event":"request","path":"/admin/export","message":"GET /admin/export status=200 after wallet release","src_ip":"198.51.100.23","status":200}

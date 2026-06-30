@@ -1,0 +1,45 @@
+case_id: event-stream-flatmap
+case_name: event-stream / flatmap-stream defensive replay
+contest_topic: APT 供应链攻击检测与溯源系统
+scenario: npm_transitive_dependency_compromise
+public_references:
+  - title: npm blog on malicious code in event-stream dependency
+    url: https://blog.npmjs.org/post/180565383195/details-about-the-event-stream-incident
+  - title: MITRE ATT&CK T1195 Supply Chain Compromise
+    url: https://attack.mitre.org/techniques/T1195/
+safety_boundary:
+  malware: none
+  payloads: harmless placeholders only
+  network: example.invalid domains and documentation IPs only
+expected_stages:
+  - transitive_dependency_poisoning
+  - package_install_script_signal
+  - wallet_build_artifact_risk
+  - runtime_sensitive_api_evidence
+ground_truth:
+  polluted_stage: npm_transitive_dependency_resolution
+  entry_signal: event-stream pulls synthetic flatmap-stream dependency with install script signal
+  affected_assets:
+    - wallet-web-bundle.tar.gz
+    - npm:event-stream@3.3.6
+    - wallet-api.prod
+expected_findings:
+  dependency:
+    - event-stream local malicious package incident signal
+    - flatmap-stream has install script signal
+  cicd:
+    - permissions write-all
+    - third-party npm audit action not pinned to commit SHA
+    - remote script pipe in release workflow
+  artifact_trust:
+    - artifact digest differs from attestation subject
+    - commit policy mismatch
+  logs:
+    - runtime egress from wallet service to synthetic indicator
+    - sensitive export endpoint accessed during incident window
+defense_story:
+  summary: 传递依赖进入 lockfile 后，风险不一定出现在顶层 package.json，需要结合 lockfile、安装脚本、构建链和运行日志判断是否可达。
+judge_talking_points:
+  - 该案例展示 npm 传递依赖投毒在 Vibe Coding 场景中的隐蔽性。
+  - 系统通过 lockfile、源码 require、运行日志和图谱路径把传递依赖风险转化为可解释证据链。
+  - GNN 风险分只做排序信号，最终研判仍结合规则和证据。

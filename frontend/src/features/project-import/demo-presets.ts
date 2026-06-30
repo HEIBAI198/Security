@@ -1,4 +1,4 @@
-export type DemoPresetKey = '3cx' | 'solarwinds'
+export type DemoPresetKey = '3cx' | 'solarwinds' | 'codecov' | 'eventstream'
 
 export type DemoPreset = {
   label: string
@@ -50,11 +50,47 @@ export const demoPresets: Record<DemoPresetKey, DemoPreset> = {
     ],
     allowSelfHostedRunner: false,
   },
+  codecov: {
+    label: 'Codecov Bash Uploader replay',
+    description: '演示 CI 上传脚本污染、凭据暴露风险、产物证明异常和响应日志如何串联。',
+    projectName: 'Codecov Bash Uploader replay',
+    localPath: 'cases/codecov-bash-uploader/sample-repo',
+    artifactPath: 'cases/codecov-bash-uploader/artifacts/coverage-report.tar.gz',
+    attestationPath: 'cases/codecov-bash-uploader/artifacts/coverage-report.intoto.jsonl',
+    expectedRepo: 'https://github.com/codecov/example-service',
+    expectedCommit: '8f42c19',
+    allowedWorkflows: ['.github/workflows/coverage.yml'],
+    allowedBuilders: ['https://github.com/actions/runner'],
+    logPaths: [
+      'cases/codecov-bash-uploader/logs/ci-build.jsonl',
+      'cases/codecov-bash-uploader/logs/security-response.log',
+    ],
+    allowSelfHostedRunner: false,
+  },
+  eventstream: {
+    label: 'event-stream / flatmap-stream replay',
+    description: '演示 npm 传递依赖投毒、安装脚本信号、构建链风险和运行期敏感访问如何形成证据链。',
+    projectName: 'event-stream flatmap-stream replay',
+    localPath: 'cases/event-stream-flatmap/sample-repo',
+    artifactPath: 'cases/event-stream-flatmap/artifacts/wallet-web-bundle.tar.gz',
+    attestationPath: 'cases/event-stream-flatmap/artifacts/wallet-web-bundle.intoto.jsonl',
+    expectedRepo: 'https://github.com/example/wallet-web',
+    expectedCommit: '8f42c19',
+    allowedWorkflows: ['.github/workflows/wallet-release.yml'],
+    allowedBuilders: ['https://github.com/actions/runner'],
+    logPaths: [
+      'cases/event-stream-flatmap/logs/build-runner.log',
+      'cases/event-stream-flatmap/logs/wallet-runtime.jsonl',
+    ],
+    allowSelfHostedRunner: false,
+  },
 }
 
 export function presetKeyFromProject(projectName?: string, sourcePath?: string) {
   const value = `${projectName || ''} ${sourcePath || ''}`.toLowerCase()
   if (value.includes('3cx') || value.includes('x_trader')) return '3cx'
   if (value.includes('solarwinds') || value.includes('sunburst')) return 'solarwinds'
+  if (value.includes('codecov') || value.includes('bash-uploader')) return 'codecov'
+  if (value.includes('event-stream') || value.includes('flatmap')) return 'eventstream'
   return null
 }

@@ -1,5 +1,5 @@
 param(
-  [ValidateSet('solarwinds', '3cx', 'all')]
+  [ValidateSet('solarwinds', '3cx', 'codecov', 'eventstream', 'all')]
   [string]$Case = 'all',
   [string]$BaseUrl = 'http://127.0.0.1:8000'
 )
@@ -285,6 +285,34 @@ function Invoke-CaseReplay {
       Builder = 'https://github.com/actions/runner/self-hosted'
       Invocation = 'github-actions/desktop-release-20260611'
     }
+    codecov = @{
+      Dir = 'cases\codecov-bash-uploader'
+      ProjectName = 'Codecov Bash Uploader replay'
+      Artifact = 'coverage-report.tar.gz'
+      Attestation = 'coverage-report.intoto.jsonl'
+      Repo = 'https://github.com/codecov/example-service'
+      ExpectedRepo = 'https://github.com/codecov/example-service'
+      Workflow = '.github/workflows/coverage.yml'
+      Commit = '3333333333333333333333333333333333333333'
+      ExpectedCommit = '8f42c19'
+      Runner = 'github-hosted'
+      Builder = 'https://github.com/actions/runner'
+      Invocation = 'github-actions/coverage-20260611'
+    }
+    eventstream = @{
+      Dir = 'cases\event-stream-flatmap'
+      ProjectName = 'event-stream flatmap-stream replay'
+      Artifact = 'wallet-web-bundle.tar.gz'
+      Attestation = 'wallet-web-bundle.intoto.jsonl'
+      Repo = 'https://github.com/example/wallet-web'
+      ExpectedRepo = 'https://github.com/example/wallet-web'
+      Workflow = '.github/workflows/wallet-release.yml'
+      Commit = '4444444444444444444444444444444444444444'
+      ExpectedCommit = '8f42c19'
+      Runner = 'github-hosted'
+      Builder = 'https://github.com/actions/runner'
+      Invocation = 'github-actions/wallet-release-20260611'
+    }
   }
 
   $cfg = $caseMap[$CaseKey]
@@ -391,7 +419,7 @@ try {
   throw "SupplyGuard backend is not ready at $BaseUrl. Start it with: python server.py --host 127.0.0.1 --port 8000"
 }
 
-$targets = if ($Case -eq 'all') { @('solarwinds', '3cx') } else { @($Case) }
+$targets = if ($Case -eq 'all') { @('solarwinds', '3cx', 'codecov', 'eventstream') } else { @($Case) }
 foreach ($target in $targets) {
   Invoke-CaseReplay -CaseKey $target
 }

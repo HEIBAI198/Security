@@ -1,0 +1,47 @@
+case_id: codecov-bash-uploader
+case_name: Codecov Bash Uploader defensive replay
+contest_topic: APT 供应链攻击检测与溯源系统
+scenario: ci_uploader_script_supply_chain_compromise
+public_references:
+  - title: Codecov Bash Uploader security update
+    url: https://about.codecov.io/security-update/
+  - title: CISA alert on Codecov supply-chain compromise
+    url: https://www.cisa.gov/news-events/alerts/2021/04/15/codecov-supply-chain-compromise
+  - title: MITRE ATT&CK T1195 Supply Chain Compromise
+    url: https://attack.mitre.org/techniques/T1195/
+safety_boundary:
+  malware: none
+  payloads: harmless placeholders only
+  network: example.invalid domains and documentation IPs only
+expected_stages:
+  - ci_uploader_bootstrap
+  - workflow_secret_exposure_risk
+  - artifact_provenance_mismatch
+  - runtime_token_rotation_evidence
+ground_truth:
+  polluted_stage: ci_coverage_upload_step
+  entry_signal: unpinned Codecov uploader action and remote bash uploader command
+  affected_assets:
+    - coverage-report.tar.gz
+    - github-actions/coverage-20260611
+    - ci-secrets
+expected_findings:
+  dependency:
+    - got HTTP client dependency is present in coverage helper
+    - codecov-uploader-mirror has install script signal
+  cicd:
+    - permissions write-all
+    - third-party action not pinned to commit SHA
+    - curl remote uploader piped to bash
+  artifact_trust:
+    - artifact digest differs from attestation subject
+    - workflow policy mismatch
+  logs:
+    - build runner egress to synthetic exfiltration endpoint
+    - secret rotation ticket created after coverage upload
+defense_story:
+  summary: 覆盖率上传脚本在 CI 阶段被污染后，可能读取环境变量并影响构建凭据，需要把 workflow、上传脚本、产物证明和日志放到同一证据链中研判。
+judge_talking_points:
+  - 该案例突出 CI 辅助脚本也属于供应链攻击面。
+  - 系统可以把 curl | bash、未固定 Action、产物证明异常和凭据轮换日志串联起来。
+  - 大模型只解释证据和处置建议，阻断依据来自规则、provenance 和日志印证。

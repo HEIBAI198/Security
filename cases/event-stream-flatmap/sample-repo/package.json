@@ -1,0 +1,16 @@
+{
+  "name": "event-stream-flatmap-replay",
+  "version": "1.0.0-replay",
+  "private": true,
+  "description": "Safe event-stream supply-chain replay fixture.",
+  "scripts": {
+    "build": "node scripts/build-wallet.js"
+  },
+  "dependencies": {
+    "event-stream": "3.3.6",
+    "node-fetch": "2.6.7"
+  },
+  "devDependencies": {
+    "npm-audit-helper": "1.2.0"
+  }
+}

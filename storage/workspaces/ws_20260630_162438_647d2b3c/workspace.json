@@ -1,0 +1,585 @@
+{
+  "workspace": {
+    "name": "3CX X_TRADER replay",
+    "repository": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo",
+    "branch": "main",
+    "commit": "-",
+    "build": "3CX X_TRADER replay build",
+    "runtime": "3CX X_TRADER replay runtime",
+    "mode": "imported-project",
+    "importId": "imp_ddee8a298247",
+    "sourceType": "local",
+    "source": {
+      "path": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo"
+    },
+    "workspaceId": "ws_20260630_162438_647d2b3c",
+    "preset": "custom"
+  },
+  "summary": {
+    "risk_score": 0,
+    "risk_level": "low",
+    "open_findings": 0,
+    "critical_findings": 0,
+    "repositories": 1,
+    "dependencies": 0,
+    "build_steps": 0,
+    "log_events": 0,
+    "multimodal_evidence": 0,
+    "attack_paths": 0,
+    "mean_triage_minutes": 0
+  },
+  "modules": [
+    {
+      "key": "code_audit",
+      "name": "代码与应用安全审计",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待扫描代码、配置和密钥风险。"
+    },
+    {
+      "key": "supply_chain",
+      "name": "软件供应链安全检测",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待生成 SBOM 并研判依赖风险。"
+    },
+    {
+      "key": "cicd",
+      "name": "CI/CD 构建链路监测",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待分析 workflow、runner、权限和构建步骤。"
+    },
+    {
+      "key": "artifact_trust",
+      "name": "产物可信验证门",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待上传或定位 artifact 与 provenance。"
+    },
+    {
+      "key": "logs",
+      "name": "海量日志风险识别",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待上传运行期日志或接入实时日志。"
+    },
+    {
+      "key": "multimodal",
+      "name": "多模态证据接入层",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待上传截图、文本或外部告警材料。"
+    },
+    {
+      "key": "knowledge_graph",
+      "name": "安全知识图谱",
+      "status": "pending",
+      "score": 0,
+      "signals": 0,
+      "description": "等待扫描结果生成攻击链图谱。"
+    },
+    {
+      "key": "copilot",
+      "name": "大模型安全分析助手",
+      "status": "active",
+      "score": 0,
+      "signals": 0,
+      "description": "等待扫描证据后生成处置建议。"
+    }
+  ],
+  "trend": [],
+  "findings": [],
+  "dependencies": [],
+  "pipeline": [],
+  "logs": [],
+  "graph": {
+    "schema_version": "supplyguard.knowledge-graph.v1",
+    "generated_at": "2026-06-30T16:24:38.379208+00:00",
+    "references": [
+      {
+        "name": "GUAC",
+        "url": "https://docs.guac.sh/guac/",
+        "used_for": [
+          "software tree / evidence tree / actor tree",
+          "reachable supply-chain attack paths"
+        ]
+      },
+      {
+        "name": "GUAC Ontology",
+        "url": "https://docs.guac.sh/guac/guac-ontology/",
+        "used_for": [
+          "supply-chain node and edge semantics"
+        ]
+      },
+      {
+        "name": "MITRE ATT&CK STIX Data",
+        "url": "https://github.com/mitre-attack/attack-stix-data",
+        "used_for": [
+          "AttackStage mapping",
+          "technique/tactic context"
+        ]
+      },
+      {
+        "name": "SLSA",
+        "url": "https://slsa.dev/spec/v1.2/provenance",
+        "used_for": [
+          "provenance predicate",
+          "subject / materials / builder trust checks"
+        ]
+      },
+      {
+        "name": "in-toto",
+        "url": "https://github.com/in-toto/in-toto",
+        "used_for": [
+          "layout / link metadata",
+          "materials to products evidence chain"
+        ]
+      },
+      {
+        "name": "BloodHound CE",
+        "url": "https://specterops.io/bloodhound-community-edition/",
+        "used_for": [
+          "attack-path style source-to-target presentation",
+          "abusable relationship prioritization"
+        ]
+      },
+      {
+        "name": "NetworkX",
+        "url": "https://networkx.org/",
+        "used_for": [
+          "MVP path-scoring model and future graph algorithms"
+        ]
+      },
+      {
+        "name": "React Flow",
+        "url": "https://reactflow.dev/",
+        "used_for": [
+          "interactive frontend node-edge visualization"
+        ]
+      }
+    ],
+    "summary": {
+      "node_count": 5,
+      "edge_count": 1,
+      "attack_path_count": 0,
+      "actionable_attack_path_count": 0,
+      "real_attack_path_count": 0,
+      "path_verdicts": {},
+      "average_path_confidence": 0,
+      "risk_score": 92,
+      "risk_level": "critical",
+      "node_types": {
+        "BuildArtifact": 1,
+        "RuntimeService": 1,
+        "AttackStage": 3
+      },
+      "edge_types": {
+        "ARTIFACT_DEPLOYED_AS": 1
+      }
+    },
+    "nodes": [
+      {
+        "id": "asset:7095ecaf8ad8f84c",
+        "label": "3CX X_TRADER replay build",
+        "type": "BuildArtifact",
+        "risk": "low",
+        "description": "SLSA/in-toto style product node connecting CI steps to runtime deployment.",
+        "score": 60,
+        "source": "workspace",
+        "source_model": "SLSA/in-toto",
+        "evidence_ids": [],
+        "properties": {
+          "build": "3CX X_TRADER replay build",
+          "repository": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo"
+        },
+        "position": {
+          "x": 1000,
+          "y": 60
+        }
+      },
+      {
+        "id": "asset:f0977b1d825b4e58",
+        "label": "3CX X_TRADER replay runtime",
+        "type": "RuntimeService",
+        "risk": "low",
+        "description": "Runtime service deployed from the build artifact and used as the log source anchor.",
+        "score": 55,
+        "source": "workspace",
+        "source_model": "Runtime",
+        "evidence_ids": [],
+        "properties": {
+          "runtime": "3CX X_TRADER replay runtime"
+        },
+        "position": {
+          "x": 1750,
+          "y": 60
+        }
+      },
+      {
+        "id": "attack:supply-chain-compromise",
+        "label": "供应链投毒阶段",
+        "type": "AttackStage",
+        "risk": "critical",
+        "description": "MITRE ATT&CK context: supply-chain compromise and command-and-control style runtime behavior.",
+        "score": 92,
+        "source": "attack-stage-mapping",
+        "source_model": "MITRE ATT&CK STIX",
+        "evidence_ids": [],
+        "properties": {
+          "attack": "T1195 Supply Chain Compromise"
+        },
+        "position": {
+          "x": 2250,
+          "y": 60
+        }
+      },
+      {
+        "id": "attack:application-exploitation",
+        "label": "应用攻击阶段",
+        "type": "AttackStage",
+        "risk": "high",
+        "description": "Runtime exploit traffic mapped to application exploitation.",
+        "score": 82,
+        "source": "attack-stage-mapping",
+        "source_model": "MITRE ATT&CK STIX",
+        "evidence_ids": [],
+        "properties": {
+          "attack": "T1190 Exploit Public-Facing Application"
+        },
+        "position": {
+          "x": 2250,
+          "y": 200
+        }
+      },
+      {
+        "id": "attack:build-system-compromise",
+        "label": "构建链路风险阶段",
+        "type": "AttackStage",
+        "risk": "high",
+        "description": "SLSA/in-toto build integrity risk caused by mutable actions, broad permissions, or remote scripts.",
+        "score": 82,
+        "source": "attack-stage-mapping",
+        "source_model": "MITRE ATT&CK STIX",
+        "evidence_ids": [],
+        "properties": {
+          "attack": "T1195.002 Compromise Software Supply Chain"
+        },
+        "position": {
+          "x": 2250,
+          "y": 340
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "edge:e1273e29c758ea28",
+        "source": "asset:7095ecaf8ad8f84c",
+        "target": "asset:f0977b1d825b4e58",
+        "type": "ARTIFACT_DEPLOYED_AS",
+        "label": "部署为",
+        "confidence": 0.82,
+        "reason": "Workspace runtime metadata links the build artifact to the deployed service.",
+        "evidence_ids": []
+      }
+    ],
+    "attack_paths": []
+  },
+  "assistant": {
+    "default_question": "3CX X_TRADER replay 这条供应链风险链路应该优先修哪里？",
+    "answer": "3CX X_TRADER replay 已导入，但尚未执行供应链溯源扫描。当前没有足够证据给出修复优先级，请先运行扫描或补充依赖、CI/CD、产物和日志材料。",
+    "retrieval": [
+      "Project: 3CX X_TRADER replay",
+      "Status: waiting_for_scan"
+    ],
+    "next_actions": [
+      "先运行供应链溯源扫描，生成依赖、代码和 CI/CD 证据。",
+      "如需验证运行期影响，再上传日志或外部告警证据。"
+    ]
+  },
+  "integrations": [
+    {
+      "name": "OSV",
+      "status": "离线缓存",
+      "records": 12840
+    },
+    {
+      "name": "NVD/CVE",
+      "status": "离线缓存",
+      "records": 56310
+    },
+    {
+      "name": "规则引擎",
+      "status": "启用",
+      "records": 146
+    },
+    {
+      "name": "RAG 知识库",
+      "status": "启用",
+      "records": 932
+    }
+  ],
+  "code_audit": null,
+  "dependency_audit": null,
+  "cicd_audit": null,
+  "artifact_trust": null,
+  "log_audit": null,
+  "multimodal_audit": {
+    "scan_id": null,
+    "generated_at": null,
+    "evidence": [],
+    "tools": [
+      {
+        "name": "OpenCV",
+        "available": true,
+        "command": "python -c \"import cv2\"",
+        "state": "ok",
+        "version": "opencv-python 4.10.0",
+        "error": null
+      },
+      {
+        "name": "PaddleOCR",
+        "available": true,
+        "command": "python -c \"from paddleocr import PaddleOCR\"",
+        "state": "ok",
+        "version": "paddleocr 3.6.0",
+        "error": null
+      },
+      {
+        "name": "Tesseract OCR",
+        "available": false,
+        "command": "tesseract",
+        "state": "missing",
+        "version": null,
+        "error": "tesseract was not found on PATH."
+      }
+    ],
+    "summary": {
+      "evidence_count": 0,
+      "image": 0,
+      "derived_count": 0,
+      "recognition_count": 0,
+      "ocr_count": 0,
+      "entity_count": 0,
+      "finding_count": 0,
+      "risk_score": 0,
+      "risk_level": "low",
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "by_entity_type": {},
+      "by_rule": {},
+      "total_size_bytes": 0,
+      "storage_dir": "C:\\Users\\86189\\Desktop\\sysml2\\storage\\multimodal",
+      "storage_relative_dir": "storage/multimodal"
+    },
+    "report": "# Multimodal Evidence Intake\n\nNo multimodal evidence has been uploaded.",
+    "warnings": []
+  },
+  "import": {
+    "importId": "imp_ddee8a298247",
+    "status": "ready",
+    "projectName": "3CX X_TRADER replay",
+    "sourceType": "local",
+    "sourceRef": {
+      "path": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo"
+    },
+    "sourcePath": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo",
+    "createdAt": "2026-06-30T16:24:13.693570+00:00",
+    "updatedAt": "2026-06-30T16:24:13.693570+00:00",
+    "summary": {
+      "projectName": "3CX X_TRADER replay",
+      "sourceType": "local",
+      "sourceRef": {
+        "path": "C:\\Users\\86189\\Desktop\\sysml2\\cases\\3cx-supply-chain\\sample-repo"
+      },
+      "fileStats": {
+        "total": 11,
+        "scannable": 7,
+        "ignored": 4,
+        "binary": 0
+      },
+      "languages": [
+        {
+          "name": "JSON",
+          "percent": 62.6,
+          "files": 2,
+          "bytes": 1938
+        },
+        {
+          "name": "JavaScript",
+          "percent": 19.7,
+          "files": 3,
+          "bytes": 610
+        },
+        {
+          "name": "YAML",
+          "percent": 17.7,
+          "files": 1,
+          "bytes": 549
+        }
+      ],
+      "dependencyFiles": [
+        "package-lock.json",
+        "package.json",
+        "requirements.txt"
+      ],
+      "ciFiles": [
+        ".github/workflows/desktop-release.yml"
+      ],
+      "warnings": [
+        "Local path imports are server-side reads; browsers cannot safely grant arbitrary filesystem access."
+      ],
+      "scanScope": "."
+    }
+  },
+  "facts": {
+    "schema_version": "supplyguard.fact-input.v1",
+    "generated_at": "2026-06-30T16:24:38.379208+00:00",
+    "references": [
+      {
+        "name": "CycloneDX",
+        "url": "https://cyclonedx.org/specification/overview/",
+        "used_for": [
+          "DependencyPackage",
+          "BuildArtifact",
+          "SBOM component and dependency evidence"
+        ]
+      },
+      {
+        "name": "SARIF",
+        "url": "https://www.oasis-open.org/standard/sarif-v2-1-0/",
+        "used_for": [
+          "CodeFile finding location",
+          "CI/CD finding location",
+          "fingerprint"
+        ]
+      },
+      {
+        "name": "OWASP Dependency-Track",
+        "url": "https://dependencytrack.org/",
+        "used_for": [
+          "SBOM-first component risk inventory",
+          "dependency vulnerability triage"
+        ]
+      },
+      {
+        "name": "DefectDojo",
+        "url": "https://docs.defectdojo.com/",
+        "used_for": [
+          "Finding import",
+          "deduplication",
+          "prioritized triage",
+          "reporting"
+        ]
+      },
+      {
+        "name": "FFmpeg",
+        "url": "https://www.ffmpeg.org/index.html",
+        "used_for": [
+          "audio normalization",
+          "video frame extraction",
+          "multimodal evidence metadata"
+        ]
+      },
+      {
+        "name": "OpenCV",
+        "url": "https://opencv.org/about/",
+        "used_for": [
+          "image preprocessing",
+          "video frame metadata",
+          "multimodal evidence enrichment"
+        ]
+      }
+    ],
+    "summary": {
+      "asset_count": 0,
+      "evidence_count": 0,
+      "finding_count": 0,
+      "risk_score": 0,
+      "risk_level": "low",
+      "critical": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "asset_types": {},
+      "sources": {},
+      "source_models": {}
+    },
+    "assets": [],
+    "evidence": [],
+    "findings": []
+  },
+  "report": "# SupplyGuard KG 供应链攻击溯源报告\n\n生成时间：2026-06-30 16:24:38 UTC\n\n> [!CAUTION]\n> 当前报告面向供应链攻击检测与溯源研判。请先处理“用户该做什么”中的最高优先级和高优先级动作，再展开后续证据细节。\n\n## 1. 一句话结论\n\n建议优先处理「3CX X_TRADER replay」项目中的最高风险链路：供应链风险路径。\n\n一句话结论：3CX X_TRADER replay 已导入，但尚未执行供应链溯源扫描。当前没有足够证据给出修复优先级，请先运行扫描或补充依赖、CI/CD、产物和日志材料。\n\n- 综合风险：0 / 100（low）\n- 首要依赖风险对象：高风险依赖，风险分 0\n- 运行期证据：暂无运行期日志命中\n- 处置优先级：隔离高危依赖，使用干净 runner 重新构建，校验产物哈希，并排查运行期外联。\n\n立即建议：\n1. 隔离或替换高危依赖。\n2. 使用干净 runner 重新构建。\n3. 校验 artifact 哈希、签名、provenance 和 attestation。\n4. 排查运行期外联、敏感接口访问和异常日志。\n5. 如确认影响发布或运行环境，回滚版本并吊销相关 Token。\n\n## 2. 用户该做什么\n\n| 优先级 | 动作 | 原因 |\n| --- | --- | --- |\n| 最高优先级 | 阻断发布并冻结当前产物 | 当前最高风险路径为：供应链攻击路径。先避免风险进入用户环境。 |\n| 最高优先级 | 隔离高危依赖并复核来源 | 优先检查 高风险依赖 是否为 AI 推荐、手动引入、依赖混淆或漏洞版本。 |\n| 高优先级 | 使用干净 Runner 重新构建 | 重新生成 发布产物，并校验 digest、commit、workflow、builder、provenance 和 attestation。 |\n| 高优先级 | 排查运行期外联和敏感访问 | 当前运行期日志不足，建议补充日志后复扫。 |\n| 中优先级 | 补齐证据并复扫攻击链 | 补充签名、可信 builder、hash baseline、Git 提交记录和 AI 生成来源标记。 |\n\n## 3. 风险总览\n\n| 指标 | 结果 |\n| --- | --- |\n| 综合风险 | 0 / 100 |\n| 风险等级 | 低危 |\n| 高可信真实路径 | 0 条 |\n| 处置优先级 | 高优先级 |\n\n## 4. 攻击路径总览\n\n暂未形成可验证攻击路径。请补充依赖清单、CI/CD 配置、产物证明和运行期日志后重新扫描。\n\n## 5. 关键证据与风险信号\n\n| 编号 | 等级 | 评分 | 风险 | 影响资产 | 来源 |\n| --- | --- | ---: | --- | --- | --- |\n| - | - | - | 未发现风险 | - | - |\n\n## 6. 攻击路径详情\n\n本节展示系统如何把依赖、CI/CD、产物可信和运行期日志串成可解释路径。长证据默认折叠，便于先看结论。\n\n暂未形成可验证攻击路径。\n\n## 7. AI 辅助研判\n\n### 研判结论\n\nAI 辅助研判未发现新的高风险对象。当前结论仍以依赖、CI/CD、产物可信和运行日志证据为准。\n\n| 指标 | 结果 |\n| --- | --- |\n| 高风险 AI 节点 | 0 个 |\n| 重点复核对象 | 0 个 |\n| GraphRAG 证据命中 | 0 条 |\n\n### 重点关注对象\n\n| 对象 | AI 风险分 | 建议 |\n| --- | ---: | --- |\n| - | - | 暂无需要优先复核的 AI 风险对象 |\n\n### 说明\n\nGNN 用于根据依赖关系和图谱上下文给节点重新排序；GraphRAG 用于把相关证据串联起来。该模块只辅助判断“哪些节点更值得优先看”，不单独作为攻击成立依据。\n\n## 8. Vibe Coding 风险归因\n\n当前证据不能直接证明风险一定由 AI 生成，但可以判断这些风险符合 Vibe Coding 场景中“AI 推荐 / 用户接受 / 快速进入工程流程”的典型进入方式。\n\n| 风险来源 | 判断 | 证据说明 |\n| --- | --- | --- |\n| AI 推荐依赖 | 无法判断 | 存在高风险依赖进入依赖清单，但当前缺少 AI 对话或提交来源记录。 |\n| AI 生成代码 | 未确认 | 当前报告未包含可证明代码由 AI 生成的元数据。 |\n| AI 生成 CI/CD 配置 | 未见高危证据 | 需要结合 workflow 文件、提交记录和 AI 会话记录确认。 |\n| AI 生成 Docker/IaC 配置 | 未确认 | 如后续上传 Dockerfile、Kubernetes 或 Terraform 配置，可继续归因。 |\n| 开发者手动引入 | 无法排除 | 缺少提交人、提交消息和代码评审上下文，不能排除人工引入。 |\n| 未知来源 | 是 | 当前缺少依赖和配置的引入来源标记。 |\n\n建议后续在项目导入或扫描任务中增加来源标记：AI 生成代码、AI 推荐依赖、AI 生成 CI/CD 配置、AI 生成 Docker/IaC 配置、开发者手动引入或未知。\n\n## 9. 影响评估\n\n| 影响对象 | 判断 | 说明 |\n| --- | --- | --- |\n| 用户数据 | 证据不足 | 运行期日志可用于确认是否访问用户数据、敏感接口或异常外联。 |\n| 构建凭据 | 未确认 | 若发现明文密钥、Token 或高权限 workflow，需要立即轮换凭据。 |\n| 发布渠道 | 未确认 | 产物 digest、provenance、builder 或 runner 不可信时，需要暂停发布。 |\n| 下游系统 | 证据不足 | 如果受污染产物已分发，需要确认下游部署范围。 |\n| 是否回滚 | 暂不确定 | 当产物可信失败或运行期异常成立时，应优先回滚到可信版本。 |\n| 是否吊销 Token | 暂不确定 | 如果日志或配置显示凭据可能泄露，应吊销并重新签发。 |\n\n## 10. 技术明细\n\n<details>\n<summary>展开扫描范围、证据完整性、阶段研判和证据链</summary>\n\n### 扫描范围\n\n| 项目 | 数值 |\n| --- | ---: |\n| 项目名称 | 3CX X_TRADER replay |\n| 文件总数 | 11 |\n| 可扫描文件 | 7 |\n| 被忽略文件 | 4 |\n| 二进制 / 压缩包 | 0 |\n| 依赖清单 | 3 个 |\n| CI/CD 配置 | 1 个 |\n| 主要语言 | JSON |\n\n文件类型覆盖：\n\n| 类型 | 文件数 | 占比 |\n| --- | ---: | ---: |\n| JSON | 2 | 63% |\n| JavaScript | 3 | 20% |\n| YAML | 1 | 18% |\n\n### 工程证据清单\n\n### 已识别依赖清单\n\n- package-lock.json\n- package.json\n- requirements.txt\n\n### 已识别 CI/CD 配置\n\n- .github/workflows/desktop-release.yml\n\n### 产物与来源证明\n\n- 产物：-\n- attestation / provenance：-\n- 产物可信检查项：0 项\n\n### 日志材料\n\n- 日志事件：0\n- 日志风险：0\n- 运行期风险等级：-\n\n### 证据完整性提醒\n\n1. 未提供发布产物，无法校验 artifact SHA256、签名、attestation 和 provenance。\n2. 未提供运行期日志，无法确认异常外联、敏感接口访问和攻击后影响。\n3. 当前项目来自本地路径导入，浏览器侧不会直接读取任意文件，扫描以服务端工作区材料为准。\n\n### 攻击阶段研判\n\n### 1. 入口风险\n\n首要依赖对象：暂未定位，风险分 0。依赖风险可能来自可疑版本、依赖混淆、漏洞版本、安装脚本或相似恶意包特征。\n\n### 2. 执行风险\n\n系统会检查 postinstall、install script、curl | bash、远程脚本下载、明文密钥和危险代码调用。若依赖安装脚本与 CI/CD 执行证据同时存在，应提高优先级。\n\n### 3. 构建风险\n\nCI/CD 配置数量：1。已发现 workflow 材料，可判断 Action 版本、权限、runner 和远程脚本风险。\n\n### 4. 产物风险\n\n产物可信风险：0 项。需要重点确认 artifact SHA256、attestation subject、commit/ref、workflow、builder、runner 和签名是否匹配策略。\n\n### 5. 运行风险\n\n日志事件：0，运行期证据：暂无运行期日志命中。如果异常外联、敏感接口访问或 SQL 注入探测与依赖/构建链路径相连，应视为运行期印证。\n\n### 6. 影响风险\n\n当前最高路径置信度：0%。若路径已经连接依赖、构建、产物和运行日志，需要进一步确认用户数据、Token、发布渠道和下游系统是否受影响。\n\n### 处置建议原文\n\n### 立即处理\n\n- **最高优先级 · 隔离高风险依赖**：冻结或替换高危依赖版本，重新生成 SBOM 与 lockfile。\n- **最高优先级 · 重新构建产物**：使用干净 runner 重新构建，并校验 artifact digest、签名和 provenance。\n- **高优先级 · 排查运行期异常**：检查外联 IP、敏感接口访问和异常日志。\n\n### 短期修复\n\n- 引入 Git Hook，在提交前阻断硬编码密钥、可疑依赖和危险脚本。\n- 引入 CI Gate，在 PR 阶段阻断高危依赖、危险 workflow、权限过宽和未固定 Action。\n- 引入 Release Gate，在发布前校验 artifact、attestation、builder、workflow、commit/ref 和签名。\n\n### 后续增强\n\n- 先运行供应链溯源扫描，生成依赖、代码和 CI/CD 证据。\n- 如需验证运行期影响，再上传日志或外部告警证据。\n\n### 证据链\n\n| 序号 | 时间 | 证据类型 | 关联资产 | 证据摘要 | 来源模型 |\n| ---: | --- | --- | --- | --- | --- |\n| 1 | - | - | - | 暂无证据 | - |\n\n### 多模态证据融合\n\n暂无多模态证据。\n\n### 路径修复建议\n\n- 先运行供应链溯源扫描，生成依赖、代码和 CI/CD 证据。\n- 如需验证运行期影响，再上传日志或外部告警证据。\n\n</details>\n",
+  "workspaceId": "ws_20260630_162438_647d2b3c",
+  "workspace_id": "ws_20260630_162438_647d2b3c",
+  "generated_at": "2026-06-30T16:24:38.382207+00:00",
+  "mode": "guided-investigation",
+  "guidance": {
+    "currentStep": "supply",
+    "currentStepLabel": "发现供应链风险",
+    "steps": [
+      {
+        "id": "case",
+        "label": "选择案例",
+        "description": "选择要调查的案例或项目",
+        "done": true,
+        "target": "project-import"
+      },
+      {
+        "id": "preflight",
+        "label": "预检资产",
+        "description": "确认语言、依赖文件、CI 文件和可扫描范围",
+        "done": true,
+        "target": "project-import"
+      },
+      {
+        "id": "supply",
+        "label": "发现供应链风险",
+        "description": "生成 SBOM/VEX，定位异常依赖与依赖混淆信号",
+        "done": false,
+        "target": "supply"
+      },
+      {
+        "id": "corroborate",
+        "label": "印证构建/产物/日志",
+        "description": "检查构建链、产物可信和运行期日志是否互相印证",
+        "done": false,
+        "target": "pipeline"
+      },
+      {
+        "id": "graph",
+        "label": "生成攻击路径",
+        "description": "把证据串成污染入口、传播环节和受影响资产",
+        "done": false,
+        "target": "graph"
+      },
+      {
+        "id": "report",
+        "label": "导出报告",
+        "description": "交付溯源结论、证据链和处置建议",
+        "done": true,
+        "target": "report"
+      }
+    ],
+    "nextActions": [
+      {
+        "title": "生成 SBOM 与 VEX",
+        "description": "先确认组件风险、漏洞命中和依赖混淆信号。",
+        "target": "supply"
+      }
+    ],
+    "defenseNotice": "当前案例为防御性安全仿真，不包含真实恶意代码、真实攻击载荷或可用攻击基础设施。"
+  },
+  "evidence": [],
+  "normalized_findings": [],
+  "attack_paths": [],
+  "report_html": "<!doctype html>\n<html lang=\"zh-CN\">\n<head><meta charset=\"utf-8\"><title>SupplyGuard KG 溯源报告</title>\n<style>body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:980px;margin:40px auto;line-height:1.7;color:#0f172a}h1,h2,h3{line-height:1.3}.bullet{margin-left:1rem}code{background:#f1f5f9;padding:2px 4px;border-radius:4px}</style>\n</head><body>\n<h1>SupplyGuard KG 供应链攻击溯源报告</h1>\n\n<p>生成时间：2026-06-30 16:24:38 UTC</p>\n\n<p>&gt; [!CAUTION]</p>\n<p>&gt; 当前报告面向供应链攻击检测与溯源研判。请先处理“用户该做什么”中的最高优先级和高优先级动作，再展开后续证据细节。</p>\n\n<h2>1. 一句话结论</h2>\n\n<p>建议优先处理「3CX X_TRADER replay」项目中的最高风险链路：供应链风险路径。</p>\n\n<p>一句话结论：3CX X_TRADER replay 已导入，但尚未执行供应链溯源扫描。当前没有足够证据给出修复优先级，请先运行扫描或补充依赖、CI/CD、产物和日志材料。</p>\n\n<p class=\"bullet\">• 综合风险：0 / 100（low）</p>\n<p class=\"bullet\">• 首要依赖风险对象：高风险依赖，风险分 0</p>\n<p class=\"bullet\">• 运行期证据：暂无运行期日志命中</p>\n<p class=\"bullet\">• 处置优先级：隔离高危依赖，使用干净 runner 重新构建，校验产物哈希，并排查运行期外联。</p>\n\n<p>立即建议：</p>\n<p>1. 隔离或替换高危依赖。</p>\n<p>2. 使用干净 runner 重新构建。</p>\n<p>3. 校验 artifact 哈希、签名、provenance 和 attestation。</p>\n<p>4. 排查运行期外联、敏感接口访问和异常日志。</p>\n<p>5. 如确认影响发布或运行环境，回滚版本并吊销相关 Token。</p>\n\n<h2>2. 用户该做什么</h2>\n\n<p>| 优先级 | 动作 | 原因 |</p>\n<p>| --- | --- | --- |</p>\n<p>| 最高优先级 | 阻断发布并冻结当前产物 | 当前最高风险路径为：供应链攻击路径。先避免风险进入用户环境。 |</p>\n<p>| 最高优先级 | 隔离高危依赖并复核来源 | 优先检查 高风险依赖 是否为 AI 推荐、手动引入、依赖混淆或漏洞版本。 |</p>\n<p>| 高优先级 | 使用干净 Runner 重新构建 | 重新生成 发布产物，并校验 digest、commit、workflow、builder、provenance 和 attestation。 |</p>\n<p>| 高优先级 | 排查运行期外联和敏感访问 | 当前运行期日志不足，建议补充日志后复扫。 |</p>\n<p>| 中优先级 | 补齐证据并复扫攻击链 | 补充签名、可信 builder、hash baseline、Git 提交记录和 AI 生成来源标记。 |</p>\n\n<h2>3. 风险总览</h2>\n\n<p>| 指标 | 结果 |</p>\n<p>| --- | --- |</p>\n<p>| 综合风险 | 0 / 100 |</p>\n<p>| 风险等级 | 低危 |</p>\n<p>| 高可信真实路径 | 0 条 |</p>\n<p>| 处置优先级 | 高优先级 |</p>\n\n<h2>4. 攻击路径总览</h2>\n\n<p>暂未形成可验证攻击路径。请补充依赖清单、CI/CD 配置、产物证明和运行期日志后重新扫描。</p>\n\n<h2>5. 关键证据与风险信号</h2>\n\n<p>| 编号 | 等级 | 评分 | 风险 | 影响资产 | 来源 |</p>\n<p>| --- | --- | ---: | --- | --- | --- |</p>\n<p>| - | - | - | 未发现风险 | - | - |</p>\n\n<h2>6. 攻击路径详情</h2>\n\n<p>本节展示系统如何把依赖、CI/CD、产物可信和运行期日志串成可解释路径。长证据默认折叠，便于先看结论。</p>\n\n<p>暂未形成可验证攻击路径。</p>\n\n<h2>7. AI 辅助研判</h2>\n\n<h3>研判结论</h3>\n\n<p>AI 辅助研判未发现新的高风险对象。当前结论仍以依赖、CI/CD、产物可信和运行日志证据为准。</p>\n\n<p>| 指标 | 结果 |</p>\n<p>| --- | --- |</p>\n<p>| 高风险 AI 节点 | 0 个 |</p>\n<p>| 重点复核对象 | 0 个 |</p>\n<p>| GraphRAG 证据命中 | 0 条 |</p>\n\n<h3>重点关注对象</h3>\n\n<p>| 对象 | AI 风险分 | 建议 |</p>\n<p>| --- | ---: | --- |</p>\n<p>| - | - | 暂无需要优先复核的 AI 风险对象 |</p>\n\n<h3>说明</h3>\n\n<p>GNN 用于根据依赖关系和图谱上下文给节点重新排序；GraphRAG 用于把相关证据串联起来。该模块只辅助判断“哪些节点更值得优先看”，不单独作为攻击成立依据。</p>\n\n<h2>8. Vibe Coding 风险归因</h2>\n\n<p>当前证据不能直接证明风险一定由 AI 生成，但可以判断这些风险符合 Vibe Coding 场景中“AI 推荐 / 用户接受 / 快速进入工程流程”的典型进入方式。</p>\n\n<p>| 风险来源 | 判断 | 证据说明 |</p>\n<p>| --- | --- | --- |</p>\n<p>| AI 推荐依赖 | 无法判断 | 存在高风险依赖进入依赖清单，但当前缺少 AI 对话或提交来源记录。 |</p>\n<p>| AI 生成代码 | 未确认 | 当前报告未包含可证明代码由 AI 生成的元数据。 |</p>\n<p>| AI 生成 CI/CD 配置 | 未见高危证据 | 需要结合 workflow 文件、提交记录和 AI 会话记录确认。 |</p>\n<p>| AI 生成 Docker/IaC 配置 | 未确认 | 如后续上传 Dockerfile、Kubernetes 或 Terraform 配置，可继续归因。 |</p>\n<p>| 开发者手动引入 | 无法排除 | 缺少提交人、提交消息和代码评审上下文，不能排除人工引入。 |</p>\n<p>| 未知来源 | 是 | 当前缺少依赖和配置的引入来源标记。 |</p>\n\n<p>建议后续在项目导入或扫描任务中增加来源标记：AI 生成代码、AI 推荐依赖、AI 生成 CI/CD 配置、AI 生成 Docker/IaC 配置、开发者手动引入或未知。</p>\n\n<h2>9. 影响评估</h2>\n\n<p>| 影响对象 | 判断 | 说明 |</p>\n<p>| --- | --- | --- |</p>\n<p>| 用户数据 | 证据不足 | 运行期日志可用于确认是否访问用户数据、敏感接口或异常外联。 |</p>\n<p>| 构建凭据 | 未确认 | 若发现明文密钥、Token 或高权限 workflow，需要立即轮换凭据。 |</p>\n<p>| 发布渠道 | 未确认 | 产物 digest、provenance、builder 或 runner 不可信时，需要暂停发布。 |</p>\n<p>| 下游系统 | 证据不足 | 如果受污染产物已分发，需要确认下游部署范围。 |</p>\n<p>| 是否回滚 | 暂不确定 | 当产物可信失败或运行期异常成立时，应优先回滚到可信版本。 |</p>\n<p>| 是否吊销 Token | 暂不确定 | 如果日志或配置显示凭据可能泄露，应吊销并重新签发。 |</p>\n\n<h2>10. 技术明细</h2>\n\n<p>&lt;details&gt;</p>\n<p>&lt;summary&gt;展开扫描范围、证据完整性、阶段研判和证据链&lt;/summary&gt;</p>\n\n<h3>扫描范围</h3>\n\n<p>| 项目 | 数值 |</p>\n<p>| --- | ---: |</p>\n<p>| 项目名称 | 3CX X_TRADER replay |</p>\n<p>| 文件总数 | 11 |</p>\n<p>| 可扫描文件 | 7 |</p>\n<p>| 被忽略文件 | 4 |</p>\n<p>| 二进制 / 压缩包 | 0 |</p>\n<p>| 依赖清单 | 3 个 |</p>\n<p>| CI/CD 配置 | 1 个 |</p>\n<p>| 主要语言 | JSON |</p>\n\n<p>文件类型覆盖：</p>\n\n<p>| 类型 | 文件数 | 占比 |</p>\n<p>| --- | ---: | ---: |</p>\n<p>| JSON | 2 | 63% |</p>\n<p>| JavaScript | 3 | 20% |</p>\n<p>| YAML | 1 | 18% |</p>\n\n<h3>工程证据清单</h3>\n\n<h3>已识别依赖清单</h3>\n\n<p class=\"bullet\">• package-lock.json</p>\n<p class=\"bullet\">• package.json</p>\n<p class=\"bullet\">• requirements.txt</p>\n\n<h3>已识别 CI/CD 配置</h3>\n\n<p class=\"bullet\">• .github/workflows/desktop-release.yml</p>\n\n<h3>产物与来源证明</h3>\n\n<p class=\"bullet\">• 产物：-</p>\n<p class=\"bullet\">• attestation / provenance：-</p>\n<p class=\"bullet\">• 产物可信检查项：0 项</p>\n\n<h3>日志材料</h3>\n\n<p class=\"bullet\">• 日志事件：0</p>\n<p class=\"bullet\">• 日志风险：0</p>\n<p class=\"bullet\">• 运行期风险等级：-</p>\n\n<h3>证据完整性提醒</h3>\n\n<p>1. 未提供发布产物，无法校验 artifact SHA256、签名、attestation 和 provenance。</p>\n<p>2. 未提供运行期日志，无法确认异常外联、敏感接口访问和攻击后影响。</p>\n<p>3. 当前项目来自本地路径导入，浏览器侧不会直接读取任意文件，扫描以服务端工作区材料为准。</p>\n\n<h3>攻击阶段研判</h3>\n\n<h3>1. 入口风险</h3>\n\n<p>首要依赖对象：暂未定位，风险分 0。依赖风险可能来自可疑版本、依赖混淆、漏洞版本、安装脚本或相似恶意包特征。</p>\n\n<h3>2. 执行风险</h3>\n\n<p>系统会检查 postinstall、install script、curl | bash、远程脚本下载、明文密钥和危险代码调用。若依赖安装脚本与 CI/CD 执行证据同时存在，应提高优先级。</p>\n\n<h3>3. 构建风险</h3>\n\n<p>CI/CD 配置数量：1。已发现 workflow 材料，可判断 Action 版本、权限、runner 和远程脚本风险。</p>\n\n<h3>4. 产物风险</h3>\n\n<p>产物可信风险：0 项。需要重点确认 artifact SHA256、attestation subject、commit/ref、workflow、builder、runner 和签名是否匹配策略。</p>\n\n<h3>5. 运行风险</h3>\n\n<p>日志事件：0，运行期证据：暂无运行期日志命中。如果异常外联、敏感接口访问或 SQL 注入探测与依赖/构建链路径相连，应视为运行期印证。</p>\n\n<h3>6. 影响风险</h3>\n\n<p>当前最高路径置信度：0%。若路径已经连接依赖、构建、产物和运行日志，需要进一步确认用户数据、Token、发布渠道和下游系统是否受影响。</p>\n\n<h3>处置建议原文</h3>\n\n<h3>立即处理</h3>\n\n<p class=\"bullet\">• **最高优先级 · 隔离高风险依赖**：冻结或替换高危依赖版本，重新生成 SBOM 与 lockfile。</p>\n<p class=\"bullet\">• **最高优先级 · 重新构建产物**：使用干净 runner 重新构建，并校验 artifact digest、签名和 provenance。</p>\n<p class=\"bullet\">• **高优先级 · 排查运行期异常**：检查外联 IP、敏感接口访问和异常日志。</p>\n\n<h3>短期修复</h3>\n\n<p class=\"bullet\">• 引入 Git Hook，在提交前阻断硬编码密钥、可疑依赖和危险脚本。</p>\n<p class=\"bullet\">• 引入 CI Gate，在 PR 阶段阻断高危依赖、危险 workflow、权限过宽和未固定 Action。</p>\n<p class=\"bullet\">• 引入 Release Gate，在发布前校验 artifact、attestation、builder、workflow、commit/ref 和签名。</p>\n\n<h3>后续增强</h3>\n\n<p class=\"bullet\">• 先运行供应链溯源扫描，生成依赖、代码和 CI/CD 证据。</p>\n<p class=\"bullet\">• 如需验证运行期影响，再上传日志或外部告警证据。</p>\n\n<h3>证据链</h3>\n\n<p>| 序号 | 时间 | 证据类型 | 关联资产 | 证据摘要 | 来源模型 |</p>\n<p>| ---: | --- | --- | --- | --- | --- |</p>\n<p>| 1 | - | - | - | 暂无证据 | - |</p>\n\n<h3>多模态证据融合</h3>\n\n<p>暂无多模态证据。</p>\n\n<h3>路径修复建议</h3>\n\n<p class=\"bullet\">• 先运行供应链溯源扫描，生成依赖、代码和 CI/CD 证据。</p>\n<p class=\"bullet\">• 如需验证运行期影响，再上传日志或外部告警证据。</p>\n\n<p>&lt;/details&gt;</p>\n</body></html>"
+}

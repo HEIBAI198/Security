@@ -136,7 +136,7 @@ soupsieve==2.8.4
 spdx-tools==0.8.5
 starlette==1.2.1
 stevedore==5.8.0
--e git+https://github.com/HEIBAI198/Security.git@1656037ba01e5519b12535d5853d1b9452b51a36#egg=supplyguard_kg
+-e git+https://github.com/HEIBAI198/Security.git@2d0a2e98d60c0eb499c357e22a16ccade0dc047e#egg=supplyguard_kg
 tabulate==0.9.0
 termcolor==2.3.0
 tokenizers==0.23.1

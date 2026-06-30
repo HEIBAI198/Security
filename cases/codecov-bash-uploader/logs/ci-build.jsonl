@@ -1,0 +1,2 @@
+{"time":"2026-06-11T10:14:02Z","source":"app","host":"github-runner-coverage-01","event":"coverage_upload","message":"coverage uploader executed after npm ci; outbound beacon callback observed to 45.83.64.12","dst_ip":"45.83.64.12","status":0}
+{"time":"2026-06-11T10:15:44Z","source":"app","host":"github-runner-coverage-01","event":"secret_read","message":"SIMULATION ONLY: CI environment variables were accessed by coverage uploader process","status":0}

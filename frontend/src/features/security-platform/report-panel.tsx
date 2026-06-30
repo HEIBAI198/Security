@@ -5,11 +5,12 @@ import {
 } from 'recharts'
 import {
   AlertTriangle, ArrowRight, ChevronRight, ClipboardList, Copy,
-  Download, ExternalLink, FileText, Layers, Loader2,
-  PackageCheck, Route, Search, ShieldAlert, TrendingUp, X, Zap,
+  Download, ExternalLink, FileText, Loader2,
+  PackageCheck, Search, ShieldAlert, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { downloadWorkspaceEvidencePackage, type SecuritySeverity, type SecurityWorkspace } from '@/lib/security-api'
+import { downloadWorkspaceEvidencePackage, type SecurityWorkspace } from '@/lib/security-api'
+import type { PlatformTab } from './investigation-workflow'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,12 +20,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 
 /* ══ Types ══ */
-interface ReportMetric { label: string; value: string; detail: string; tone: 'red'|'cyan'|'orange'|'emerald'|'slate' }
 interface ReportPathStage { id: string; title: string; source: string; target: string; relationship: string; confidence: number; evidenceCount: number; evidenceGroups: string[]; severity: string; why_abusable?: string }
 interface ReportTrustBreakpoint { id: string; title: string; evidence: string; severity: string }
 interface ReportActionItem { priority: '最高优先级'|'高优先级'|'中优先级'; title: string; detail: string; tone: 'red'|'orange'|'cyan' }
 interface RiskSourceDetail { title: string; severity: string; evidence: string }
-interface RiskSourceItem { name: string; value: number; details: RiskSourceDetail[] }
+interface RiskSourceItem { name: string; value: number; details: RiskSourceDetail[]; module: PlatformTab }
+interface EvidenceCoverageItem { label: string; module: PlatformTab; hit: boolean; count: number; detail: string }
 
 function listOf<T = any>(value: unknown): T[] {
   return Array.isArray(value) ? value as T[] : []
@@ -40,29 +41,16 @@ function textOf(value: unknown, fallback = '-') {
   return text || fallback
 }
 
-function buildMetrics(w: SecurityWorkspace): ReportMetric[] {
-  const s = w.summary; const g = w.graph?.summary
-  const risk = num(s.risk_score)
-  const paths = g?.actionable_attack_path_count ?? g?.attack_path_count ?? s.attack_paths ?? 0
-  const primaryPath = sortedAttackPaths(w)[0]
-  const conf = Math.round(num(primaryPath?.confidence ?? g?.average_path_confidence) * 100)
-  return [
-    { label:'综合风险', value:`${risk}/100`, detail:textOf(s.risk_level, 'low'), tone:risk>=90?'red':risk>=75?'orange':'cyan' },
-    { label:'攻击路径', value:`${paths}`, detail:'候选链', tone:'cyan' },
-    { label:'置信度', value:`${conf}%`, detail:'路径均值', tone:conf>=80?'emerald':conf>=60?'orange':'slate' },
-    { label:'证据', value:`${g?.node_count ?? w.facts?.summary?.evidence_count ?? s.open_findings ?? 0}`, detail:'节点+证据', tone:'slate' },
-  ]
-}
-function buildRiskSources(w: SecurityWorkspace) {
+function _buildRiskSources(w: SecurityWorkspace) {
   const items: RiskSourceItem[] = []
-  if (w.code_audit?.summary) items.push({name:'代码审查',value:num(w.code_audit.summary.total),details:listOf(w.code_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.risk_file)}:${textOf(f.line)} · ${textOf(f.evidence)}`}))})
-  if (w.dependency_audit?.summary) items.push({name:'供应链',value:num(w.dependency_audit.summary.finding_count),details:listOf(w.dependency_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.dependency)} · ${textOf(f.source_file)} · ${textOf(f.evidence)}`}))})
-  if (w.cicd_audit?.summary) items.push({name:'CI/CD',value:num(w.cicd_audit.summary.finding_count),details:listOf(w.cicd_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.workflow)}${f.job_id?` / ${f.job_id}`:''} · ${textOf(f.evidence)}`}))})
-  if (w.artifact_trust?.summary) items.push({name:'产物可信',value:num(w.artifact_trust.summary.failed),details:[
+  if (w.code_audit?.summary) items.push({name:'代码审查',value:num(w.code_audit.summary.total),module:'code',details:listOf(w.code_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.risk_file)}:${textOf(f.line)} · ${textOf(f.evidence)}`}))})
+  if (w.dependency_audit?.summary) items.push({name:'供应链',value:num(w.dependency_audit.summary.finding_count),module:'supply',details:listOf(w.dependency_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.dependency)} · ${textOf(f.source_file)} · ${textOf(f.evidence)}`}))})
+  if (w.cicd_audit?.summary) items.push({name:'CI/CD',value:num(w.cicd_audit.summary.finding_count),module:'pipeline',details:listOf(w.cicd_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.workflow)}${f.job_id?` / ${f.job_id}`:''} · ${textOf(f.evidence)}`}))})
+  if (w.artifact_trust?.summary) items.push({name:'产物可信',value:num(w.artifact_trust.summary.failed),module:'artifact',details:[
     ...listOf(w.artifact_trust.findings).slice(0,4).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:textOf(f.evidence)})),
     ...listOf(w.artifact_trust.checks).filter(c=>['fail','warn','missing'].includes(String(c.status||''))).slice(0,4).map(c=>({title:artifactCheckTitle(textOf(c.name)),severity:c.status==='fail'?'critical':c.status==='warn'?'high':'medium',evidence:textOf(c.evidence, String(c.status || '-'))})),
   ].slice(0,5)})
-  if (w.log_audit?.summary) items.push({name:'日志印证',value:num(w.log_audit.summary.finding_count),details:listOf(w.log_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.source)} · ${textOf(f.signal)} · ${textOf(f.evidence)}`}))})
+  if (w.log_audit?.summary) items.push({name:'日志印证',value:num(w.log_audit.summary.finding_count),module:'logs',details:listOf(w.log_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.source)} · ${textOf(f.signal)} · ${textOf(f.evidence)}`}))})
   if (w.multimodal_audit?.summary) {
     const directFindings = listOf(w.multimodal_audit.findings)
     const evidenceFindings = listOf(w.multimodal_audit.evidence).flatMap(item =>
@@ -71,13 +59,14 @@ function buildRiskSources(w: SecurityWorkspace) {
     items.push({
       name:'外部告警',
       value:num(w.multimodal_audit.summary.finding_count),
+      module:'multimodal',
       details:[...directFindings, ...evidenceFindings].slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.source_name)} · ${textOf(f.evidence || f.reason || f.rule_id)}`}))
     })
   }
-  if (w.graph?.summary) items.push({name:'图谱',value:num(w.graph.summary.attack_path_count),details:listOf(w.graph.attack_paths).slice(0,5).map(p=>({title:textOf(p.title),severity:textOf(p.severity, 'medium'),evidence:textOf(p.conclusion||p.description)}))})
+  if (w.graph?.summary) items.push({name:'图谱',value:num(w.graph.summary.attack_path_count),module:'graph',details:listOf(w.graph.attack_paths).slice(0,5).map(p=>({title:textOf(p.title),severity:textOf(p.severity, 'medium'),evidence:textOf(p.conclusion||p.description)}))})
   return items.filter(i=>i.value>0)
 }
-function buildStages(w: SecurityWorkspace): ReportPathStage[] {
+function _buildStages(w: SecurityWorkspace): ReportPathStage[] {
   const path = sortedAttackPaths(w)[0]
   return listOf(path?.path_steps).map((s:any,i)=>({
     id:`${i}`, title:textOf(s.relationship||s.edge_type, `步骤${i+1}`),
@@ -98,7 +87,7 @@ function evidenceGroups(step:any):string[]{
   if(/code|import|call|源码|路径/.test(t))g.push('代码')
   return g.length?g:['组件']
 }
-function buildBreakpoints(w:SecurityWorkspace):ReportTrustBreakpoint[]{
+function _buildBreakpoints(w:SecurityWorkspace):ReportTrustBreakpoint[]{
   return listOf(w.artifact_trust?.checks).filter(c=>['fail','warn','missing'].includes(String(c.status||''))).slice(0,5).map(c=>({
     id:textOf(c.name),title:artifactCheckTitle(textOf(c.name)),evidence:textOf(c.evidence, String(c.status || '')),
     severity:textOf(c.severity, c.status==='fail'?'high':'medium'),
@@ -123,7 +112,7 @@ function artifactCheckTitle(name:string){
   return labels[name]||name
 }
 
-function buildActionItems(w:SecurityWorkspace, breakpoints:ReportTrustBreakpoint[], stages:ReportPathStage[]):ReportActionItem[]{
+function _buildActionItems(w:SecurityWorkspace, breakpoints:ReportTrustBreakpoint[], stages:ReportPathStage[]):ReportActionItem[]{
   const items:ReportActionItem[]=[]
   if((w.summary.risk_score??0)>=90||breakpoints.some(bp=>['critical','high'].includes(bp.severity))){
     items.push({priority:'最高优先级',title:'阻断发布并冻结当前产物',detail:'当前风险已经进入供应链关键链路，先停止发布或合并，避免污染产物进入用户环境。',tone:'red'})
@@ -159,7 +148,7 @@ function severityBadgeClass(severity:string){
   return'border-border text-muted-foreground'
 }
 
-function extractParagraphs(report:string,limit:number):string[]{
+function _extractParagraphs(report:string,limit:number):string[]{
   const lines=report.split('\n');let inCB=false
   const c:string[]=[]
   for(const l of lines){const t=l.trim()
@@ -172,6 +161,289 @@ function extractParagraphs(report:string,limit:number):string[]{
   return c.slice(0,limit)
 }
 function downloadBlob(blob:Blob,filename:string){const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download=filename;a.click();URL.revokeObjectURL(u)}
+
+function normalizeReportTitle(report:string){
+  const title='# SupplyGuard KG 供应链攻击溯源报告'
+  const trimmed=report.trimStart()
+  if(/^#\s+SupplyGuard KG 供应链攻击溯源报告/m.test(trimmed))return report
+  if(/^#\s+APT 供应链攻击溯源报告/m.test(trimmed))return report.replace(/^#\s+APT 供应链攻击溯源报告/m,title)
+  if(/^#\s+.*溯源报告.*$/m.test(trimmed))return report.replace(/^#\s+.*溯源报告.*$/m,title)
+  return `${title}\n\n${report}`.trimEnd()
+}
+
+const ATTACK_PATH_OVERVIEW_SECTION_TITLES=new Set(['攻击路径','攻击路径总览'])
+const ATTACK_PATH_DETAIL_SECTION_TITLES=new Set(['攻击路径详情','攻击链路详情','攻击链路详细','攻击链路详细部分'])
+const CONCLUSION_SECTION_TITLES=new Set(['一句话结论','结论'])
+
+export function normalizeReportForDisplay(report:string, workspace:SecurityWorkspace){
+  const withTitle=normalizeReportTitle(report)
+  const withoutCaution=removeReportAdmonitionBlocks(withTitle)
+  const withoutRedundantSections=removeMarkdownSectionsByTitle(withoutCaution,new Set(['风险总览','路径判定','技术明细']))
+  const withCompactConclusion=rewriteConclusionSection(withoutRedundantSections,workspace)
+  const withoutOldAttackPathDetails=removeMarkdownSectionsByTitle(withCompactConclusion,ATTACK_PATH_DETAIL_SECTION_TITLES)
+  const withFriendlyAttackPaths=rewriteAttackPathSection(withoutOldAttackPathDetails,workspace)
+  const withAiReview=rewriteAiTriageSection(withFriendlyAttackPaths,workspace)
+  const withFormalLabels=normalizeReportSectionLabels(withAiReview)
+  return renumberNumberedReportSections(withFormalLabels)
+}
+
+function normalizeReportSectionLabels(markdown:string){
+  return markdown
+    .replace(/^(##\s+)(?:\d+[.、]\s+)?一句话结论\s*$/gm,'$1结论')
+    .replace(/^(##\s+)(?:\d+[.、]\s+)?用户该做什么\s*$/gm,'$1处置建议与优先级')
+    .replace(/^一句话结论[：:]\s*/gm,'结论：')
+    .replace(/^立即建议[：:]\s*/gm,'建议优先执行：')
+}
+
+function removeReportAdmonitionBlocks(markdown:string){
+  const lines=markdown.split(/\r?\n/)
+  const kept:string[]=[]
+  let skipping=false
+
+  for(const line of lines){
+    const trimmed=line.trim()
+    if(/^>\s*\[!(?:CAUTION|WARNING|IMPORTANT|NOTE|TIP)\]/i.test(trimmed)){
+      skipping=true
+      while(kept.length&&kept[kept.length-1].trim()==='')kept.pop()
+      continue
+    }
+
+    if(skipping){
+      if(trimmed===''||trimmed.startsWith('>'))continue
+      skipping=false
+    }
+
+    kept.push(line)
+  }
+
+  return kept.join('\n').replace(/\n{3,}/g,'\n\n').trimEnd()
+}
+
+function rewriteConclusionSection(markdown:string, workspace:SecurityWorkspace){
+  const rewritten=buildCompactConclusionSection(workspace)
+  const range=findMarkdownSectionRange(markdown,CONCLUSION_SECTION_TITLES)
+  if(!range)return insertSectionAfterReportIntro(markdown,rewritten)
+  return `${markdown.slice(0,range.start).trimEnd()}\n\n${rewritten}\n\n${markdown.slice(range.end).replace(/^\n+/,'')}`.trimEnd()
+}
+
+function buildCompactConclusionSection(workspace:SecurityWorkspace){
+  const primaryPath=sortedAttackPaths(workspace)[0]
+  const confidence=formatConfidence(primaryPath?.confidence ?? workspace.graph?.summary?.average_path_confidence)
+  const riskScore=num(workspace.summary?.risk_score)
+  const riskLevel=chineseReportRiskLevel(workspace.summary?.risk_level||'')
+  const subject=primaryRiskSubject(workspace)
+  const runtime=primaryRuntimeSignal(workspace)
+  const priority=reportPriorityLabel(riskScore,riskLevel,primaryPath?.verdict==='likely-real-attack-path'?1:0)
+  const runtimePart=runtime&&runtime!=='尚未命中运行期证据'?`，并触达运行期证据 ${runtime}`:''
+
+  return `## 结论
+
+结论：当前证据显示 ${markdownCellText(subject)} 相关风险已串联依赖、构建、产物与运行期线索${markdownCellText(runtimePart)}，综合置信度 ${confidence || 0}%，建议按${markdownCellText(priority)}处置。
+
+## 关键指标
+
+| 指标 | 结果 |
+| --- | --- |
+| 综合风险 | ${riskScore} / 100 |
+| 风险等级 | ${markdownCellText(riskLevel||'-')} |
+| 首要风险对象 | ${markdownCellText(subject)} |
+| 运行期证据 | ${markdownCellText(runtime)} |
+| 处置优先级 | ${markdownCellText(priority)} |`
+}
+
+function insertSectionAfterReportIntro(markdown:string,section:string){
+  const headings=[...markdown.matchAll(/^##\s+.+?\s*$/gm)]
+  if(!headings.length)return `${markdown.trimEnd()}\n\n${section}`.trimEnd()
+  const first=headings[0]
+  return `${markdown.slice(0,first.index).trimEnd()}\n\n${section}\n\n${markdown.slice(first.index).replace(/^\n+/,'')}`.trimEnd()
+}
+
+function removeMarkdownSectionsByTitle(markdown:string,titles:Set<string>){
+  const lines=markdown.split(/\r?\n/)
+  const kept:string[]=[]
+  let skippingLevel=0
+
+  for(const line of lines){
+    const heading=parseMarkdownHeading(line)
+
+    if(skippingLevel){
+      if(!heading||heading.level>skippingLevel)continue
+      skippingLevel=0
+    }
+
+    if(heading&&titles.has(heading.title)){
+      skippingLevel=heading.level
+      while(kept.length&&kept[kept.length-1].trim()==='')kept.pop()
+      continue
+    }
+
+    kept.push(line)
+  }
+
+  return kept.join('\n').replace(/\n{3,}/g,'\n\n').trimEnd()
+}
+
+function parseMarkdownHeading(line:string){
+  const match=/^(#{1,6})\s+(.+?)\s*$/.exec(line.trim())
+  if(!match)return null
+  const title=match[2]
+    .replace(/^\d+[.、]\s*/,'')
+    .replace(/[`*_]/g,'')
+    .trim()
+  return {level:match[1].length,title}
+}
+
+function findMarkdownSectionRange(markdown:string,titles:Set<string>){
+  const headings=[...markdown.matchAll(/^(#{1,6})\s+(.+?)\s*$/gm)]
+  for(let index=0;index<headings.length;index++){
+    const match=headings[index]
+    const parsed=parseMarkdownHeading(match[0])
+    if(!parsed||!titles.has(parsed.title))continue
+
+    const start=match.index ?? 0
+    let end=markdown.length
+    for(let nextIndex=index+1;nextIndex<headings.length;nextIndex++){
+      const next=headings[nextIndex]
+      const nextLevel=next[1].length
+      if(nextLevel<=parsed.level){
+        end=next.index ?? markdown.length
+        break
+      }
+    }
+    return {start,end}
+  }
+  return null
+}
+
+function renumberNumberedReportSections(markdown:string){
+  let index=0
+  return markdown.replace(/^##\s+(?:\d+[.、]\s+)?(.+?)\s*$/gm,(_match,title)=>`## ${++index}. ${title}`)
+}
+
+function primaryRiskSubject(workspace:SecurityWorkspace){
+  const dependencyFinding=listOf(workspace.dependency_audit?.findings)[0] as Record<string,unknown>|undefined
+  const graphPath=sortedAttackPaths(workspace)[0]
+  const fromDependency=textOf(dependencyFinding?.dependency || dependencyFinding?.package || dependencyFinding?.title, '')
+  if(fromDependency)return fromDependency
+  const fromPath=listOf(graphPath?.path_steps).map((step:any)=>step.source || step.target).find(value=>/npm:|pypi:|@/.test(String(value||'')))
+  if(fromPath)return shortAttackPathSubject(fromPath, '依赖风险')
+  return workspace.workspace?.repository || workspace.workspace?.name || '当前项目'
+}
+
+function primaryRuntimeSignal(workspace:SecurityWorkspace){
+  const path=sortedAttackPaths(workspace)[0]
+  const runtimeStep=listOf(path?.path_steps).find((step:any)=>/log|runtime|egress|ip|外联|日志|45\./i.test(`${step.source||''} ${step.target||''} ${step.relationship||''}`))
+  if(runtimeStep)return `${shortAttackPathSubject(runtimeStep.source,'运行服务')} → ${shortAttackPathSubject(runtimeStep.target,'异常目标')}`
+  const finding=listOf(workspace.log_audit?.findings)[0] as Record<string,unknown>|undefined
+  const source=textOf(finding?.source,'')
+  const target=textOf(finding?.target || finding?.dst_ip || finding?.ip || finding?.signal,'')
+  if(source&&target)return `${source} → ${target}`
+  const evidence=textOf(finding?.signal || finding?.title || finding?.evidence, '')
+  if(evidence)return evidence.length>42?`${evidence.slice(0,40)}...`:evidence
+  return '尚未命中运行期证据'
+}
+
+function buildEvidenceCoverage(workspace:SecurityWorkspace, stages:ReportPathStage[], riskSources:RiskSourceItem[]):EvidenceCoverageItem[]{
+  const sourceValue=(name:string)=>riskSources.find(item=>item.name===name)?.value??0
+  const stageHas=(pattern:RegExp)=>stages.some(stage=>pattern.test(`${stage.title} ${stage.source} ${stage.target} ${stage.relationship} ${stage.evidenceGroups.join(' ')}`))
+  return [
+    {label:'依赖',module:'supply',hit:!!workspace.dependency_audit?.summary||stageHas(/依赖|组件|package|npm:|pypi:/i),count:sourceValue('供应链'),detail:'依赖、SBOM、VEX 和可达性证据'},
+    {label:'构建',module:'pipeline',hit:!!workspace.cicd_audit?.summary||stageHas(/CI\/CD|构建|workflow|runner|action/i),count:sourceValue('CI/CD'),detail:'workflow、Action、runner 和构建步骤'},
+    {label:'产物',module:'artifact',hit:!!workspace.artifact_trust?.summary||stageHas(/产物|artifact|digest|hash|签名|attestation/i),count:sourceValue('产物可信'),detail:'哈希、签名、provenance 和 attestation'},
+    {label:'日志',module:'logs',hit:!!workspace.log_audit?.summary||stageHas(/日志|运行|runtime|egress|外联|ip/i),count:sourceValue('日志印证'),detail:'运行期外联、敏感路径和异常事件'},
+    {label:'告警',module:'multimodal',hit:!!workspace.multimodal_audit?.summary||stageHas(/告警|截图|OCR|ASR|多模态/i),count:sourceValue('外部告警'),detail:'截图、语音、告警文本和外部材料'},
+    {label:'代码',module:'code',hit:!!workspace.code_audit?.summary||stageHas(/代码|源码|import|call/i),count:sourceValue('代码审查'),detail:'代码引用、入口命中和调用路径'},
+  ]
+}
+
+function decisionConclusion(workspace:SecurityWorkspace, confidence:number){
+  const score=num(workspace.summary?.risk_score)
+  const subject=primaryRiskSubject(workspace)
+  if(score>=90)return `当前最需要先处理的是 ${subject} 相关链路。风险已经达到严重级别，并且已有多类证据指向供应链攻击路径。`
+  if(score>=75)return `${subject} 相关链路风险较高，建议先复核依赖来源、构建环境和产物可信证据。`
+  return `当前风险处于可研判状态，建议先补齐关键证据，再确认是否需要阻断发布。置信度约 ${confidence}%。`
+}
+
+function _ReportDecisionDashboard({
+  workspace,
+  stages,
+  actionItems,
+  riskSources,
+  breakpoints,
+  ready: _ready,
+  onOpenModule,
+}:{
+  workspace:SecurityWorkspace
+  stages:ReportPathStage[]
+  actionItems:ReportActionItem[]
+  riskSources:RiskSourceItem[]
+  breakpoints:ReportTrustBreakpoint[]
+  ready:boolean
+  onOpenModule?:(module:PlatformTab)=>void
+}){
+  const primaryPath=sortedAttackPaths(workspace)[0]
+  const confidence=formatConfidence(primaryPath?.confidence ?? workspace.graph?.summary?.average_path_confidence)
+  const coverage=buildEvidenceCoverage(workspace,stages,riskSources)
+
+  return(
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
+      <Card className="surface-raised overflow-hidden border-cyan-400/20">
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base font-black"><ShieldAlert className="size-4 text-red-400"/>先看结论</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="rounded-xl border border-red-400/25 bg-red-950/15 p-5">
+            <div className="text-lg font-black leading-relaxed text-foreground">{decisionConclusion(workspace,confidence)}</div>
+            <p className="mt-2 text-sm leading-7 text-muted-foreground">建议先处理能阻断攻击链的动作，再进入下方证据和 Markdown 详情复核。</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="space-y-5">
+        <Card className="surface-raised border-cyan-400/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-black"><ClipboardList className="size-4 text-cyan-400"/>证据支撑</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-2">
+              {coverage.map(item=>(
+                <button key={item.label} type="button" onClick={()=>onOpenModule?.(item.module)} className={cn('rounded-lg border p-3 text-left transition hover:-translate-y-0.5',item.hit?'border-cyan-400/25 bg-cyan-950/10':'border-border/70 bg-[color:var(--surface-inset)] opacity-75')}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold text-foreground">{item.label}</span>
+                    <Badge variant="outline" className={cn('text-[10px]',item.hit?'border-emerald-400/30 text-emerald-300':'border-amber-400/30 text-amber-300')}>{item.hit?'已命中':'待补充'}</Badge>
+                  </div>
+                  <div className="mt-2 text-xl font-black text-cyan-200">{item.count}</div>
+                  <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted-foreground">{item.detail}</div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="surface-raised border-orange-400/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm font-black"><PackageCheck className="size-4 text-orange-400"/>建议先做</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {(actionItems.length?actionItems:[{priority:'中优先级',title:'补齐证据后复扫',detail:'补充依赖、CI/CD、产物和日志材料后，再确认攻击链是否成立。',tone:'cyan'} as ReportActionItem]).slice(0,5).map((item,index)=>(
+              <div key={`${item.title}-${index}`} className="flex gap-3 rounded-lg border border-border/60 bg-[color:var(--surface-inset)] p-3">
+                <div className={cn('grid size-7 shrink-0 place-items-center rounded-md text-xs font-black',item.tone==='red'?'bg-red-500/15 text-red-300':item.tone==='orange'?'bg-orange-500/15 text-orange-300':'bg-cyan-500/15 text-cyan-300')}>{index+1}</div>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-black text-foreground">{item.title}</span>
+                    <Badge variant="outline" className="text-[10px]">{item.priority}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
+                </div>
+              </div>
+            ))}
+            {breakpoints.length?<div className="pt-1 text-[11px] text-muted-foreground">已识别 {breakpoints.length} 个可信断点，建议同步复核产物和构建策略。</div>:null}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
 
 /* ════════════════════════════════════════════════════
    ANIMATED NUMBER
@@ -187,45 +459,8 @@ function AnimatedNumber({target,ready,className}:{target:number;ready:boolean;cl
   return <span className={cn('tabular-nums',className)}>{display}</span>
 }
 
-/* ══ Glow KPI card — spotlight hover, animated number, shimmer ══ */
-function GlowKpi({metric,delay,ready}:{metric:ReportMetric;delay:number;ready:boolean}){
-  const rm=useReducedMotion()
-  const toneMap:Record<string,{text:string;glow:string;bg:string}> = {
-    red:{text:'text-console-red',glow:'rgba(239,68,68,0.15)',bg:'rgba(239,68,68,0.04)'},
-    cyan:{text:'text-console-cyan',glow:'rgba(6,182,212,0.15)',bg:'rgba(6,182,212,0.04)'},
-    orange:{text:'text-console-orange',glow:'rgba(249,115,22,0.15)',bg:'rgba(249,115,22,0.04)'},
-    emerald:{text:'text-console-emerald',glow:'rgba(52,211,153,0.15)',bg:'rgba(52,211,153,0.04)'},
-    slate:{text:'text-muted-foreground',glow:'rgba(148,163,184,0.08)',bg:'rgba(148,163,184,0.02)'},
-  }
-  const t=toneMap[metric.tone]
-  // Extract numeric value for animation
-  const numVal=parseInt(metric.value)||0
-  return(
-    <motion.div
-      className="group relative overflow-hidden rounded-2xl border border-border bg-[color:var(--surface-card)] p-5 cursor-default"
-      initial={rm?{}:{opacity:0,y:20,scale:.95}}
-      animate={ready?{opacity:1,y:0,scale:1}:{}}
-      transition={{duration:.55,delay,ease:[.16,1,.3,1]}}
-      whileHover={{y:-3,transition:{duration:.3}}}
-    >
-      {/* Spotlight hover */}
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
-        style={{background:`radial-gradient(circle at 50% 0%, ${t.glow} 0%, transparent 60%)`}}/>
-      {/* Top glow bar */}
-      <div className="absolute top-0 left-4 right-4 h-px opacity-40 group-hover:opacity-100 transition-opacity duration-500"
-        style={{background:`linear-gradient(90deg, transparent, ${t.glow.replace('0.15','0.6')}, transparent)`}}/>
-      <span className="relative text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{metric.label}</span>
-      <div className={cn('relative text-3xl font-black tracking-tighter mt-1',t.text)}>
-        <AnimatedNumber target={numVal} ready={ready} />
-        <span className="text-lg">{metric.value.replace(/^\d+/,'')}</span>
-      </div>
-      <span className="relative text-[11px] text-muted-foreground truncate block mt-0.5">{metric.detail}</span>
-    </motion.div>
-  )
-}
-
 /* ══ Risk Ring — with glow aura ══ */
-function RiskRing({score,level,ready}:{score:number;level:string;ready:boolean}){
+function RiskRing({score,level:_level,ready}:{score:number;level:string;ready:boolean}){
   const r=92,cx=104,cy=104,circ=Math.round(2*Math.PI*r)
   const tgt=circ-(score/100)*circ
   const spr=useSpring(0,{stiffness:16,damping:11,mass:.8})
@@ -256,7 +491,7 @@ function RiskRing({score,level,ready}:{score:number;level:string;ready:boolean})
 }
 
 /* ══ Glow bar for chart ══ */
-function GlowBar(props:any){
+function _GlowBar(props:any){
   const{x,y,width,height,fill,index}=props
   if(width==null||height==null)return null
   const progress=useSpring(0,{stiffness:50,damping:13})
@@ -276,7 +511,7 @@ function GlowBar(props:any){
 }
 
 /* ══ Stage entry card — glow hover button ══ */
-function StageCard({stage,index,ready,onClick}:{stage:ReportPathStage;index:number;ready:boolean;onClick:()=>void}){
+function _StageCard({stage,index,ready,onClick}:{stage:ReportPathStage;index:number;ready:boolean;onClick:()=>void}){
   const rm=useReducedMotion()
   const sevColors:Record<string,string>={critical:'#ef4444',high:'#f97316',medium:'#f59e0b'}
   const accent=sevColors[stage.severity]||'#06b6d4'
@@ -319,67 +554,8 @@ function StageCard({stage,index,ready,onClick}:{stage:ReportPathStage;index:numb
   )
 }
 
-/* 攻击路径节点链 */
-function AttackPathNodeFlow({stages,ready,onSelect}:{stages:ReportPathStage[];ready:boolean;onSelect:(stage:ReportPathStage)=>void}){
-  const rm=useReducedMotion()
-  const sevColors:Record<string,string>={critical:'#ef4444',high:'#f97316',medium:'#f59e0b'}
-  return(
-    <div className="relative overflow-x-auto pb-2">
-      <div className="flex min-w-max items-center px-1 py-3">
-        {stages.map((stage,index)=>{
-          const accent=sevColors[stage.severity]||'#06b6d4'
-          return(
-            <div key={stage.id} className="flex items-center">
-              <motion.button
-                initial={rm?{}:{opacity:0,y:12,scale:.96}}
-                animate={ready?{opacity:1,y:0,scale:1}:{}}
-                transition={{delay:.1+index*.08,duration:.42,ease:[.16,1,.3,1]}}
-                onClick={()=>onSelect(stage)}
-                className="group relative w-[210px] rounded-2xl border border-border bg-[color:var(--surface-card)] p-4 text-left transition-all duration-300 hover:-translate-y-1 hover:border-ring/40 hover:shadow-lg active:translate-y-0 active:scale-[0.98]"
-                title="点击查看该节点证据"
-              >
-                <div className="absolute inset-x-5 top-0 h-px opacity-70" style={{background:`linear-gradient(90deg, transparent, ${accent}, transparent)`}}/>
-                <div className="absolute inset-0 rounded-2xl opacity-0 transition-opacity duration-500 group-hover:opacity-100" style={{background:`radial-gradient(circle at 30% 0%, ${accent}16, transparent 65%)`}}/>
-                <div className="relative flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <span className="grid size-8 place-items-center rounded-full text-xs font-black text-white shadow-sm" style={{background:accent}}>
-                      {index+1}
-                    </span>
-                    <div>
-                      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">阶段 {index+1}</div>
-                      <div className="mt-0.5 text-[11px] text-muted-foreground">{stage.evidenceCount} 条证据</div>
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="shrink-0 text-[10px] px-1.5 py-0" style={{color:accent,borderColor:`${accent}50`}}>
-                    {Math.round(stage.confidence*100)}%
-                  </Badge>
-                </div>
-                <div className="relative mt-4 min-h-[44px] text-sm font-black leading-snug text-foreground line-clamp-2">{stage.title}</div>
-                <div className="relative mt-3 flex flex-wrap gap-1.5">
-                  {stage.evidenceGroups.slice(0,3).map(group=>(
-                    <span key={group} className="rounded-md surface-inset px-2 py-0.5 text-[10px] font-medium text-muted-foreground">{group}</span>
-                  ))}
-                </div>
-                <div className="relative mt-4 flex items-center gap-1 text-[11px] font-medium opacity-0 transition-opacity duration-300 group-hover:opacity-100" style={{color:accent}}>
-                  查看节点内容 <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5"/>
-                </div>
-              </motion.button>
-              {index<stages.length-1&&(
-                <div className="flex items-center px-2 sm:px-3" aria-hidden="true">
-                  <div className="h-px w-10 bg-gradient-to-r from-border via-cyan-400/50 to-border sm:w-16"/>
-                  <ArrowRight className="size-4 -ml-1 text-cyan-400/70"/>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 /* 攻击节点详情抽屉 */
-function StageDrawer({stage,open,onClose}:{stage:ReportPathStage|null;open:boolean;onClose:()=>void}){
+function _StageDrawer({stage,open,onClose}:{stage:ReportPathStage|null;open:boolean;onClose:()=>void}){
   if(!stage)return null
   return(
     <Sheet open={open} onOpenChange={v=>{if(!v)onClose()}}>
@@ -423,7 +599,7 @@ function StageDrawer({stage,open,onClose}:{stage:ReportPathStage|null;open:boole
   )
 }
 
-function RiskDetailDrawer({source,detail,open,onClose}:{source:RiskSourceItem|null;detail:RiskSourceDetail|null;open:boolean;onClose:()=>void}){
+function _RiskDetailDrawer({source,detail,open,onClose}:{source:RiskSourceItem|null;detail:RiskSourceDetail|null;open:boolean;onClose:()=>void}){
   if(!source||!detail)return null
   return(
     <Sheet open={open} onOpenChange={v=>{if(!v)onClose()}}>
@@ -593,7 +769,15 @@ function ReportMarkdownBlockView({block}:{block:ReportMarkdownBlock}){
     return <Tag className={cn('font-black tracking-tight text-foreground',block.level<=1?'text-2xl':block.level===2?'text-lg':'text-base')}>{renderReportInlineMarkdown(block.text)}</Tag>
   }
   if(block.type==='quote'){
-    return <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm leading-7 text-red-700 dark:text-red-200">{renderReportInlineMarkdown(block.text)}</div>
+    return (
+      <div className="rounded-xl border border-red-500/25 bg-red-950/20 p-4 text-sm leading-7 text-red-100">
+        <div className="mb-2 flex items-center gap-2 text-sm font-black text-red-200">
+          <AlertTriangle className="size-4" />
+          风险提示
+        </div>
+        <div className="text-red-100/85">{renderReportInlineMarkdown(block.text || '当前报告面向供应链攻击检测与溯源研判，请优先处理最高风险链路，再展开后续证据复核。')}</div>
+      </div>
+    )
   }
   if(block.type==='list'){
     return(
@@ -800,8 +984,16 @@ function parseReportMarkdown(markdown:string):ReportMarkdownBlock[]{
 
     if(line.startsWith('>')){
       flushList()
-      blocks.push({type:'quote',text:line.replace(/^>\s?/,'')})
-      index++
+      const quoteLines:string[]=[]
+      while(index<lines.length&&lines[index].trim().startsWith('>')){
+        quoteLines.push(lines[index].trim().replace(/^>\s?/,'').trim())
+        index++
+      }
+      const cleaned=quoteLines
+        .filter((item,index)=>!(index===0&&/^\[!(CAUTION|WARNING|IMPORTANT|NOTE|TIP)\]$/i.test(item)))
+        .join(' ')
+        .trim()
+      blocks.push({type:'quote',text:cleaned})
       continue
     }
 
@@ -852,7 +1044,7 @@ function renderReportInlineMarkdown(text:string){
   })
 }
 
-function normalizeReportMarkdown(markdown:string, workspace:SecurityWorkspace){
+function _normalizeReportMarkdown(markdown:string, workspace:SecurityWorkspace){
   const withCompactSummary=replaceRiskSummarySection(markdown,workspace)
   const withoutPathJudgement=removePathJudgementSection(withCompactSummary)
   const withPathOverview=rewriteAttackPathSection(withoutPathJudgement,workspace)
@@ -926,7 +1118,7 @@ function removeReportAppendixSection(markdown:string){
 }
 
 function rewriteAiTriageSection(markdown:string, workspace:SecurityWorkspace){
-  const headingMatch=/^##\s*(?:\d+\.\s*)?(?:GraphRAG\s*\/\s*GNN\s*(?:风险增强|辅助研判)|AI 辅助研判)\s*$/m.exec(markdown)
+  const headingMatch=/^##\s*(?:\d+\.\s*)?(?:GraphRAG\s*\/\s*GNN\s*(?:风险增强|辅助研判)|AI 辅助研判|AI 引入风险复核)\s*$/m.exec(markdown)
   if(!headingMatch)return markdown
   const sectionStart=headingMatch.index
   const contentStart=sectionStart+headingMatch[0].length
@@ -938,34 +1130,40 @@ function rewriteAiTriageSection(markdown:string, workspace:SecurityWorkspace){
 }
 
 function buildAiTriageSection(workspace:SecurityWorkspace){
-  const candidates=getGnnCandidateNodes(workspace).slice(0,3)
-  const highRiskCount=getGnnCandidateNodes(workspace).filter(item=>item.score>=0.75).length
-  const graphRagHits=countGraphRagEvidenceHits(workspace)
+  const candidates=getAiReviewCandidates(workspace)
   const conclusion=candidates.length
-    ? `AI 辅助研判未单独证明攻击成立，但识别出 ${candidates.length} 个需要复核的可疑对象。建议把它们作为风险排序参考，最终仍以依赖、CI/CD、产物可信和运行日志证据为准。`
-    : 'AI 辅助研判未发现新的高风险对象。当前结论仍以依赖、CI/CD、产物可信和运行日志证据为准。'
-  const rows=candidates.map(item=>`| ${markdownCellText(item.label)} | ${Math.round(item.score*100)}% | ${markdownCellText(aiTriageAdvice(item))} |`).join('\n')
-  return `## AI 辅助研判
+    ? `当前未发现可直接证明由 AI 生成或推荐导致的攻击证据，但有 ${candidates.length} 个可疑对象需要复核来源、版本和安装脚本。`
+    : '当前未发现可直接证明由 AI 生成或推荐导致的攻击证据，也未识别出需要优先复核的 AI 引入对象。'
+  const rows=candidates.map(item=>`| ${markdownCellText(item.label)} | ${markdownCellText(aiTriageConcern(item))} | ${markdownCellText(aiTriageAdvice(item))} |`).join('\n')
+  return `## AI 引入风险复核
 
-### 研判结论
+结论：${conclusion}${rows?`
 
-${conclusion}
+| 复核对象 | 风险关注点 | 建议动作 |
+| --- | --- | --- |
+${rows}`:''}`
+}
 
-| 指标 | 结果 |
-| --- | --- |
-| 高风险 AI 节点 | ${highRiskCount} 个 |
-| 重点复核对象 | ${candidates.length} 个 |
-| GraphRAG 证据命中 | ${graphRagHits} 条 |
+function getAiReviewCandidates(workspace:SecurityWorkspace){
+  const seen=new Set<string>()
+  const candidates:Array<{label:string;score:number}>=[]
+  for(const item of getGnnCandidateNodes(workspace)){
+    const key=item.label.trim().toLowerCase()
+    if(!key||seen.has(key))continue
+    seen.add(key)
+    candidates.push(item)
+    if(candidates.length>=3)break
+  }
+  return candidates
+}
 
-### 重点关注对象
-
-| 对象 | AI 风险分 | 建议 |
-| --- | ---: | --- |
-${rows||'| - | - | 暂无需要优先复核的 AI 风险对象 |'}
-
-### 说明
-
-GNN 用于根据依赖关系和图谱上下文给节点重新排序；GraphRAG 用于把相关证据串联起来。该模块只辅助判断“哪些节点更值得优先看”，不单独作为攻击成立依据。`
+function aiTriageConcern(item:{label:string;score:number}){
+  const label=item.label.toLowerCase()
+  if(/build-agent|builder|runner|workflow|ci/.test(label))return '构建相关对象，可能影响产物生成或发布链路'
+  if(/codec|serialize|parser|json|yaml/.test(label))return '解析或编解码相关依赖，需确认是否参与敏感路径'
+  if(/npm:|pypi:|@/.test(label))return '第三方依赖来源不明，需确认引入方式和安装脚本'
+  if(item.score>=0.75)return '图谱排序靠前，建议确认是否与当前攻击链有关'
+  return '可疑度较低，但建议结合引入记录做来源复核'
 }
 
 function getGnnCandidateNodes(workspace:SecurityWorkspace){
@@ -983,33 +1181,21 @@ function getGnnCandidateNodes(workspace:SecurityWorkspace){
     .sort((a,b)=>b.score-a.score)
 }
 
-function countGraphRagEvidenceHits(workspace:SecurityWorkspace){
-  const graphRag=workspace.assistant?.graph_rag
-  const table=Array.isArray(graphRag?.evidence_table)?graphRag.evidence_table.length:0
-  const channels=graphRag?.channels&&typeof graphRag.channels==='object'?graphRag.channels:{}
-  const channelHits=Object.values(channels).reduce((total,value)=>total+(Array.isArray(value)?value.length:0),0)
-  return Math.max(table,channelHits)
-}
-
 function aiTriageAdvice(item:{label:string;score:number}){
   const label=item.label.toLowerCase()
-  if(/x-trader|build-agent|codec|vendor|builder/.test(label))return '复核来源、版本、安装脚本和是否由 AI 推荐引入'
+  if(/build-agent|builder|runner|workflow|ci/.test(label))return '复核来源、版本、安装脚本和是否由 AI 推荐引入'
+  if(/codec|serialize|parser|json|yaml/.test(label))return '检查调用位置、锁定版本，并确认是否参与敏感路径'
   if(/npm:|pypi:|@/.test(label))return '检查依赖来源、锁定版本和可达调用路径'
   if(item.score>=0.75)return '作为高风险对象优先排查'
   return '低优先级复核，结合实际证据判断'
 }
 
 function rewriteAttackPathSection(markdown:string, workspace:SecurityWorkspace){
-  const attackHeading=/^## 攻击路径\s*$/m.exec(markdown)
-  if(!attackHeading)return markdown
   const rewritten=buildAttackPathSection(workspace)
   if(!rewritten)return markdown
-  const sectionStart=attackHeading.index
-  const contentStart=sectionStart+attackHeading[0].length
-  const tail=markdown.slice(contentStart)
-  const nextHeading=/\n##\s+/.exec(tail)
-  const sectionEnd=nextHeading?contentStart+nextHeading.index:markdown.length
-  return `${markdown.slice(0,sectionStart)}${rewritten}\n\n${markdown.slice(sectionEnd).replace(/^\n+/,'')}`
+  const range=findMarkdownSectionRange(markdown,ATTACK_PATH_OVERVIEW_SECTION_TITLES)
+  if(!range)return `${markdown.trimEnd()}\n\n${rewritten}`
+  return `${markdown.slice(0,range.start).trimEnd()}\n\n${rewritten}\n\n${markdown.slice(range.end).replace(/^\n+/,'')}`.trimEnd()
 }
 
 function buildAttackPathSection(workspace:SecurityWorkspace){
@@ -1017,51 +1203,163 @@ function buildAttackPathSection(workspace:SecurityWorkspace){
   if(!paths.length)return ''
   return `## 攻击路径
 
-${buildAttackPathOverview(workspace)}
-
-${paths.map((path,index)=>buildCompactAttackPathCard(path,index)).join('\n\n')}`
+${paths.map((path,index)=>buildFriendlyAttackPathCard(path,index)).join('\n\n')}`
 }
 
-function buildAttackPathOverview(workspace:SecurityWorkspace){
-  const paths=getSortedAttackPaths(workspace)
-  if(!paths.length)return ''
-  const rows=paths.map((path,index)=>[
-    `链路 ${index+1}`,
-    attackPathVerdictLabel(path.verdict),
-    `${formatConfidence(path.confidence)}%`,
-    summarizeAttackPath(path),
-    attackPathAction(path),
-  ])
-  return `### 链路总览
-
-系统共识别 **${paths.length} 条供应链攻击链路**，建议按表格顺序优先处理。
-
-| 链路 | 判定 | 置信度 | 主要链路 | 建议动作 |
-| --- | --- | ---: | --- | --- |
-${rows.map(row=>`| ${row.map(markdownCellText).join(' | ')} |`).join('\n')}`
-}
-
-function buildCompactAttackPathCard(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number], index:number){
+function buildFriendlyAttackPathCard(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number], index:number){
   const confidence=formatConfidence(path.confidence)
-  const conclusion=cleanConclusion(path.conclusion||path.description||path.title||'该链路需要进一步研判。',confidence)
+  const conclusion=friendlyAttackPathConclusion(path,confidence)
   const mermaid=buildCompactMermaid(path,index)
-  return `### ${index+1}. ${markdownCellText(path.title||`供应链攻击链路 ${index+1}`)}
+  const priority=reportPriorityLabel(path.score??0,chineseReportRiskLevel(path.severity||''),path.verdict==='likely-real-attack-path'?1:0)
+  const impact=summarizeImpactAssets(path)
+  const evidenceRows=buildEvidenceMatrixRows(path)
+  const detailRows=buildAttackPathDetailRows(path)
+  const actions=buildActionList(path)
+  return `### ${index+1}. ${friendlyAttackPathTitle(path,index)}
 
 **结论：** ${markdownCellText(conclusion)}
 
-| 指标 | 结果 |
+| 关键信息 | 结果 |
 | --- | --- |
-| 判定 | ${markdownCellText(attackPathVerdictLabel(path.verdict))} |
 | 置信度 | ${confidence}% |
 | 严重等级 | ${markdownCellText(chineseReportRiskLevel(path.severity||''))} |
-| 处置优先级 | ${markdownCellText(reportPriorityLabel(path.score??0,chineseReportRiskLevel(path.severity||''),path.verdict==='likely-real-attack-path'?1:0))} |
+| 修复优先级 | ${markdownCellText(priority)} |
+| 影响对象 | ${markdownCellText(impact)} |
 
 \`\`\`mermaid
 ${mermaid}
 \`\`\`
 
-**建议处置：**
-${buildActionList(path).map(item=>`- ${item}`).join('\n')}`
+**攻击链路详情**
+
+| 顺序 | 阶段 | 关键对象 | 说明 | 状态 |
+| ---: | --- | --- | --- | --- |
+${detailRows.map(row=>`| ${row.map(markdownCellText).join(' | ')} |`).join('\n')}
+
+**证据矩阵**
+
+| 阶段 | 关键证据 | 状态 |
+| --- | --- | --- |
+${evidenceRows.map(row=>`| ${row.map(markdownCellText).join(' | ')} |`).join('\n')}
+
+**优先动作**
+
+| 优先级 | 动作 | 目的 |
+| --- | --- | --- |
+${actions.map((item,actionIndex)=>`| ${actionIndex===0?'最高':actionIndex<3?'高':'中'} | ${markdownCellText(item)} | ${markdownCellText(actionPurpose(item))} |`).join('\n')}`
+}
+
+function friendlyAttackPathTitle(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number], index:number){
+  const title=String(path.title||'').trim()
+  if(/多模态|外部告警|OCR|ASR/i.test(title))return '发现一条外部告警印证的供应链攻击链路'
+  if(/供应链投毒|likely-real|真实攻击|证据可串成/i.test(`${title} ${path.verdict||''}`))return '发现一条高可信供应链攻击链路'
+  if(/构建|provenance|attestation|完整性/i.test(`${title} ${path.verdict||''}`))return '发现一条构建/产物可信风险链路'
+  if(/运行期|日志|外联|runtime/i.test(`${title} ${path.verdict||''}`))return '发现一条运行期触达风险链路'
+  if(title&&!/证据可串成|路径$/i.test(title))return title
+  return index===0?'发现一条高可信供应链攻击链路':`供应链风险链路 ${index+1}`
+}
+
+function friendlyAttackPathConclusion(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number], confidence:number){
+  const impact=summarizeImpactAssets(path)
+  const priority=reportPriorityLabel(path.score??0,chineseReportRiskLevel(path.severity||''),path.verdict==='likely-real-attack-path'?1:0)
+  const runtimeTouched=hasPathKind(path,/runtime|log|egress|ip|外联|运行|日志/)
+  const artifactTouched=hasPathKind(path,/artifact|attestation|digest|hash|产物|签名/)
+  const buildTouched=hasPathKind(path,/workflow|runner|ci|action|build|构建/)
+  const parts=[
+    hasPathKind(path,/dependency|package|npm:|pypi:|依赖/)?'依赖入口':null,
+    buildTouched?'构建环境':null,
+    artifactTouched?'产物可信':null,
+    runtimeTouched?'运行期行为':null,
+  ].filter(Boolean).join('、')
+  const scope=parts||'关键证据'
+  return `当前证据支持“${impact}”这条风险链路，已覆盖${scope}，可信度 ${confidence}%。建议按${priority}处理，先阻断可执行影响，再复核技术细节。`
+}
+
+function summarizeImpactAssets(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number]){
+  const nodes=compactPathNodes(path).map(item=>item.subject).filter(Boolean)
+  if(!nodes.length)return '待确认'
+  return nodes.slice(0,6).join(' → ')
+}
+
+function buildEvidenceMatrixRows(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number]){
+  const nodes=compactPathNodes(path)
+  const steps=path.path_steps??[]
+  const rows:Array<[string,string,string]>=[]
+  const push=(stage:string,evidence:string,status:string)=>{
+    if(rows.some(row=>row[0]===stage&&row[1]===evidence))return
+    rows.push([stage,evidence,status])
+  }
+
+  for(const node of nodes){
+    if(/依赖|入口|package|npm|pypi/i.test(`${node.stage} ${node.subject}`))push('依赖入口',`${node.subject} 已进入风险链路`,'已确认')
+    else if(/构建|CI|runner|workflow|Action/i.test(`${node.stage} ${node.subject}`))push('构建环境',`${node.subject} 可影响构建产物`,'需加固')
+    else if(/产物|artifact|tar|zip|hash|digest/i.test(`${node.stage} ${node.subject}`))push('产物可信',`${node.subject} 需要校验哈希和 provenance`,'需复核')
+    else if(/日志|运行|runtime|ip|外联|service/i.test(`${node.stage} ${node.subject}`))push('运行期',`${node.subject} 命中运行期证据`,'已确认')
+  }
+
+  for(const step of steps){
+    const text=`${step.source||''} ${step.relationship||''} ${step.target||''} ${step.why_abusable||''}`
+    if(/digest|hash|attestation|provenance|subject/i.test(text))push('产物可信','产物哈希、签名或来源证明需要复核','需复核')
+    if(/egress|外联|log|日志|runtime|45\./i.test(text))push('运行期','运行日志出现外联或敏感行为证据','已确认')
+    if(/runner|workflow|Action|self-hosted|构建/i.test(text))push('构建环境','构建环境或 Runner 可信度需要加固','需加固')
+    if(/dependency|package|npm:|pypi:|依赖/i.test(text))push('依赖入口','依赖节点与攻击链路存在关联','已确认')
+  }
+
+  if(!rows.length)push('证据链路','当前路径需要结合依赖、构建、产物和日志材料复核','待补充')
+  return rows.slice(0,6)
+}
+
+function buildAttackPathDetailRows(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number]){
+  const steps=path.path_steps??[]
+  const rows:Array<[string,string,string,string,string]>=[]
+
+  if(steps.length){
+    steps.slice(0,7).forEach((step,index)=>{
+      const source=shortAttackPathSubject(step.source,'起点')
+      const target=shortAttackPathSubject(step.target,'目标')
+      const stage=attackPathNodeLabel(step.target_type)||attackPathNodeLabel(step.source_type)||attackPathNodeLabel(step.target)||attackPathNodeLabel(step.source)||'链路节点'
+      rows.push([
+        `${index+1}`,
+        stage,
+        `${source} → ${target}`,
+        attackPathStepSummary(step),
+        attackPathStepStatus(step),
+      ])
+    })
+  }
+
+  if(!rows.length){
+    compactPathNodes(path).slice(0,7).forEach((node,index)=>{
+      rows.push([`${index+1}`,node.stage,node.subject,'该节点参与当前风险链路，需要结合上下游证据复核。','待复核'])
+    })
+  }
+
+  return rows.length?rows:[['1','证据链路','待确认','当前路径需要补充依赖、构建、产物或日志证据后再判断。','待补充']]
+}
+
+function attackPathStepSummary(step:{source?:string;target?:string;source_type?:string;target_type?:string;relationship?:string;why_abusable?:string}){
+  const text=`${step.source||''} ${step.relationship||''} ${step.target||''} ${step.why_abusable||''}`
+  if(/digest|hash|attestation|provenance|subject/i.test(text))return '用于判断产物哈希、签名或来源证明是否可信。'
+  if(/egress|外联|log|日志|runtime|45\./i.test(text))return '用于确认构建期风险是否已经在运行期触发。'
+  if(/runner|workflow|Action|self-hosted|构建/i.test(text))return '用于确认构建环境是否可能影响最终产物。'
+  if(/dependency|package|npm:|pypi:|依赖/i.test(text))return '用于确认风险是否从依赖入口进入工程链路。'
+  return '用于串联上下游证据，帮助判断攻击链是否成立。'
+}
+
+function attackPathStepStatus(step:{source?:string;target?:string;relationship?:string;why_abusable?:string}){
+  const text=`${step.source||''} ${step.relationship||''} ${step.target||''} ${step.why_abusable||''}`.toLowerCase()
+  if(/fail|不一致|缺失|blocks proof|self-hosted/.test(text))return '需优先处理'
+  if(/warn|needs|attestation|provenance|启发式/.test(text))return '需复核'
+  if(/observed|log|日志|runtime|egress|外联/.test(text))return '已命中'
+  return '已关联'
+}
+
+function actionPurpose(action:string){
+  if(/隔离|阻断|回滚|封禁/.test(action))return '先阻断可执行影响，避免风险继续扩散。'
+  if(/Runner|runner|构建|workflow|权限/.test(action))return '降低构建链被继续利用的可能性。'
+  if(/哈希|签名|provenance|attestation|产物/.test(action))return '确认发布产物是否可信，避免错误放行。'
+  if(/日志|外联|敏感|时间窗/.test(action))return '确认运行期影响范围，保留取证材料。'
+  return '补齐处置闭环，便于复扫验证。'
 }
 
 function getSortedAttackPaths(workspace:SecurityWorkspace){
@@ -1070,7 +1368,7 @@ function getSortedAttackPaths(workspace:SecurityWorkspace){
     .slice(0,5)
 }
 
-function cleanConclusion(value:string, confidence:number){
+function _cleanConclusion(value:string, confidence:number){
   const text=value
     .replace(/^一句话结论[：:]\s*/,'')
     .replace(/\s+/g,' ')
@@ -1158,7 +1456,7 @@ function hasPathKind(path:{path_steps?:Array<{source?:string;target?:string;sour
   return (path.path_steps??[]).some(step=>pattern.test(`${step.source_type||''} ${step.source||''} ${step.target_type||''} ${step.target||''}`.toLowerCase()))
 }
 
-function attackPathVerdictLabel(verdict?:string){
+function _attackPathVerdictLabel(verdict?:string){
   const labels:Record<string,string>={
     'likely-real-attack-path':'高可信真实攻击路径',
     'runtime-touched-risk':'运行期已触达风险路径',
@@ -1173,7 +1471,7 @@ function formatConfidence(confidence?:number){
   return Math.round(confidence<=1?confidence*100:confidence)
 }
 
-function summarizeAttackPath(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number]){
+function _summarizeAttackPath(path:NonNullable<SecurityWorkspace['graph']>['attack_paths'][number]){
   const steps=path.path_steps??[]
   const labels:string[]=[]
   for(const step of steps){
@@ -1292,29 +1590,26 @@ function localizeReportMarkdownLabels(markdown:string){
 /* ════════════════════════════════════════════════════
    MAIN
    ════════════════════════════════════════════════════ */
-export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspace;animationKey:number}){
+export function ReportPanel({workspace,animationKey,onOpenModule}:{workspace:SecurityWorkspace;animationKey:number;onOpenModule?:(module:PlatformTab)=>void}){
   const rm=useReducedMotion()
   const [ready,setReady]=useState(false)
   const [mode,setMode]=useState<'preview'|'source'>('preview')
   const [exporting,setExporting]=useState(false)
-  const [detailStage,setDetailStage]=useState<ReportPathStage|null>(null)
   const [mdSearch,setMdSearch]=useState('')
   const [heatCell,setHeatCell]=useState<{stage:ReportPathStage;type:string}|null>(null)
   const [selectedRiskSource,setSelectedRiskSource]=useState<string|null>(null)
   const [riskDrawer,setRiskDrawer]=useState<{source:RiskSourceItem;detail:RiskSourceDetail}|null>(null)
 
-  const rawReport=workspace.report||'# APT 供应链攻击溯源报告\n\n暂无报告内容。'
-  const report=useMemo(()=>normalizeReportMarkdown(rawReport,workspace),[rawReport,workspace])
+  const report=normalizeReportForDisplay(workspace.report||'# SupplyGuard KG 供应链攻击溯源报告\n\n暂无报告内容。',workspace)
   const wsId=workspace.workspaceId||workspace.workspace?.workspaceId
 
   // Unified animation trigger
   useEffect(()=>{setReady(false);const t=setTimeout(()=>setReady(true),100);return()=>clearTimeout(t)},[animationKey])
 
-  const metrics=useMemo(()=>buildMetrics(workspace),[workspace])
-  const riskSources=useMemo(()=>buildRiskSources(workspace),[workspace])
-  const stages=useMemo(()=>buildStages(workspace),[workspace])
-  const breakpoints=useMemo(()=>buildBreakpoints(workspace),[workspace])
-  const actionItems=useMemo(()=>buildActionItems(workspace,breakpoints,stages),[workspace,breakpoints,stages])
+  const riskSources=useMemo(()=>_buildRiskSources(workspace),[workspace])
+  const stages=useMemo(()=>_buildStages(workspace),[workspace])
+  const breakpoints=useMemo(()=>_buildBreakpoints(workspace),[workspace])
+  const actionItems=useMemo(()=>_buildActionItems(workspace,breakpoints,stages),[workspace,breakpoints,stages])
   const activeRiskSource=riskSources.find(item=>item.name===selectedRiskSource)||riskSources[0]
 
   async function exportEvidence(){
@@ -1327,9 +1622,12 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
   function expMd(){downloadBlob(new Blob([report],{type:'text/markdown;charset=utf-8'}),'report.md');toast.success('已导出')}
   function expHtml(){
     const css='body{max-width:900px;margin:2rem auto;padding:1.5rem;font-family:system-ui;background:#0a0f1a;color:#e2e8f0;line-height:1.8}h1,h2,h3{color:#f8fafc}pre{background:#1a2030;padding:1rem;border-radius:10px;overflow-x:auto}code{background:#1a2030;padding:.2em .5em;border-radius:5px}'
-    downloadBlob(new Blob([`<!DOCTYPE html><html><head><meta charset="utf-8"><title>APT溯源报告</title><style>${css}</style></head><body>${report.replace(/\n/g,'<br>')}</body></html>`],{type:'text/html'}),'report.html');toast.success('已导出')
+    downloadBlob(new Blob([`<!DOCTYPE html><html><head><meta charset="utf-8"><title>SupplyGuard KG 供应链攻击溯源报告</title><style>${css}</style></head><body>${report.replace(/\n/g,'<br>')}</body></html>`],{type:'text/html'}),'report.html');toast.success('已导出')
   }
-
+  function openRiskSource(item: RiskSourceItem) {
+    setSelectedRiskSource(item.name)
+    onOpenModule?.(item.module)
+  }
   const riskLevel=workspace.summary.risk_level
   const levelColor=riskLevel==='critical'?'#ef4444':riskLevel==='high'?'#f97316':'#06b6d4'
   const levelLabel=riskLevel==='critical'?'严重威胁':riskLevel==='high'?'高风险':'活跃'
@@ -1365,7 +1663,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
           <div className="space-y-5">
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-page-title">
-                APT 供应链攻击溯源报告
+                SupplyGuard KG 供应链攻击溯源报告
               </h1>
               <Badge variant="outline" className="text-xs px-2.5 py-0.5 font-bold" style={{borderColor:`${levelColor}50`,color:levelColor,background:`${levelColor}10`}}>
                 {levelLabel}
@@ -1388,24 +1686,20 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
           <div className="flex items-center justify-center"><RiskRing score={workspace.summary.risk_score} level={riskLevel} ready={ready}/></div>
         </div>
 
-        {/* KPI row */}
-        <div className="relative grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mt-8">
-          {metrics.map((m,i)=><GlowKpi key={m.label} metric={m} delay={.08+i*.1} ready={ready}/>)}
-        </div>
       </div>
 
-      {/* ══ TABS ══ */}
       <Tabs value={mode} onValueChange={v=>setMode(v as 'preview'|'source')}>
-        <TabsList className="h-9 surface-inset"><TabsTrigger value="preview" className="text-xs h-7">报告预览</TabsTrigger><TabsTrigger value="source" className="text-xs h-7">Markdown 预览</TabsTrigger></TabsList>
+        <TabsList className="h-12 rounded-xl border border-cyan-400/25 bg-cyan-950/20 p-1.5 shadow-[0_0_24px_rgba(6,182,212,0.08)]">
+          <TabsTrigger value="preview" className="h-9 rounded-lg px-5 text-sm font-bold data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-100 data-[state=active]:shadow-[inset_0_0_0_1px_rgba(34,211,238,0.45)]">报告预览</TabsTrigger>
+          <TabsTrigger value="source" className="h-9 rounded-lg px-5 text-sm font-bold data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-100 data-[state=active]:shadow-[inset_0_0_0_1px_rgba(34,211,238,0.45)]">Markdown 预览</TabsTrigger>
+        </TabsList>
 
         <TabsContent value="preview" className="mt-5 space-y-6">
-          {/* ══ Bar Chart ══ */}
           {riskSources.length>0&&(
             <Card className="surface-raised overflow-hidden">
               <CardHeader className="pb-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2"><TrendingUp className="size-4 text-cyan-400"/>风险来源分布</CardTitle>
-                  <span className="text-[11px] text-muted-foreground">点击柱子查看对应风险</span>
+                  <CardTitle className="text-sm font-bold flex items-center gap-2"><AlertTriangle className="size-4 text-cyan-400"/>风险来源分布</CardTitle>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1414,7 +1708,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
                   <BarChart
                     data={riskSources}
                     margin={{top:12,right:12,left:-16,bottom:0}}
-                    onClick={(event)=>{const name=event?.activePayload?.[0]?.payload?.name;if(name)setSelectedRiskSource(String(name))}}
+                    onClick={(event)=>{const item=event?.activePayload?.[0]?.payload as RiskSourceItem|undefined;if(item)openRiskSource(item)}}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={.2}/>
                     <XAxis dataKey="name" tick={{fontSize:11,fill:'var(--muted-foreground)'}} axisLine={false} tickLine={false}/>
@@ -1423,7 +1717,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
                       cursor={{fill:'rgba(6,182,212,0.08)'}}
                       contentStyle={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,fontSize:12,boxShadow:'0 8px 24px rgba(0,0,0,0.3)'}}
                     />
-                    <Bar dataKey="value" fill="#0891b2" radius={[5,5,0,0]} isAnimationActive={false} shape={<GlowBar/>} key={`bar-${animationKey}`}/>
+                    <Bar dataKey="value" fill="#0891b2" radius={[5,5,0,0]} isAnimationActive={false} shape={<_GlowBar/>} key={`bar-${animationKey}`}/>
                   </BarChart>
                 </ResponsiveContainer>
                 {activeRiskSource&&(
@@ -1468,11 +1762,10 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
             </Card>
           )}
 
-          {/* ══ 用户处置动作 ══ */}
           {actionItems.length>0&&(
             <Card className="surface-raised">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-bold flex items-center gap-2"><ShieldAlert className="size-4 text-orange-400"/>用户该做什么</CardTitle>
+                <CardTitle className="text-sm font-bold flex items-center gap-2"><ShieldAlert className="size-4 text-orange-400"/>处置建议与优先级</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1496,18 +1789,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
             </Card>
           )}
 
-          {/* ══ Path stages ══ */}
-          {stages.length>0&&(
-            <Card className="surface-raised">
-              <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><Route className="size-4 text-cyan-400"/>攻击路径流程</CardTitle></CardHeader>
-              <CardContent>
-                <AttackPathNodeFlow stages={stages.slice(0,9)} ready={ready} onSelect={setDetailStage}/>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* ══ Heatmap + Breakpoints ══ */}
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] max-w-full">
+          <div className="grid gap-5 max-w-full">
             {stages.length>0&&(
               <Card className="surface-raised">
                 <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><ClipboardList className="size-4 text-cyan-400"/>证据覆盖矩阵</CardTitle></CardHeader>
@@ -1535,22 +1817,23 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
             )}
             <Card className="surface-raised">
               <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><AlertTriangle className="size-4 text-amber-400"/>可信断点</CardTitle></CardHeader>
-              <CardContent className="space-y-2 overflow-hidden">
-                {breakpoints.length?breakpoints.map(bp=>(
-                  <div key={bp.id} className={cn('min-w-0 overflow-hidden rounded-lg border p-3',bp.severity==='critical'?'border-red-500/20 bg-red-950/20':bp.severity==='high'?'border-orange-500/20 bg-orange-950/20':'border-amber-500/15 bg-amber-950/15')}>
-                    <div className="flex min-w-0 items-start gap-1.5">
-                      <Badge variant="outline" className={cn('shrink-0 text-[10px] px-1 py-0 h-4',bp.severity==='critical'?'border-red-500/40 text-red-400':bp.severity==='high'?'border-orange-500/40 text-orange-400':'border-amber-500/40 text-amber-400')}>{bp.severity==='critical'?'严重':bp.severity==='high'?'高危':'中危'}</Badge>
-                      <span className="min-w-0 break-words text-xs font-semibold [overflow-wrap:anywhere]">{bp.title}</span>
+              <CardContent>
+                <div className="max-h-[260px] space-y-2 overflow-y-auto pr-2">
+                  {breakpoints.length?breakpoints.map(bp=>(
+                    <div key={bp.id} className={cn('min-w-0 overflow-hidden rounded-lg border p-3',bp.severity==='critical'?'border-red-500/20 bg-red-950/20':bp.severity==='high'?'border-orange-500/20 bg-orange-950/20':'border-amber-500/15 bg-amber-950/15')}>
+                      <div className="flex min-w-0 items-start gap-1.5">
+                        <Badge variant="outline" className={cn('shrink-0 text-[10px] px-1 py-0 h-4',bp.severity==='critical'?'border-red-500/40 text-red-400':bp.severity==='high'?'border-orange-500/40 text-orange-400':'border-amber-500/40 text-amber-400')}>{bp.severity==='critical'?'严重':bp.severity==='high'?'高危':'中危'}</Badge>
+                        <span className="min-w-0 break-words text-xs font-semibold [overflow-wrap:anywhere]">{bp.title}</span>
+                      </div>
+                      {bp.evidence&&<p className="mt-1.5 max-w-full whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{bp.evidence}</p>}
                     </div>
-                    {bp.evidence&&<p className="mt-1.5 max-w-full whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{bp.evidence}</p>}
-                  </div>
-                )):<p className="text-xs text-muted-foreground">暂无断点</p>}
+                  )):<p className="text-xs text-muted-foreground">暂无断点</p>}
+                </div>
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
-        {/* ══ Markdown 预览 ══ */}
         <TabsContent value="source" className="mt-5">
           <Card className="surface-raised">
             <CardHeader className="pb-2 flex flex-row items-center justify-between">
@@ -1561,7 +1844,7 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
               </div>
             </CardHeader>
             <CardContent>
-              <div className="max-h-[72vh] overflow-y-auto rounded-xl surface-inset p-5">
+              <div className="max-h-[72vh] overflow-y-auto rounded-xl border border-cyan-400/15 bg-[color:var(--surface-inset)] p-5 shadow-inner">
                 <ReportMarkdownPreview text={report} search={mdSearch}/>
               </div>
             </CardContent>
@@ -1569,10 +1852,8 @@ export function ReportPanel({workspace,animationKey}:{workspace:SecurityWorkspac
         </TabsContent>
       </Tabs>
 
-      <StageDrawer stage={detailStage} open={!!detailStage} onClose={()=>setDetailStage(null)}/>
-      <RiskDetailDrawer source={riskDrawer?.source??null} detail={riskDrawer?.detail??null} open={!!riskDrawer} onClose={()=>setRiskDrawer(null)}/>
+      <_RiskDetailDrawer source={riskDrawer?.source??null} detail={riskDrawer?.detail??null} open={!!riskDrawer} onClose={()=>setRiskDrawer(null)}/>
 
-      {/* ══ Heat cell drawer ══ */}
       <Sheet open={!!heatCell} onOpenChange={v=>{if(!v)setHeatCell(null)}}>
         <SheetContent side="right" className="!w-[48vw] !max-w-[520px] overflow-y-auto p-0">
           {heatCell&&(<>

@@ -41,6 +41,7 @@ import {
   ChevronRight,
   ChevronUp,
   CheckCircle2,
+  ClipboardCheck,
   ClipboardList,
   Code2,
   Copy,
@@ -56,6 +57,7 @@ import {
   KeyRound,
   Loader2,
   LogOut,
+  MessageCircle,
   Music2,
   Network,
   PackageCheck,
@@ -168,6 +170,10 @@ import {
   uploadProjectArchive,
   type ProjectImportRecord,
 } from '@/lib/import-api'
+import {
+  demoPresets,
+  type DemoPresetKey,
+} from '@/features/project-import/demo-presets'
 import { useAuthStore } from '@/stores/auth-store'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
@@ -250,7 +256,7 @@ import {
 } from './investigation-workflow'
 import { MultimodalEvidencePanel } from './multimodal-evidence-panel'
 import { AttackChainGraph } from './attack-chain-graph'
-import { ReportPanel } from './report-panel'
+import { ReportPanel, normalizeReportForDisplay } from './report-panel'
 import {
   buildCicdDisplayModel,
   type CicdDisplayModel,
@@ -411,7 +417,7 @@ type MultimodalEntitySummary = {
   maxRuleSeverity: SecuritySeverity | null
   ruleSummaries: MultimodalEntityRuleSummary[]
 }
-type AgentTargetPreset = '3cx' | 'solarwinds' | 'manual'
+type AgentTargetPreset = '3cx' | 'solarwinds' | 'codecov' | 'eventstream' | 'manual'
 type AgentFormState = {
   targetPath: string
   artifactPath: string
@@ -796,6 +802,38 @@ const agentPresetRequests: Record<Exclude<AgentTargetPreset, 'manual'>, AgentRun
     ],
     timeoutSeconds: 180,
   },
+  codecov: {
+    targetPath: 'cases/codecov-bash-uploader/sample-repo',
+    artifactPath: 'cases/codecov-bash-uploader/artifacts/coverage-report.tar.gz',
+    attestationPath: 'cases/codecov-bash-uploader/artifacts/coverage-report.intoto.jsonl',
+    expectedRepo: 'https://github.com/codecov/example-service',
+    expectedCommit: '8f42c19',
+    allowedWorkflows: ['.github/workflows/coverage.yml'],
+    allowedBuilders: ['https://github.com/actions/runner'],
+    allowSelfHostedRunner: false,
+    requireSignature: true,
+    logPaths: [
+      'cases/codecov-bash-uploader/logs/ci-build.jsonl',
+      'cases/codecov-bash-uploader/logs/security-response.log',
+    ],
+    timeoutSeconds: 180,
+  },
+  eventstream: {
+    targetPath: 'cases/event-stream-flatmap/sample-repo',
+    artifactPath: 'cases/event-stream-flatmap/artifacts/wallet-web-bundle.tar.gz',
+    attestationPath: 'cases/event-stream-flatmap/artifacts/wallet-web-bundle.intoto.jsonl',
+    expectedRepo: 'https://github.com/example/wallet-web',
+    expectedCommit: '8f42c19',
+    allowedWorkflows: ['.github/workflows/wallet-release.yml'],
+    allowedBuilders: ['https://github.com/actions/runner'],
+    allowSelfHostedRunner: false,
+    requireSignature: true,
+    logPaths: [
+      'cases/event-stream-flatmap/logs/build-runner.log',
+      'cases/event-stream-flatmap/logs/wallet-runtime.jsonl',
+    ],
+    timeoutSeconds: 180,
+  },
 }
 
 const emptyAgentForm: AgentFormState = {
@@ -809,6 +847,17 @@ const emptyAgentForm: AgentFormState = {
   logPaths: '',
   requireSignature: true,
   allowSelfHostedRunner: false,
+}
+
+function agentTargetPresetLabel(preset: AgentTargetPreset) {
+  const labels: Record<AgentTargetPreset, string> = {
+    '3cx': '3CX / X_TRADER 案例',
+    solarwinds: 'SolarWinds / SUNBURST 案例',
+    codecov: 'Codecov Bash Uploader 案例',
+    eventstream: 'event-stream / flatmap-stream 案例',
+    manual: '手动项目',
+  }
+  return labels[preset]
 }
 
 function getWorkspaceDisplayName(workspace: Pick<SecurityWorkspace, 'workspace' | 'import'>) {
@@ -1721,7 +1770,7 @@ export function SecurityPlatform() {
               question='如何把结论、证据链、攻击路径和处置建议交付给评委或安全团队？'
               terms={['Markdown', '证据包', '防御性声明']}
             />
-            <ReportPanel workspace={workspace} animationKey={moduleViewKey} />
+            <ReportPanel workspace={workspace} animationKey={moduleViewKey} onOpenModule={(module) => openWorkspaceTab(module)} />
             </WorkbenchMotionLayer>
           </TabsContent>
                 </>
@@ -2024,17 +2073,36 @@ function AgentConversationEmpty({
   )
 }
 
+type EmbeddedImportBusyState = DemoPresetKey | 'upload' | 'git' | 'local' | null
+
 function EmbeddedProjectImportPanel({
   onImported,
 }: {
   onImported: (record: ProjectImportRecord) => void
 }) {
-  const [busy, setBusy] = useState<'upload' | 'git' | 'local' | null>(null)
+  const [busy, setBusy] = useState<EmbeddedImportBusyState>(null)
   const [archive, setArchive] = useState<File | null>(null)
   const [gitUrl, setGitUrl] = useState('')
   const [gitRef, setGitRef] = useState('')
   const [localPath, setLocalPath] = useState('')
   const [projectName, setProjectName] = useState('')
+
+  async function importDemoCase(presetKey: DemoPresetKey) {
+    const preset = demoPresets[presetKey]
+    setBusy(presetKey)
+    try {
+      const record = await importLocalProject({
+        path: preset.localPath,
+        projectName: preset.projectName,
+      })
+      toast.success(`${preset.label} 已导入`)
+      onImported(record)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '案例导入失败')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   async function runImport(kind: 'upload' | 'git' | 'local') {
     setBusy(kind)
@@ -2079,7 +2147,36 @@ function EmbeddedProjectImportPanel({
   return (
     <Card className='rounded-md shadow-sm'>
       <CardHeader>
-        <CardTitle>导入项目</CardTitle>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <CardTitle>导入项目</CardTitle>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant='outline' className='rounded-md' disabled={disabled}>
+                {busy && busy in demoPresets ? <Loader2 className='size-4 animate-spin' /> : <ShieldCheck className='size-4' />}
+                选择案例
+                <ChevronDown className='size-4' />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='end' className='w-80'>
+              <DropdownMenuLabel>经典供应链案例</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {(Object.entries(demoPresets) as Array<[DemoPresetKey, (typeof demoPresets)[DemoPresetKey]]>).map(([key, preset]) => (
+                <DropdownMenuItem
+                  key={key}
+                  className='flex cursor-pointer flex-col items-start gap-1 rounded-md p-3'
+                  disabled={disabled}
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    void importDemoCase(key)
+                  }}
+                >
+                  <span className='font-medium'>{preset.label}</span>
+                  <span className='line-clamp-2 text-xs text-muted-foreground'>{preset.description}</span>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </CardHeader>
       <CardContent className='space-y-4'>
         <div className='space-y-2'>
@@ -3521,7 +3618,7 @@ function SupplyReachabilityPanel({
               {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
               {SUPPLEMENT_FILE_LABEL}
             </Button>
-            <Button size='sm' variant='outline' onClick={() => downloadReport(getWorkspaceReport(workspace))}>
+            <Button size='sm' variant='outline' onClick={() => downloadReport(normalizeReportForDisplay(getWorkspaceReport(workspace), workspace))}>
               <Download className='size-4' />
               导出报告
             </Button>
@@ -12984,11 +13081,7 @@ function AgentCommandCenter({
     .slice()
     .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
     .slice(0, 3)
-  const targetLabel = targetPreset === '3cx'
-    ? '3CX / X_TRADER 案例'
-    : targetPreset === 'solarwinds'
-      ? 'SolarWinds / SUNBURST 案例'
-      : '手动项目'
+  const targetLabel = agentTargetPresetLabel(targetPreset)
 
   async function handleAgentAction(action: AgentNextAction) {
     if (action.actionKind === 'export_evidence_package') {
@@ -13090,6 +13183,8 @@ function AgentCommandCenter({
               <SelectContent>
                 <SelectItem value='3cx'>3CX / X_TRADER 案例</SelectItem>
                 <SelectItem value='solarwinds'>SolarWinds / SUNBURST 案例</SelectItem>
+                <SelectItem value='codecov'>Codecov Bash Uploader 案例</SelectItem>
+                <SelectItem value='eventstream'>event-stream / flatmap-stream 案例</SelectItem>
                 <SelectItem value='manual'>当前导入项目 / 手动路径</SelectItem>
               </SelectContent>
             </Select>
@@ -13261,6 +13356,8 @@ function AgentCommandCenter({
                 <SelectContent>
                   <SelectItem value='3cx'>3CX / X_TRADER 案例</SelectItem>
                   <SelectItem value='solarwinds'>SolarWinds / SUNBURST 案例</SelectItem>
+                  <SelectItem value='codecov'>Codecov Bash Uploader 案例</SelectItem>
+                  <SelectItem value='eventstream'>event-stream / flatmap-stream 案例</SelectItem>
                   <SelectItem value='manual'>当前导入项目 / 手动路径</SelectItem>
                 </SelectContent>
               </Select>
@@ -14552,10 +14649,12 @@ function CopilotMarkdown({ text }: { text: string }) {
     <div className='space-y-3'>
       {blocks.map((block, index) => {
         if (block.type === 'heading') {
+          const semanticKind = getAssistantSemanticKind(block.text)
           return (
             <div key={`${index}-${block.text}`} className='space-y-1'>
-              <h3 className='text-sm font-semibold text-foreground'>
-                {renderInlineMarkdown(block.text)}
+              <h3 className='flex items-center gap-2 text-sm font-semibold text-foreground'>
+                {semanticKind ? <AssistantSemanticIcon kind={semanticKind} /> : null}
+                <span className='min-w-0'>{renderInlineMarkdown(block.text)}</span>
               </h3>
               <div className='h-px bg-border' />
             </div>
@@ -14564,17 +14663,31 @@ function CopilotMarkdown({ text }: { text: string }) {
         if (block.type === 'list') {
           return (
             <div key={`${index}-${block.items.join('|')}`} className='space-y-2'>
-              {block.items.map((item) => (
-                <div key={item} className='flex gap-2 rounded-md bg-muted/45 px-3 py-2 text-sm leading-6'>
-                  <CheckCircle2 className='mt-1 size-4 shrink-0 text-emerald-600' />
-                  <span>{renderInlineMarkdown(item)}</span>
-                </div>
-              ))}
+              {block.items.map((item) => {
+                const semanticKind = getAssistantSemanticKind(item)
+                return (
+                  <div key={item} className='rounded-md bg-muted/45 px-3 py-2 text-sm leading-6'>
+                    <div className='flex gap-2'>
+                      {semanticKind ? <AssistantSemanticIcon kind={semanticKind} /> : null}
+                      <span className='min-w-0'>{renderInlineMarkdown(item)}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )
         }
         if (block.type === 'rule') {
           return <div key={`${index}-rule`} className='h-px bg-border' />
+        }
+        const semanticKind = getAssistantSemanticKind(block.text)
+        if (semanticKind) {
+          return (
+            <div key={`${index}-${block.text}`} className='flex gap-2 text-sm leading-7 text-foreground/90'>
+              <AssistantSemanticIcon kind={semanticKind} />
+              <p className='min-w-0'>{renderInlineMarkdown(block.text)}</p>
+            </div>
+          )
         }
         return (
           <p key={`${index}-${block.text}`} className='text-sm leading-7 text-foreground/90'>
@@ -14584,6 +14697,40 @@ function CopilotMarkdown({ text }: { text: string }) {
       })}
     </div>
   )
+}
+
+type AssistantSemanticKind = 'advice' | 'conclusion' | 'plan' | 'explanation'
+
+const assistantSemanticIcons: Record<AssistantSemanticKind, LucideIcon> = {
+  advice: TrendingUp,
+  conclusion: ClipboardCheck,
+  plan: Route,
+  explanation: MessageCircle,
+}
+
+function AssistantSemanticIcon({ kind }: { kind: AssistantSemanticKind }) {
+  const Icon = assistantSemanticIcons[kind]
+  return (
+    <span className='mt-1 grid size-5 shrink-0 place-items-center rounded-md border border-slate-400/25 bg-slate-500/10 text-slate-300'>
+      <Icon className='size-3.5' />
+    </span>
+  )
+}
+
+function getAssistantSemanticKind(text: string): AssistantSemanticKind | null {
+  const normalized = text
+    .replace(/[`*_#>]/g, '')
+    .replace(/^[\s\-–—•·]+/, '')
+    .replace(/^\d+[.、)]\s*/, '')
+    .replace(/^【([^】]+)】/, '$1')
+    .trim()
+
+  if (/^(修复建议|处置建议|建议处理|建议动作|下一步建议|优先修复|建议|推荐|首要动作)/.test(normalized)) return 'advice'
+  if (/^(研判结论|风险结论|调查状态总览|当前结论|核心结论|报告摘要|风险总结|总体结论|结论|总结|判断|判定)/.test(normalized)) return 'conclusion'
+  if (/^(处置计划|执行计划|排查计划|行动计划|修复计划|下一步动作|处置步骤|计划|步骤|后续)/.test(normalized)) return 'plan'
+  if (/^(风险原因|证据说明|路径解释|误报判断|解释|原因|为什么|说明|依据|分析)/.test(normalized)) return 'explanation'
+
+  return null
 }
 
 type AssistantMarkdownBlock =
@@ -14706,7 +14853,7 @@ function EvidenceItem({ value }: { value: string }) {
 
 function _OldReportPanel({ workspace, animationKey }: { workspace: SecurityWorkspace; animationKey: number }) {
   const [reportMode, setReportMode] = useState<'preview' | 'source'>('preview')
-  const report = getWorkspaceReport(workspace)
+  const report = normalizeReportForDisplay(getWorkspaceReport(workspace), workspace)
   const workspaceId = workspace.workspaceId || workspace.workspace?.workspaceId
 
   async function exportEvidencePackage() {
