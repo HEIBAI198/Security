@@ -26,42 +26,65 @@ interface ReportActionItem { priority: '最高优先级'|'高优先级'|'中优�
 interface RiskSourceDetail { title: string; severity: string; evidence: string }
 interface RiskSourceItem { name: string; value: number; details: RiskSourceDetail[] }
 
-/* ══ Data builders (unchanged) ══ */
+function listOf<T = any>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : []
+}
+
+function num(value: unknown, fallback = 0) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function textOf(value: unknown, fallback = '-') {
+  const text = String(value ?? '').trim()
+  return text || fallback
+}
+
 function buildMetrics(w: SecurityWorkspace): ReportMetric[] {
   const s = w.summary; const g = w.graph?.summary
-  const risk = s.risk_score
-  const paths = g?.actionable_attack_path_count ?? g?.attack_path_count ?? s.attack_paths
-  const primaryPath = w.graph?.attack_paths?.sort((a,b)=>(b.confidence??0)-(a.confidence??0))[0]
-  const conf = Math.round((primaryPath?.confidence ?? g?.average_path_confidence ?? 0)*100)
+  const risk = num(s.risk_score)
+  const paths = g?.actionable_attack_path_count ?? g?.attack_path_count ?? s.attack_paths ?? 0
+  const primaryPath = sortedAttackPaths(w)[0]
+  const conf = Math.round(num(primaryPath?.confidence ?? g?.average_path_confidence) * 100)
   return [
-    { label:'综合风险', value:`${risk}/100`, detail:s.risk_level, tone:risk>=90?'red':risk>=75?'orange':'cyan' },
+    { label:'综合风险', value:`${risk}/100`, detail:textOf(s.risk_level, 'low'), tone:risk>=90?'red':risk>=75?'orange':'cyan' },
     { label:'攻击路径', value:`${paths}`, detail:'候选链', tone:'cyan' },
     { label:'置信度', value:`${conf}%`, detail:'路径均值', tone:conf>=80?'emerald':conf>=60?'orange':'slate' },
-    { label:'证据', value:`${g?.node_count ?? w.facts?.summary?.evidence_count ?? s.open_findings}`, detail:'节点+证据', tone:'slate' },
+    { label:'证据', value:`${g?.node_count ?? w.facts?.summary?.evidence_count ?? s.open_findings ?? 0}`, detail:'节点+证据', tone:'slate' },
   ]
 }
 function buildRiskSources(w: SecurityWorkspace) {
   const items: RiskSourceItem[] = []
-  if (w.code_audit?.summary) items.push({name:'代码审查',value:w.code_audit.summary.total,details:w.code_audit.findings.slice(0,5).map(f=>({title:f.title,severity:f.severity,evidence:`${f.risk_file}:${f.line} · ${f.evidence}`}))})
-  if (w.dependency_audit?.summary) items.push({name:'供应链',value:w.dependency_audit.summary.finding_count,details:w.dependency_audit.findings.slice(0,5).map(f=>({title:f.title,severity:f.severity,evidence:`${f.dependency} · ${f.source_file} · ${f.evidence}`}))})
-  if (w.cicd_audit?.summary) items.push({name:'CI/CD',value:w.cicd_audit.summary.finding_count,details:w.cicd_audit.findings.slice(0,5).map(f=>({title:f.title,severity:f.severity,evidence:`${f.workflow}${f.job_id?` / ${f.job_id}`:''} · ${f.evidence}`}))})
-  if (w.artifact_trust?.summary) items.push({name:'产物可信',value:w.artifact_trust.summary.failed,details:[
-    ...w.artifact_trust.findings.slice(0,4).map(f=>({title:f.title,severity:f.severity,evidence:f.evidence})),
-    ...w.artifact_trust.checks.filter(c=>['fail','warn','missing'].includes(c.status||'')).slice(0,4).map(c=>({title:artifactCheckTitle(c.name),severity:c.status==='fail'?'critical':c.status==='warn'?'high':'medium',evidence:c.evidence||String(c.status)})),
+  if (w.code_audit?.summary) items.push({name:'代码审查',value:num(w.code_audit.summary.total),details:listOf(w.code_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.risk_file)}:${textOf(f.line)} · ${textOf(f.evidence)}`}))})
+  if (w.dependency_audit?.summary) items.push({name:'供应链',value:num(w.dependency_audit.summary.finding_count),details:listOf(w.dependency_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.dependency)} · ${textOf(f.source_file)} · ${textOf(f.evidence)}`}))})
+  if (w.cicd_audit?.summary) items.push({name:'CI/CD',value:num(w.cicd_audit.summary.finding_count),details:listOf(w.cicd_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.workflow)}${f.job_id?` / ${f.job_id}`:''} · ${textOf(f.evidence)}`}))})
+  if (w.artifact_trust?.summary) items.push({name:'产物可信',value:num(w.artifact_trust.summary.failed),details:[
+    ...listOf(w.artifact_trust.findings).slice(0,4).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:textOf(f.evidence)})),
+    ...listOf(w.artifact_trust.checks).filter(c=>['fail','warn','missing'].includes(String(c.status||''))).slice(0,4).map(c=>({title:artifactCheckTitle(textOf(c.name)),severity:c.status==='fail'?'critical':c.status==='warn'?'high':'medium',evidence:textOf(c.evidence, String(c.status || '-'))})),
   ].slice(0,5)})
-  if (w.log_audit?.summary) items.push({name:'日志印证',value:w.log_audit.summary.finding_count,details:w.log_audit.findings.slice(0,5).map(f=>({title:f.title,severity:f.severity,evidence:`${f.source} · ${f.signal} · ${f.evidence}`}))})
-  if (w.multimodal_audit?.summary) items.push({name:'外部告警',value:w.multimodal_audit.summary.finding_count,details:w.multimodal_audit.findings.slice(0,5).map(f=>({title:f.title,severity:f.severity,evidence:`${f.source_name} · ${f.evidence}`}))})
-  if (w.graph?.summary) items.push({name:'图谱',value:w.graph.summary.attack_path_count??0,details:(w.graph.attack_paths??[]).slice(0,5).map(p=>({title:p.title,severity:p.severity,evidence:p.conclusion||p.description}))})
+  if (w.log_audit?.summary) items.push({name:'日志印证',value:num(w.log_audit.summary.finding_count),details:listOf(w.log_audit.findings).slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.source)} · ${textOf(f.signal)} · ${textOf(f.evidence)}`}))})
+  if (w.multimodal_audit?.summary) {
+    const directFindings = listOf(w.multimodal_audit.findings)
+    const evidenceFindings = listOf(w.multimodal_audit.evidence).flatMap(item =>
+      listOf(item.findings).map(finding => ({ ...finding, source_name: item.original_filename || item.filename }))
+    )
+    items.push({
+      name:'外部告警',
+      value:num(w.multimodal_audit.summary.finding_count),
+      details:[...directFindings, ...evidenceFindings].slice(0,5).map(f=>({title:textOf(f.title),severity:textOf(f.severity, 'medium'),evidence:`${textOf(f.source_name)} · ${textOf(f.evidence || f.reason || f.rule_id)}`}))
+    })
+  }
+  if (w.graph?.summary) items.push({name:'图谱',value:num(w.graph.summary.attack_path_count),details:listOf(w.graph.attack_paths).slice(0,5).map(p=>({title:textOf(p.title),severity:textOf(p.severity, 'medium'),evidence:textOf(p.conclusion||p.description)}))})
   return items.filter(i=>i.value>0)
 }
 function buildStages(w: SecurityWorkspace): ReportPathStage[] {
-  const path = w.graph?.attack_paths?.sort((a,b)=>(b.confidence??0)-(a.confidence??0))[0]
-  return (path?.path_steps??[]).map((s:any,i)=>({
-    id:`${i}`, title:s.relationship||s.edge_type||`步骤${i+1}`,
-    source:s.source||'', target:s.target||'', relationship:s.relationship||s.edge_type||'',
-    confidence:s.confidence??0.8, evidenceCount:(s.evidence_ids?.length??0)+1,
+  const path = sortedAttackPaths(w)[0]
+  return listOf(path?.path_steps).map((s:any,i)=>({
+    id:`${i}`, title:textOf(s.relationship||s.edge_type, `步骤${i+1}`),
+    source:textOf(s.source, ''), target:textOf(s.target, ''), relationship:textOf(s.relationship||s.edge_type, ''),
+    confidence:num(s.confidence, 0.8), evidenceCount:listOf(s.evidence_ids).length+1,
     evidenceGroups:evidenceGroups(s), severity:i===0?'critical':i===1?'high':'medium',
-    why_abusable:s.why_abusable||'',
+    why_abusable:textOf(s.why_abusable, ''),
   }))
 }
 function evidenceGroups(step:any):string[]{
@@ -76,10 +99,15 @@ function evidenceGroups(step:any):string[]{
   return g.length?g:['组件']
 }
 function buildBreakpoints(w:SecurityWorkspace):ReportTrustBreakpoint[]{
-  return (w.artifact_trust?.checks??[]).filter(c=>['fail','warn','missing'].includes(c.status||'')).slice(0,5).map(c=>({
-    id:c.name,title:artifactCheckTitle(c.name),evidence:c.evidence||c.status||'',
-    severity:c.severity||(c.status==='fail'?'high':'medium'),
+  return listOf(w.artifact_trust?.checks).filter(c=>['fail','warn','missing'].includes(String(c.status||''))).slice(0,5).map(c=>({
+    id:textOf(c.name),title:artifactCheckTitle(textOf(c.name)),evidence:textOf(c.evidence, String(c.status || '')),
+    severity:textOf(c.severity, c.status==='fail'?'high':'medium'),
   }))
+}
+
+function sortedAttackPaths(w: SecurityWorkspace) {
+  return [...listOf<NonNullable<SecurityWorkspace['graph']>['attack_paths'][number]>(w.graph?.attack_paths)]
+    .sort((a,b)=>num(b.confidence)-num(a.confidence))
 }
 
 function artifactCheckTitle(name:string){
