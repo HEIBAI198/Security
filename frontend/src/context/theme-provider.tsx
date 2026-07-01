@@ -40,7 +40,7 @@ export function ThemeProvider({
 }: ThemeProviderProps) {
   const [theme, _setTheme] = useState<Theme>(() => {
     const storedTheme = getCookie(storageKey) as Theme | undefined
-    return storedTheme === 'dark' ? storedTheme : defaultTheme
+    return storedTheme || defaultTheme
   })
 
   // Optimized: Memoize the resolved theme calculation to prevent unnecessary re-computations
@@ -70,10 +70,6 @@ export function ThemeProvider({
     }
 
     applyTheme(resolvedTheme)
-    if (theme !== 'dark') {
-      setCookie(storageKey, 'dark', THEME_COOKIE_MAX_AGE)
-      _setTheme('dark')
-    }
 
     mediaQuery.addEventListener('change', handleChange)
 
