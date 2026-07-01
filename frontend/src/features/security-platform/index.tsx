@@ -2214,6 +2214,9 @@ function EmbeddedProjectImportPanel({
               onChange={(event) => setLocalPath(event.target.value)}
               placeholder='C:/Users/.../project'
             />
+            <p className='mt-2 text-xs leading-5 text-muted-foreground'>
+              云服务器部署时无法访问用户电脑上的本地路径，此入口仅支持服务器文件系统中的路径。
+            </p>
             <Button
               className={cn('mt-3 w-full', actionButtonClass)}
               disabled={disabled}
@@ -2247,7 +2250,7 @@ function EmbeddedProjectImportPanel({
               onClick={() => void runImport('git')}
             >
               {busy === 'git' ? <Loader2 className='size-4 animate-spin' /> : <GitBranch className='size-4' />}
-              拉取导入
+              {busy === 'git' ? '正在拉取仓库' : '拉取导入'}
             </Button>
           </div>
         </div>

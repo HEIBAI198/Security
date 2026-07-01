@@ -26,6 +26,8 @@ MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 20000
 MAX_WALK_FILES = 100000
 MAX_WINDOWS_EXTRACT_PATH = 240
+GIT_CLONE_TIMEOUT_SECONDS = 300
+GIT_CHECKOUT_TIMEOUT_SECONDS = 60
 
 IGNORED_DIRS = {
     ".git",
@@ -243,7 +245,14 @@ def create_git_import(
     import_id = _new_import_id()
     import_dir = _prepare_import_dir(import_id)
     source_dir = import_dir / "source"
-    clone_cmd = ["git", "clone", "--depth", "1"]
+    clone_cmd = [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--filter=blob:none",
+    ]
     if ref:
         clone_cmd.extend(["--branch", ref.strip()])
     clone_cmd.extend([git_url, str(source_dir)])
@@ -255,7 +264,7 @@ def create_git_import(
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=GIT_CLONE_TIMEOUT_SECONDS,
         )
         if commit:
             subprocess.run(
@@ -264,7 +273,7 @@ def create_git_import(
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=GIT_CHECKOUT_TIMEOUT_SECONDS,
             )
     except FileNotFoundError as exc:
         raise ImportErrorDetail("Git executable is not available on the server.") from exc
