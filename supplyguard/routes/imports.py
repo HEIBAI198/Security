@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..project_imports import (
     ImportErrorDetail,
     create_git_import,
+    create_files_import,
     create_local_import,
     create_upload_import,
     load_import,
@@ -56,6 +57,21 @@ async def upload_project_import(
     filename = x_project_filename or "project.zip"
     try:
         return create_upload_import(filename, await request.body())
+    except ImportErrorDetail as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/api/imports/files", status_code=status.HTTP_201_CREATED)
+async def upload_project_files_import(
+    files: list[UploadFile] = File(...),
+    project_name: str | None = Form(default=None, alias="projectName"),
+) -> dict[str, Any]:
+    try:
+        uploaded_files = [
+            (file.filename or "uploaded-file", await file.read())
+            for file in files
+        ]
+        return create_files_import(uploaded_files, project_name=project_name)
     except ImportErrorDetail as exc:
         raise _http_error(exc) from exc
 

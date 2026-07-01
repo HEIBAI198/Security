@@ -16,6 +16,7 @@ import {
   importGitProject,
   importLocalProject,
   uploadProjectArchive,
+  uploadProjectFiles,
 } from '@/lib/import-api'
 import { cn } from '@/lib/utils'
 import { demoPresets, type DemoPresetKey } from './demo-presets'
@@ -49,7 +50,7 @@ export function ProjectImportPage() {
   const [archive, setArchive] = useState<File | null>(null)
   const [gitUrl, setGitUrl] = useState('')
   const [gitRef, setGitRef] = useState('')
-  const [localPath, setLocalPath] = useState('')
+  const [projectFiles, setProjectFiles] = useState<File[]>([])
   const [projectName, setProjectName] = useState('')
 
   useEffect(() => {
@@ -126,20 +127,17 @@ export function ProjectImportPage() {
   }
 
   async function importLocal() {
-    if (!localPath.trim()) {
-      toast.error('请输入服务端可访问的本地目录')
+    if (!projectFiles.length) {
+      toast.error('请选择要上传的项目文件或文件夹')
       return
     }
     setBusy('local')
     try {
-      await importLocalProject({
-        path: localPath.trim(),
-        projectName: projectName.trim() || undefined,
-      })
-      toast.success('本地目录已导入，预检资产已生成')
+      await uploadProjectFiles(projectFiles, projectName.trim() || undefined)
+      toast.success('项目文件已上传，预检资产已生成')
       void navigate({ to: '/project-preflight' })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '本地目录导入失败')
+      toast.error(error instanceof Error ? error.message : '项目文件上传失败')
     } finally {
       setBusy(null)
     }
@@ -277,23 +275,27 @@ export function ProjectImportPage() {
               <div className='surface-inset p-3'>
                 <div className='mb-2 flex items-center gap-2 text-sm font-medium'>
                   <FolderOpen className='size-4 text-cyan-600' />
-                  本地目录
+                  上传项目文件
                 </div>
                 <Input
-                  value={localPath}
-                  onChange={(event) => setLocalPath(event.target.value)}
-                  placeholder='C:/Users/86189/Desktop/my-project'
+                  type='file'
+                  multiple
+                  className={fileInputClass}
+                  ref={(element) => {
+                    if (element) {
+                      element.setAttribute('webkitdirectory', '')
+                      element.setAttribute('directory', '')
+                    }
+                  }}
+                  onChange={(event) => setProjectFiles(Array.from(event.target.files ?? []))}
                 />
-                <p className='mt-2 text-xs leading-5 text-muted-foreground'>
-                  云服务器部署时无法访问用户电脑上的本地路径，此入口仅支持服务器文件系统中的路径。
-                </p>
                 <Button
                   className={cn('mt-3 w-full', actionButtonClass)}
                   onClick={() => void importLocal()}
                   disabled={disabled}
                 >
-                  {busy === 'local' ? <Loader2 className='animate-spin' /> : <FolderOpen />}
-                  导入并预检
+                  {busy === 'local' ? <Loader2 className='animate-spin' /> : <Upload />}
+                  {busy === 'local' ? '正在上传项目' : `上传并预检${projectFiles.length ? `（${projectFiles.length} 个文件）` : ''}`}
                 </Button>
               </div>
             </CardContent>
