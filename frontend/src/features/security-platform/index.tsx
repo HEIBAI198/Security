@@ -56,7 +56,6 @@ import {
   GitPullRequestArrow,
   KeyRound,
   Loader2,
-  LogOut,
   MessageCircle,
   Music2,
   Network,
@@ -175,6 +174,7 @@ import {
   type DemoPresetKey,
 } from '@/features/project-import/demo-presets'
 import { useAuthStore } from '@/stores/auth-store'
+import { Logo } from '@/assets/logo'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -1221,11 +1221,6 @@ export function SecurityPlatform() {
     window.history.replaceState(null, '', '#overview')
   }
 
-  function signOut() {
-    auth.reset()
-    window.location.href = '/login'
-  }
-
   async function removeConversation(conversationId: string) {
     try {
       await deleteConversation(conversationId)
@@ -1477,22 +1472,21 @@ export function SecurityPlatform() {
         }
       >
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
-          <div className='min-w-0'>
-            <div className='truncate text-sm font-semibold'>SupplyGuard KG</div>
-            <div className='truncate text-xs text-muted-foreground'>
-              {workspace
-                ? `${workspace.workspace.repository} · ${workspace.workspace.commit}`
-                : draftConversation
-                  ? '新建对话 · 等待导入项目'
-                  : '历史对话 · 选择或新建项目分析'}
+          <div className='flex min-w-0 items-center gap-2'>
+            <Logo className='size-7 shrink-0' />
+            <div className='min-w-0'>
+              <div className='truncate text-sm font-semibold'>SupplyGuard KG</div>
+              <div className='truncate text-xs text-muted-foreground'>
+                {workspace
+                  ? `${workspace.workspace.repository} · ${workspace.workspace.commit}`
+                  : draftConversation
+                    ? '新建对话 · 等待导入项目'
+                    : '历史对话 · 选择或新建项目分析'}
+              </div>
             </div>
           </div>
           <div className='flex shrink-0 items-center gap-2'>
             <ThemeSwitch />
-            <Button variant='ghost' size='sm' onClick={signOut}>
-              <LogOut className='size-4' />
-              退出登录
-            </Button>
             <Button
               variant='outline'
               size='sm'
