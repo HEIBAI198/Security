@@ -13,6 +13,8 @@ RUN npm run build
 FROM docker.m.daocloud.io/library/python:3.12-slim
 
 ARG GITLEAKS_VERSION=8.30.1
+ARG ACTIONLINT_VERSION=1.7.7
+ARG OSV_SCANNER_VERSION=2.2.3
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -29,9 +31,15 @@ RUN sed -i \
     -e 's|http://deb.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
     /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl git \
+  && apt-get install -y --no-install-recommends \
+      ca-certificates curl git tar gzip unzip \
+      libgl1 libglib2.0-0 libgomp1 \
+      ffmpeg \
+      tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
+      fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/* \
-  && pip install --no-cache-dir -r requirements.txt semgrep bandit checkov \
+  && pip install --no-cache-dir -r requirements.txt semgrep bandit checkov cyclonedx-bom \
+  && (pip install --no-cache-dir zizmor || echo "WARNING: zizmor install failed; CI/CD audit will use built-in checks and actionlint if available.") \
   && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
   && pip install --no-cache-dir -r requirements-gnn-pyg.txt \
   && if curl -sSfL --connect-timeout 20 --retry 2 \
@@ -42,7 +50,22 @@ RUN sed -i \
      else \
         echo "WARNING: gitleaks download failed; code audit will use the built-in secret scan fallback."; \
      fi \
-  && rm -f /tmp/gitleaks.tar.gz
+  && if curl -sSfL --connect-timeout 20 --retry 2 \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+      -o /tmp/actionlint.tar.gz; then \
+        tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint \
+        && chmod +x /usr/local/bin/actionlint; \
+     else \
+        echo "WARNING: actionlint download failed; CI/CD audit will use built-in checks and zizmor if available."; \
+     fi \
+  && if curl -sSfL --connect-timeout 20 --retry 2 \
+      "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
+      -o /usr/local/bin/osv-scanner; then \
+        chmod +x /usr/local/bin/osv-scanner; \
+     else \
+        echo "WARNING: osv-scanner download failed; dependency audit will use built-in advisory enrichment."; \
+     fi \
+  && rm -f /tmp/gitleaks.tar.gz /tmp/actionlint.tar.gz
 
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
