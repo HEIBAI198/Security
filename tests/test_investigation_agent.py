@@ -66,7 +66,7 @@ class InvestigationAgentTests(unittest.TestCase):
             patch.object(security, "LAST_CICD_AUDIT", None),
             patch.object(security, "LAST_ARTIFACT_TRUST", None),
             patch.object(security, "LAST_LOG_AUDIT", None),
-            patch.object(security, "latest_multimodal_payload", return_value={"summary": {"evidence_count": 0}}),
+            patch.object(security, "current_multimodal_payload", return_value={"summary": {"evidence_count": 0}}),
         ):
             workspaces.save_workspace_snapshot(existing, workspace_id=workspace_id)
             workspace = security.persist_current_workspace(workspace_id)
