@@ -449,10 +449,6 @@ type AgentCommandSummary = {
   confidence: number
   status: string
 }
-type DefenseBrief = {
-  title: string
-  text: string
-}
 type WorkspaceTab = {
   id: PlatformTab | `dependency:${string}`
   module: PlatformTab
@@ -955,9 +951,65 @@ function agentRequestFromWorkspace(workspace: SecurityWorkspace): AgentRunReques
   }
 }
 
+function isDefenseBriefAction(action: AgentNextAction) {
+  const text = `${action.actionKind || ''} ${action.title || ''} ${action.action || ''}`.toLowerCase()
+  return action.actionKind === 'generate_defense_brief'
+    || text.includes('答辩讲解')
+    || text.includes('defense brief')
+}
+
+function visibleAgentNextActions(actions?: AgentNextAction[]) {
+  return (actions || []).filter((action) => !isDefenseBriefAction(action))
+}
+
+function agentRunDirectConclusion(run: AgentRunResult) {
+  const workspace = run.workspace
+  const dependencyTotal = workspace?.dependency_audit?.summary?.total_dependencies
+    ?? workspace?.dependencies?.length
+    ?? 0
+  const dependencyFindings = workspace?.dependency_audit?.summary?.finding_count
+    ?? workspace?.dependency_audit?.findings?.length
+    ?? 0
+  const cicdFindings = workspace?.cicd_audit?.summary?.finding_count
+    ?? workspace?.cicd_audit?.findings?.length
+    ?? 0
+  const artifactTrustScore = workspace?.artifact_trust?.trust_score
+    ?? workspace?.artifact_trust?.trustScore
+  const artifactIssues = (workspace?.artifact_trust?.checks ?? [])
+    .filter((check) => ['fail', 'warn', 'missing'].includes(String(check.status)))
+    .length
+  const logFindings = workspace?.log_audit?.summary?.finding_count
+    ?? workspace?.log_audit?.findings?.length
+    ?? 0
+  const attackPaths = workspace?.summary?.attack_paths
+    ?? workspace?.graph?.attack_paths?.length
+    ?? 0
+  const hasSupplyRisk = dependencyFindings > 0
+  const hasCicdRisk = cicdFindings > 0
+  const hasArtifactImpact = artifactIssues > 0 || attackPaths > 0
+  const supplyConclusion = hasSupplyRisk
+    ? `存在供应链依赖风险线索：共解析 ${dependencyTotal} 个依赖，发现 ${dependencyFindings} 个风险项。仅凭扫描结果不能证明这些依赖一定由 AI 推荐生成，但它们属于“AI 推荐依赖被直接接受”场景下需要优先复核的风险暴露。`
+    : `暂未发现明确的高风险依赖项；仅凭当前证据不能判定存在 AI 推荐依赖投毒。`
+  const cicdConclusion = hasCicdRisk
+    ? `存在 CI/CD 投毒或构建链风险：发现 ${cicdFindings} 项 workflow、权限、Action 或构建脚本风险。`
+    : `暂未发现明确的 CI/CD 构建链投毒风险。`
+  const artifactConclusion = hasArtifactImpact
+    ? `可能影响发布产物：产物可信检查发现 ${artifactIssues} 个异常/缺失项${typeof artifactTrustScore === 'number' ? `，产物可信评分 ${artifactTrustScore}/100` : ''}，并已形成 ${attackPaths} 条攻击路径候选，发布前应先阻断或暂缓。`
+    : `当前证据不足以证明风险已经影响发布产物；建议补充 artifact、provenance、签名和运行日志后再判定。`
+  return [
+    `## 直接结论`,
+    '',
+    `- **AI 推荐依赖/供应链风险：**${supplyConclusion}`,
+    `- **CI/CD 投毒风险：**${cicdConclusion}`,
+    `- **是否影响发布产物：**${artifactConclusion}`,
+    `- **运行期印证：**${logFindings > 0 ? `运行日志命中 ${logFindings} 个异常行为，可作为风险可达性的辅助证据。` : '当前日志证据不足，建议补充运行期日志。'}`,
+  ].join('\n')
+}
+
 function agentRunToAssistantResponse(question: string, run: AgentRunResult): SecurityAssistantResponse {
   const status = String(run.status || 'unknown')
   const narrative = run.narrative
+  const actions = visibleAgentNextActions(run.nextActions)
   const stepLines = (run.steps || [])
     .map((step) => `- ${step.name}：${agentStepStatusLabel(step.status)}${step.error ? `，${step.error}` : ''}`)
     .join('\n')
@@ -965,7 +1017,7 @@ function agentRunToAssistantResponse(question: string, run: AgentRunResult): Sec
     .slice(0, 5)
     .map((gap) => `- ${gap.module}：${gap.reason || gap.question || '需要补充证据'}`)
     .join('\n')
-  const actionLines = (run.nextActions || [])
+  const actionLines = actions
     .slice(0, 5)
     .map((action, index) => `${index + 1}. ${action.title}：${action.action}`)
     .join('\n')
@@ -973,6 +1025,7 @@ function agentRunToAssistantResponse(question: string, run: AgentRunResult): Sec
     `## Agent 调度研判`,
     '',
     `Agent 已按问题自动创建调查任务 ${run.runId ? `\`${run.runId}\`` : ''}，当前状态为 **${status}**。`,
+    `\n${agentRunDirectConclusion(run)}`,
     narrative?.summary ? `\n${narrative.summary}` : '',
     narrative?.verdict ? `\n**研判结论：**${narrative.verdict}` : '',
     `\n**风险评分：**${run.summary?.riskScore ?? 0}/100，证据缺口 ${run.summary?.evidenceGapCount ?? 0} 项。`,
@@ -991,7 +1044,7 @@ function agentRunToAssistantResponse(question: string, run: AgentRunResult): Sec
       ...(run.events || []).slice(-4).map((event) => `${event.stepId}: ${event.message}`),
     ],
     graph_rag: null,
-    next_actions: (run.nextActions || []).map((action) => `${action.title}：${action.action}`),
+    next_actions: actions.map((action) => `${action.title}：${action.action}`),
     model: 'agent-orchestrator',
   }
 }
@@ -1954,7 +2007,7 @@ export function SecurityPlatform() {
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='Agent 能否自动执行调查、解释判断依据、指出证据缺口并给出处置优先级？'
-              terms={['Agent', '证据缺口', '答辩讲解']}
+              terms={['Agent', '证据缺口', '工具调用']}
             />
             <CopilotPanel
               workspace={workspace}
@@ -13274,7 +13327,6 @@ function AgentCommandCenter({
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentRun, setAgentRun] = useState<AgentRunResult | null>(null)
   const [selectedGap, setSelectedGap] = useState<AgentEvidenceGap | null>(null)
-  const [defenseBrief, setDefenseBrief] = useState<DefenseBrief | null>(null)
 
   useEffect(() => {
     loadLatestSecurityAgentJob()
@@ -13308,7 +13360,6 @@ function AgentCommandCenter({
       const request = { ...agentRequestFromForm(form), workspaceId: getWorkspaceId(workspace) }
       const created = await createSecurityAgentJob(request)
       setAgentRun(created)
-      setDefenseBrief(null)
       toast.success('Agent 任务已创建，开始实时轮询调查进度')
 
       let result = created
@@ -13336,7 +13387,7 @@ function AgentCommandCenter({
 
   const steps = agentRun?.steps?.length ? agentRun.steps : defaultAgentSteps
   const gaps = agentRun?.evidenceGaps ?? []
-  const actions = agentRun?.nextActions ?? []
+  const actions = visibleAgentNextActions(agentRun?.nextActions)
   const commandSummary = agentCommandSummary(workspace, agentRun, agentBusy)
   const topPaths = (agentRun?.workspace?.graph?.attack_paths ?? workspace.graph?.attack_paths ?? [])
     .filter((path) => !isTrustProvenancePath(path))
@@ -13358,10 +13409,6 @@ function AgentCommandCenter({
       } catch (error) {
         toast.error(error instanceof Error ? error.message : '证据包导出失败')
       }
-      return
-    }
-    if (action.actionKind === 'generate_defense_brief') {
-      setDefenseBrief(buildDefenseBrief(targetLabel, workspace, agentRun, topPaths, gaps, actions))
       return
     }
     if (action.actionKind === 'open_evidence_gap') {
@@ -13552,19 +13599,10 @@ function AgentCommandCenter({
                 </div>
               )}
             </div>
-            <Button
-              variant='outline'
-              className='w-full justify-center rounded-md'
-              onClick={() => setDefenseBrief(buildDefenseBrief(targetLabel, workspace, agentRun, topPaths, gaps, actions))}
-            >
-              <Sparkles className='size-4' />
-              生成答辩讲解
-            </Button>
           </CardContent>
         </Card>
       </div>
 
-      {defenseBrief ? <DefenseBriefPanel brief={defenseBrief} /> : null}
       <AgentEvidenceGapDrawer gap={selectedGap} onOpenChange={(open) => !open && setSelectedGap(null)} />
     </div>
   )
@@ -14113,30 +14151,6 @@ function AgentGapDetail({ label, value, className }: { label: string; value: str
   )
 }
 
-function DefenseBriefPanel({ brief }: { brief: DefenseBrief }) {
-  return (
-    <Card className='rounded-md border-cyan-200 bg-cyan-50/25'>
-      <CardHeader className='pb-3'>
-        <div className='flex flex-wrap items-start justify-between gap-3'>
-          <div>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <Sparkles className='size-4 text-cyan-600' />
-              {brief.title}
-            </CardTitle>
-          </div>
-          <Button variant='outline' size='sm' onClick={() => void copyAgentText(brief.text, '答辩讲解已复制')}>
-            <Copy className='size-3.5' />
-            复制讲解
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className='whitespace-pre-wrap rounded-md border bg-background p-4 text-sm leading-7'>{brief.text}</div>
-      </CardContent>
-    </Card>
-  )
-}
-
 function AgentTextField({
   label,
   value,
@@ -14309,41 +14323,6 @@ function agentCommandSummary(
     confidence,
     status: busy ? 'running' : agentRun?.status || 'idle',
   }
-}
-
-function buildDefenseBrief(
-  targetLabel: string,
-  workspace: SecurityWorkspace,
-  agentRun: AgentRunResult | null,
-  paths: KnowledgeGraphAttackPath[],
-  gaps: AgentEvidenceGap[],
-  actions: AgentNextAction[]
-): DefenseBrief {
-  if (agentRun?.narrative?.defenseBrief) {
-    return { title: `${targetLabel}答辩讲解`, text: agentRun.narrative.defenseBrief }
-  }
-  const primaryPath = paths[0]
-  const runWorkspace = agentRun?.workspace ?? workspace
-  const confidence = Math.round((primaryPath?.confidence ?? runWorkspace.graph?.summary?.average_path_confidence ?? 0) * 100)
-  const stageSummary = agentInvestigationStages.map((stage) => stage.title).join('、')
-  const evidenceSummary = primaryPath?.conclusion
-    || primaryPath?.description
-    || '系统已完成组件、构建链、产物与运行日志的关联分析。'
-  const gapSummary = gaps.length
-    ? gaps.slice(0, 3).map((gap) => `${gap.module}缺少${gap.reason}`).join('；')
-    : '当前未发现阻断调查的输入材料缺口。'
-  const actionSummary = actions.length
-    ? actions.slice(0, 3).map((action, index) => `${index + 1}. ${action.title}：${action.action}`).join('\n')
-    : '1. 复核高风险依赖和构建链配置。\n2. 保留产物、provenance 与运行日志作为证据。'
-  const text = [
-    `【案例背景】本次演示针对${targetLabel}开展 APT 软件供应链攻击检测与溯源。`,
-    `【检测流程】Agent 自动完成${stageSummary}五个调查阶段，综合风险评分为 ${agentRun?.summary.riskScore ?? runWorkspace.summary.risk_score}/100。`,
-    `【关键证据】${evidenceSummary}`,
-    `【攻击路径】系统生成 ${runWorkspace.summary.attack_paths} 条候选路径，当前最高可信度约为 ${confidence}%，路径包含 ${primaryPath?.path_steps?.length || primaryPath?.node_ids?.length || 0} 个环节和 ${primaryPath?.evidence_ids?.length || 0} 条证据。`,
-    `【证据缺口】${gapSummary}`,
-    `【处置建议】\n${actionSummary}`,
-  ].join('\n\n')
-  return { title: `${targetLabel}答辩讲解`, text }
 }
 
 function focusAttackPath(pathId: string) {
