@@ -1360,8 +1360,9 @@ export async function runSecurityAgent(options: AgentRunRequest) {
   const timeoutSeconds = options.timeoutSeconds ?? 180
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), (timeoutSeconds + 90) * 1000)
+  const workspaceQuery = options.workspaceId ? `?workspaceId=${encodeURIComponent(options.workspaceId)}` : ''
   try {
-    return await api<AgentRunResult>('/api/security/agent/run', {
+    return await api<AgentRunResult>(`/api/security/agent/run${workspaceQuery}`, {
       method: 'POST',
       signal: controller.signal,
       body: JSON.stringify(options),
@@ -1381,7 +1382,8 @@ export async function loadLatestSecurityAgentRun() {
 }
 
 export async function createSecurityAgentJob(options: AgentRunRequest) {
-  return api<AgentRunResult>('/api/security/agent/jobs', {
+  const workspaceQuery = options.workspaceId ? `?workspaceId=${encodeURIComponent(options.workspaceId)}` : ''
+  return api<AgentRunResult>(`/api/security/agent/jobs${workspaceQuery}`, {
     method: 'POST',
     body: JSON.stringify(options),
   })

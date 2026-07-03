@@ -419,6 +419,7 @@ type MultimodalEntitySummary = {
   ruleSummaries: MultimodalEntityRuleSummary[]
 }
 type AgentTargetPreset = '3cx' | 'solarwinds' | 'codecov' | 'eventstream' | 'manual'
+type AssistantMode = 'graphrag' | 'agent'
 type AgentFormState = {
   targetPath: string
   artifactPath: string
@@ -545,6 +546,43 @@ function scanStateFromWorkspace(workspace: SecurityWorkspace | null): ScanWorksp
       : { ...step, status: 'completed' as const, message: '扫描完成' }
   })
   return { running: false, completed: true, steps }
+}
+
+function scanStateFromAgentRun(run: AgentRunResult, workspace?: SecurityWorkspace | null): ScanWorkspaceState {
+  const agentStepById = new Map((run.steps || []).map((step) => [step.id, step]))
+  const multimodalCount = workspace?.multimodal_audit?.summary?.evidence_count ?? 0
+  const statusByStep: Record<string, ScanStepStatus> = {
+    pending: 'pending',
+    running: 'running',
+    success: 'completed',
+    skipped: 'skipped',
+    failed: 'failed',
+  }
+  const agentStepIds: Partial<Record<ScanStepState['id'], string>> = {
+    code: 'code_audit',
+    supply: 'dependency_audit',
+    pipeline: 'cicd_audit',
+    artifact: 'artifact_trust',
+    logs: 'log_audit',
+    graph: 'workspace_report',
+  }
+  const steps = scanStepSeed.map((seed) => {
+    if (seed.id === 'multimodal') {
+      return multimodalCount > 0
+        ? { ...seed, status: 'completed' as const, message: '已纳入外部证据' }
+        : { ...seed, status: 'skipped' as const, message: 'Agent 本轮未调用多模态证据' }
+    }
+    const agentStep = agentStepById.get(agentStepIds[seed.id] || '')
+    if (!agentStep) return { ...seed }
+    return {
+      ...seed,
+      status: statusByStep[agentStep.status] ?? 'pending',
+      message: agentStep.error || agentStep.summary?.message || agentStep.summary?.reason || agentStep.description || '',
+    }
+  })
+  const running = ['queued', 'running', 'idle'].includes(String(run.status))
+  const completed = !running && Boolean(run.runId)
+  return { running, completed, steps }
 }
 
 function readStoredScanState(workspaceId: string): ScanWorkspaceState | null {
@@ -889,6 +927,75 @@ function isImportedSecurityWorkspace(workspace: Pick<SecurityWorkspace, 'workspa
   return Boolean(workspace.import || workspace.workspace?.importId)
 }
 
+function assistantModeLabel(mode: AssistantMode) {
+  return mode === 'agent' ? 'Agent' : 'GraphRAG'
+}
+
+function assistantMessageTitle(message: SecurityAssistantResponse) {
+  if (message.model === 'agent-orchestrator') return 'Agent 调度'
+  if (message.model === 'rule-based-investigation-agent') return '规则调查 Agent'
+  if (message.model === 'waiting-for-scan') return '等待扫描'
+  return 'GraphRAG 分析'
+}
+
+function agentRequestFromWorkspace(workspace: SecurityWorkspace): AgentRunRequest {
+  const workspaceId = getWorkspaceId(workspace)
+  const importId = workspace.import?.importId || workspace.workspace?.importId
+  const targetPath = workspace.import?.sourcePath || workspace.workspace?.repository
+  return {
+    workspaceId,
+    ...(importId ? { importId } : {}),
+    ...(targetPath ? { targetPath } : {}),
+    includeCodeAudit: true,
+    includeDependencyAudit: true,
+    includeCicdAudit: true,
+    includeArtifactTrust: true,
+    includeLogAudit: true,
+    timeoutSeconds: 240,
+  }
+}
+
+function agentRunToAssistantResponse(question: string, run: AgentRunResult): SecurityAssistantResponse {
+  const status = String(run.status || 'unknown')
+  const narrative = run.narrative
+  const stepLines = (run.steps || [])
+    .map((step) => `- ${step.name}：${agentStepStatusLabel(step.status)}${step.error ? `，${step.error}` : ''}`)
+    .join('\n')
+  const gapLines = (run.evidenceGaps || [])
+    .slice(0, 5)
+    .map((gap) => `- ${gap.module}：${gap.reason || gap.question || '需要补充证据'}`)
+    .join('\n')
+  const actionLines = (run.nextActions || [])
+    .slice(0, 5)
+    .map((action, index) => `${index + 1}. ${action.title}：${action.action}`)
+    .join('\n')
+  const answer = [
+    `## Agent 调度研判`,
+    '',
+    `Agent 已按问题自动创建调查任务 ${run.runId ? `\`${run.runId}\`` : ''}，当前状态为 **${status}**。`,
+    narrative?.summary ? `\n${narrative.summary}` : '',
+    narrative?.verdict ? `\n**研判结论：**${narrative.verdict}` : '',
+    `\n**风险评分：**${run.summary?.riskScore ?? 0}/100，证据缺口 ${run.summary?.evidenceGapCount ?? 0} 项。`,
+    stepLines ? `\n### 调用步骤\n${stepLines}` : '',
+    gapLines ? `\n### 证据缺口\n${gapLines}` : '',
+    actionLines ? `\n### 下一步动作\n${actionLines}` : '',
+    run.error ? `\n### 异常\n${run.error}` : '',
+  ].filter(Boolean).join('\n')
+
+  return {
+    question,
+    answer,
+    retrieval: [
+      `Agent Job: ${run.runId || '-'}`,
+      `Status: ${status}`,
+      ...(run.events || []).slice(-4).map((event) => `${event.stepId}: ${event.message}`),
+    ],
+    graph_rag: null,
+    next_actions: (run.nextActions || []).map((action) => `${action.title}：${action.action}`),
+    model: 'agent-orchestrator',
+  }
+}
+
 function getAssistantPayload(workspace: Pick<SecurityWorkspace, 'assistant' | 'workspace' | 'import'>): SecurityAssistantPayload {
   const assistant = workspace.assistant
   return {
@@ -952,6 +1059,20 @@ function isWorkspaceScanned(workspace: SecurityWorkspace | null) {
   return status === 'completed' || status === 'partial' || status === 'failed'
 }
 
+function workspaceHasModuleDetails(workspace: SecurityWorkspace | null) {
+  if (!workspace) return false
+  return Boolean(
+    (workspace.dependencies?.length ?? 0) > 0 ||
+    (workspace.dependency_audit?.dependencies?.length ?? 0) > 0 ||
+    (workspace.dependency_audit?.findings?.length ?? 0) > 0 ||
+    (workspace.cicd_audit?.findings?.length ?? 0) > 0 ||
+    (workspace.artifact_trust?.checks?.length ?? 0) > 0 ||
+    (workspace.log_audit?.findings?.length ?? 0) > 0 ||
+    (workspace.multimodal_audit?.evidence?.length ?? 0) > 0 ||
+    (workspace.graph?.attack_paths?.length ?? 0) > 0
+  )
+}
+
 function conversationSummaryFromWorkspace(workspace: SecurityWorkspace): SecurityConversation['summary'] {
   const preflight = getImportSummary(workspace)
   const fileStats = preflight?.fileStats
@@ -988,6 +1109,7 @@ export function SecurityPlatform() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [question, setQuestion] = useState('')
+  const [assistantMode, setAssistantMode] = useState<AssistantMode>('graphrag')
   const [assistantMessages, setAssistantMessages] =
     useState<SecurityAssistantResponse[]>([])
   const [assistantBusy, setAssistantBusy] = useState(false)
@@ -1004,6 +1126,7 @@ export function SecurityPlatform() {
   const [scanStateByWorkspace, setScanStateByWorkspace] = useState<Record<string, ScanWorkspaceState>>({})
   const activeWorkspaceRef = useRef('')
   const contentScrollRef = useRef<HTMLDivElement>(null)
+  const moduleRepairRef = useRef('')
   const [moduleViewKey, setModuleViewKey] = useState(0)
 
   const activeWorkspaceKey = workspace ? getWorkspaceId(workspace) : ''
@@ -1015,10 +1138,45 @@ export function SecurityPlatform() {
   const scanSteps = activeScanState.steps
   const activeWorkspaceTab =
     openTabs.find((tab) => tab.id === activeTabId) ?? createWorkspaceTab('overview')
+  const workspaceDataKey = workspace
+    ? [
+        activeWorkspaceKey,
+        workspace.scanSuite?.agentRunId ?? workspace.scanSuite?.completedAt ?? '',
+        workspace.dependencies?.length ?? 0,
+        workspace.dependency_audit?.dependencies?.length ?? 0,
+        workspace.dependency_audit?.findings?.length ?? 0,
+        workspace.cicd_audit?.findings?.length ?? 0,
+        workspace.artifact_trust?.checks?.length ?? 0,
+        workspace.log_audit?.findings?.length ?? 0,
+        workspace.multimodal_audit?.evidence?.length ?? 0,
+        workspace.graph?.attack_paths?.length ?? 0,
+        workspace.report?.length ?? 0,
+      ].join(':')
+    : 'empty'
 
   useEffect(() => {
     activeWorkspaceRef.current = activeWorkspaceKey
   }, [activeWorkspaceKey])
+
+  useEffect(() => {
+    moduleRepairRef.current = ''
+  }, [activeWorkspaceKey])
+
+  useEffect(() => {
+    if (!workspace || !activeWorkspaceKey || activeWorkspaceKey === 'latest') return
+    if (!activeScanState.completed || workspaceHasModuleDetails(workspace)) return
+    const repairKey = `${activeWorkspaceKey}:${workspace.scanSuite?.agentRunId ?? workspace.scanSuite?.completedAt ?? 'completed'}`
+    if (moduleRepairRef.current === repairKey) return
+    moduleRepairRef.current = repairKey
+    loadSecurityWorkspaceById(activeWorkspaceKey)
+      .then((nextWorkspace) => {
+        if (activeWorkspaceRef.current !== activeWorkspaceKey) return
+        if (workspaceHasModuleDetails(nextWorkspace)) {
+          applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
+        }
+      })
+      .catch(() => undefined)
+  }, [activeWorkspaceKey, activeScanState.completed, workspace])
 
   useLayoutEffect(() => {
     const scrollToTop = () => {
@@ -1061,6 +1219,29 @@ export function SecurityPlatform() {
     })
   }
 
+  function applyWorkspaceUpdate(
+    nextWorkspace: SecurityWorkspace,
+    options: { scanState?: ScanWorkspaceState; refreshModules?: boolean } = {}
+  ) {
+    const nextWorkspaceId = getWorkspaceId(nextWorkspace)
+    setWorkspace(nextWorkspace)
+    setWorkspaceScanState(nextWorkspaceId, options.scanState ?? scanStateFromWorkspace(nextWorkspace))
+    setConversations((items) =>
+      items.map((item) =>
+        item.workspaceId === nextWorkspaceId
+          ? {
+              ...item,
+              summary: conversationSummaryFromWorkspace(nextWorkspace),
+              updatedAt: new Date().toISOString(),
+            }
+          : item
+      )
+    )
+    if (options.refreshModules) {
+      setModuleViewKey((current) => current + 1)
+    }
+  }
+
   async function loadWorkspace(workspaceId?: string, showToast = false) {
     setRefreshing(true)
     try {
@@ -1072,7 +1253,9 @@ export function SecurityPlatform() {
       const storedScanState = readStoredScanState(nextWorkspaceId)
       const nextScanState = workspaceScanState.completed
         ? workspaceScanState
-        : storedScanState ?? workspaceScanState
+        : storedScanState?.running
+          ? storedScanState
+          : workspaceScanState
       setWorkspace(payload)
       loadAssistantHistory(nextWorkspaceId)
       setWorkspaceScanState(
@@ -1175,7 +1358,7 @@ export function SecurityPlatform() {
   async function submitQuestion() {
     const value = question.trim()
     if (!value) return
-    if (workspace && isImportedSecurityWorkspace(workspace) && !activeScanState.completed) {
+    if (assistantMode === 'graphrag' && workspace && isImportedSecurityWorkspace(workspace) && !activeScanState.completed) {
       const assistant = getWaitingAssistantPayload(workspace, value)
       appendAssistantMessage(getWorkspaceId(workspace), {
         question: value,
@@ -1190,7 +1373,9 @@ export function SecurityPlatform() {
     }
     setAssistantBusy(true)
     try {
-      const response = await askSecurityAssistant(value, workspace ? getWorkspaceId(workspace) : undefined)
+      const response = assistantMode === 'agent' && workspace
+        ? await runAgentQuestion(value, workspace)
+        : await askSecurityAssistant(value, workspace ? getWorkspaceId(workspace) : undefined)
       if (workspace) {
         appendAssistantMessage(getWorkspaceId(workspace), response)
       } else {
@@ -1202,6 +1387,39 @@ export function SecurityPlatform() {
     } finally {
       setAssistantBusy(false)
     }
+  }
+
+  async function runAgentQuestion(value: string, currentWorkspace: SecurityWorkspace): Promise<SecurityAssistantResponse> {
+    const request = agentRequestFromWorkspace(currentWorkspace)
+    const workspaceId = getWorkspaceId(currentWorkspace)
+    const created = await createSecurityAgentJob(request)
+    toast.success('Agent 任务已创建，正在自动编排检测工具')
+    let result = created
+    setWorkspaceScanState(workspaceId, scanStateFromAgentRun(result, currentWorkspace))
+    for (let index = 0; index < 120; index += 1) {
+      if (!result.runId || !['queued', 'running', 'idle'].includes(String(result.status))) break
+      await sleep(1500)
+      result = await loadSecurityAgentJob(result.runId)
+      const snapshotWorkspace = result.workspace ?? currentWorkspace
+      if (result.workspace && getWorkspaceId(result.workspace) === workspaceId) {
+        applyWorkspaceUpdate(result.workspace, {
+          scanState: scanStateFromAgentRun(result, result.workspace),
+        })
+      } else {
+        setWorkspaceScanState(workspaceId, scanStateFromAgentRun(result, snapshotWorkspace))
+      }
+    }
+    let finalWorkspace = result.workspace ?? currentWorkspace
+    try {
+      finalWorkspace = await loadSecurityWorkspaceById(workspaceId)
+    } catch {
+      finalWorkspace = result.workspace ?? currentWorkspace
+    }
+    applyWorkspaceUpdate(finalWorkspace, {
+      scanState: scanStateFromAgentRun(result, finalWorkspace),
+      refreshModules: true,
+    })
+    return agentRunToAssistantResponse(value, { ...result, workspace: finalWorkspace })
   }
 
   async function selectConversation(conversation: SecurityConversation) {
@@ -1289,13 +1507,13 @@ export function SecurityPlatform() {
 
     if (targetTab === 'supply') {
       const audit = await runDependencyAuditScan({ workspaceId, importId: newImportId })
-      const nextWorkspace = await loadSecurityWorkspace()
-      setWorkspace(nextWorkspace)
+      const nextWorkspace = await loadSecurityWorkspaceById(workspaceId)
+      applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
       toast.success(supplementFileSuccessMessage('reachability'))
     } else if (targetTab === 'pipeline') {
       const audit = await runCICDAuditScan({ workspaceId, importId: newImportId })
-      const nextWorkspace = await loadSecurityWorkspace()
-      setWorkspace(nextWorkspace)
+      const nextWorkspace = await loadSecurityWorkspaceById(workspaceId)
+      applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
       toast.success(supplementFileSuccessMessage('cicd', { count: audit.summary.finding_count }))
     }
   }
@@ -1340,7 +1558,7 @@ export function SecurityPlatform() {
     async function refreshCurrentWorkspace() {
       const nextWorkspace = await loadSecurityWorkspaceById(activeWorkspaceId)
       if (activeWorkspaceRef.current === activeWorkspaceId) {
-        setWorkspace(nextWorkspace)
+        applyWorkspaceUpdate(nextWorkspace)
       }
       return nextWorkspace
     }
@@ -1398,19 +1616,11 @@ export function SecurityPlatform() {
         message: item.message,
       })))
       if (activeWorkspaceRef.current === activeWorkspaceId) {
-        setWorkspace(nextWorkspace)
+        applyWorkspaceUpdate(nextWorkspace, {
+          scanState: scanStateFromWorkspace(nextWorkspace),
+          refreshModules: true,
+        })
       }
-      setConversations((items) =>
-        items.map((item) =>
-          item.workspaceId === activeWorkspaceId
-            ? {
-                ...item,
-                summary: conversationSummaryFromWorkspace(nextWorkspace),
-                updatedAt: new Date().toISOString(),
-              }
-            : item
-        )
-      )
       updateStep(
         'artifact',
         nextWorkspace.artifact_trust?.scan_id ? 'completed' : 'skipped',
@@ -1542,7 +1752,7 @@ export function SecurityPlatform() {
 
             <div ref={contentScrollRef} className='min-h-0 flex-1 overflow-y-scroll overscroll-contain p-4 [scrollbar-gutter:stable] sm:p-5'>
               <TabsContent value='overview' className='m-0'>
-                <WorkbenchMotionLayer motionKey={`overview-${moduleViewKey}-${activeWorkspaceKey || 'empty'}`}>
+                <WorkbenchMotionLayer motionKey={`overview-${moduleViewKey}-${workspaceDataKey}`}>
                   {workspace ? (
                     <AgentConversationHome
                       workspace={workspace}
@@ -1551,6 +1761,8 @@ export function SecurityPlatform() {
                       scanSteps={scanSteps}
                       question={question}
                       setQuestion={setQuestion}
+                      assistantMode={assistantMode}
+                      onAssistantModeChange={setAssistantMode}
                       messages={assistantMessages}
                       busy={assistantBusy}
                       onSubmit={() => void submitQuestion()}
@@ -1570,15 +1782,15 @@ export function SecurityPlatform() {
               {workspace ? (
                 <>
           <TabsContent value='supply' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`supply-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`supply-${moduleViewKey}-${workspaceDataKey}`}>
             <SupplyReachabilityPanel
               workspace={workspace}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
               importId={workspace.dependency_audit?.target?.importId ?? workspace.code_audit?.target?.importId}
               onCodeScanned={async (audit) => {
                 setWorkspace((current) => current ? { ...current, code_audit: audit } : { ...workspace, code_audit: audit })
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
                 toast.success(`可达性研判完成，发现 ${audit.summary.total} 项风险`)
               }}
               onDependencyScanned={async (audit) => {
@@ -1614,8 +1826,8 @@ export function SecurityPlatform() {
                   },
                 }
                 })
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
                 toast.success(supplementFileSuccessMessage('reachability'))
               }}
               onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'supply')}
@@ -1625,7 +1837,7 @@ export function SecurityPlatform() {
           </TabsContent>
 
           <TabsContent value='pipeline' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`pipeline-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`pipeline-${moduleViewKey}-${workspaceDataKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='风险是否进入了 CI/CD 构建流程，并影响 workflow、runner 或发布链路？'
@@ -1662,8 +1874,8 @@ export function SecurityPlatform() {
                     risk_score: Math.max(workspace.summary.risk_score, audit.summary.risk_score),
                   },
                 })
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
                 toast.success(supplementFileSuccessMessage('cicd', { count: audit.summary.finding_count }))
               }}
               onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'pipeline')}
@@ -1672,14 +1884,14 @@ export function SecurityPlatform() {
           </TabsContent>
 
           <TabsContent value='artifact' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`artifact-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`artifact-${moduleViewKey}-${workspaceDataKey}`}>
             <ArtifactTrustPanel
               result={workspace.artifact_trust}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
               onScanned={async (result) => {
                 setWorkspace(applyArtifactTrustToWorkspace(workspace, result))
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
                 toast.success(supplementFileSuccessMessage('artifact', { score: artifactTrustScore(result) }))
               }}
             />
@@ -1687,7 +1899,7 @@ export function SecurityPlatform() {
           </TabsContent>
 
           <TabsContent value='logs' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`logs-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`logs-${moduleViewKey}-${workspaceDataKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='运行期是否出现与前面供应链风险一致的异常外联、敏感接口访问或探测行为？'
@@ -1698,13 +1910,13 @@ export function SecurityPlatform() {
               audit={workspace.log_audit}
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
               onRealtimeChanged={async () => {
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
               }}
               onScanned={async (audit) => {
                 setWorkspace(applyLogAuditToWorkspace(workspace, audit))
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
                 toast.success(`日志扫描完成，发现 ${audit.summary.finding_count} 项运行期风险`)
               }}
             />
@@ -1712,7 +1924,7 @@ export function SecurityPlatform() {
           </TabsContent>
 
           <TabsContent value='multimodal' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`multimodal-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`multimodal-${moduleViewKey}-${workspaceDataKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='外部告警截图、语音或视频帧中是否包含可关联到依赖、IP、接口或服务的证据？'
@@ -1723,8 +1935,8 @@ export function SecurityPlatform() {
               workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
               onScanned={async (result) => {
                 setWorkspace(applyMultimodalAuditToWorkspace(workspace, result))
-                const nextWorkspace = await loadSecurityWorkspace()
-                setWorkspace(nextWorkspace)
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
                 toast.success(`多模态证据已接入 ${result.summary.evidence_count} 条`)
               }}
             />
@@ -1732,13 +1944,13 @@ export function SecurityPlatform() {
           </TabsContent>
 
           <TabsContent value='graph' className={cn(moduleTabContentClass, 'h-[calc(100vh-8.5rem)]')}>
-            <WorkbenchMotionLayer motionKey={`graph-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`graph-${moduleViewKey}-${workspaceDataKey}`}>
             <AttackChainGraph workspace={workspace} />
             </WorkbenchMotionLayer>
           </TabsContent>
 
           <TabsContent value='copilot' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`copilot-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`copilot-${moduleViewKey}-${workspaceDataKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='Agent 能否自动执行调查、解释判断依据、指出证据缺口并给出处置优先级？'
@@ -1748,18 +1960,20 @@ export function SecurityPlatform() {
               workspace={workspace}
               question={question}
               setQuestion={setQuestion}
+              assistantMode={assistantMode}
+              onAssistantModeChange={setAssistantMode}
               messages={assistantMessages}
               busy={assistantBusy}
               onSubmit={() => void submitQuestion()}
               onWorkspaceUpdated={(nextWorkspace) => {
-                setWorkspace(nextWorkspace)
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
               }}
             />
             </WorkbenchMotionLayer>
           </TabsContent>
 
           <TabsContent value='report' className={moduleTabContentClass}>
-            <WorkbenchMotionLayer motionKey={`report-${moduleViewKey}`}>
+            <WorkbenchMotionLayer motionKey={`report-${moduleViewKey}-${workspaceDataKey}`}>
             <ModuleQuestion
               title='本页在回答什么问题？'
               question='如何把结论、证据链、攻击路径和处置建议交付给评委或安全团队？'
@@ -2294,6 +2508,8 @@ function AgentConversationHome({
   scanSteps,
   question,
   setQuestion,
+  assistantMode,
+  onAssistantModeChange,
   messages,
   busy,
   onSubmit,
@@ -2306,6 +2522,8 @@ function AgentConversationHome({
   scanSteps: ScanStepState[]
   question: string
   setQuestion: (value: string) => void
+  assistantMode: AssistantMode
+  onAssistantModeChange: (mode: AssistantMode) => void
   messages: SecurityAssistantResponse[]
   busy: boolean
   onSubmit: () => void
@@ -2363,7 +2581,7 @@ function AgentConversationHome({
             </CopilotMessage>
             <CopilotMessage
               role='assistant'
-              title={message.model === 'rule-based-investigation-agent' ? '规则调查 Agent' : '安全分析'}
+              title={assistantMessageTitle(message)}
               icon={<SecurityAiIcon className='size-7' />}
               action={<CopyAnswerButton text={message.answer} />}
             >
@@ -2385,6 +2603,8 @@ function AgentConversationHome({
         <AssistantComposer
           value={question}
           onChange={setQuestion}
+          mode={assistantMode}
+          onModeChange={onAssistantModeChange}
           onSubmit={onSubmit}
           busy={busy}
           placeholder='询问风险原因、攻击链路、修复优先级或误报可能性'
@@ -2397,6 +2617,8 @@ function AgentConversationHome({
 function AssistantComposer({
   value,
   onChange,
+  mode,
+  onModeChange,
   onSubmit,
   busy,
   placeholder,
@@ -2404,6 +2626,8 @@ function AssistantComposer({
 }: {
   value: string
   onChange: (value: string) => void
+  mode: AssistantMode
+  onModeChange: (mode: AssistantMode) => void
   onSubmit: () => void
   busy: boolean
   placeholder: string
@@ -2439,12 +2663,42 @@ function AssistantComposer({
           }}
           placeholder={placeholder}
           className={cn(
-            'min-h-24 resize-none border-0 bg-transparent py-5 pl-5 pr-16 text-sm leading-7 shadow-none focus-visible:ring-0',
+            'min-h-24 resize-none border-0 bg-transparent pb-16 pl-5 pr-16 pt-5 text-sm leading-7 shadow-none focus-visible:ring-0',
             'placeholder:text-cyan-100/55',
-            compact && 'min-h-20 py-4'
+            compact && 'min-h-20 pb-14 pt-4'
           )}
           style={{ overflow: 'hidden' }}
         />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              className='absolute bottom-4 left-4 h-9 rounded-xl px-3 text-xs font-medium text-cyan-100/80 hover:bg-cyan-400/10 hover:text-cyan-50'
+            >
+              <span className='text-cyan-200'>{assistantModeLabel(mode)}</span>
+              <ChevronDown className='size-4 opacity-70' />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='start' side='top' className='w-36 border-cyan-500/20 bg-popover'>
+            <DropdownMenuItem
+              onClick={() => onModeChange('graphrag')}
+              className='flex cursor-pointer items-center justify-between gap-2'
+            >
+              <span>GraphRAG</span>
+              {mode === 'graphrag' ? <CheckCircle2 className='size-4 text-cyan-500' /> : null}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => onModeChange('agent')}
+              className='flex cursor-pointer items-center justify-between gap-2'
+            >
+              <span>Agent</span>
+              {mode === 'agent' ? <CheckCircle2 className='size-4 text-cyan-500' /> : null}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         <Button
           type='button'
@@ -3473,8 +3727,18 @@ function SupplyReachabilityPanel({
   animationKey: number
 }) {
   const dependencies = useMemo(
-    () => [...(workspace.dependencies ?? [])].sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0)),
-    [workspace.dependencies]
+    () => {
+      const rows = [
+        ...(workspace.dependencies ?? []),
+        ...(workspace.dependency_audit?.dependencies ?? []),
+      ]
+      const unique = new Map<string, SecurityDependency>()
+      rows.forEach((dependency) => {
+        unique.set(dependencyKey(dependency), dependency)
+      })
+      return Array.from(unique.values()).sort((a, b) => (b.risk ?? 0) - (a.risk ?? 0))
+    },
+    [workspace.dependencies, workspace.dependency_audit?.dependencies]
   )
   const reachability = buildReachabilityViewModel(workspace)
   const reachabilityItems = useMemo(
@@ -13041,7 +13305,7 @@ function AgentCommandCenter({
     }
     setAgentBusy(true)
     try {
-      const request = agentRequestFromForm(form)
+      const request = { ...agentRequestFromForm(form), workspaceId: getWorkspaceId(workspace) }
       const created = await createSecurityAgentJob(request)
       setAgentRun(created)
       setDefenseBrief(null)
@@ -14223,6 +14487,8 @@ function CopilotPanel({
   workspace,
   question,
   setQuestion,
+  assistantMode,
+  onAssistantModeChange,
   messages,
   busy,
   onSubmit,
@@ -14231,6 +14497,8 @@ function CopilotPanel({
   workspace: SecurityWorkspace
   question: string
   setQuestion: (value: string) => void
+  assistantMode: AssistantMode
+  onAssistantModeChange: (mode: AssistantMode) => void
   messages: SecurityAssistantResponse[]
   busy: boolean
   onSubmit: () => void
@@ -14282,7 +14550,7 @@ function CopilotPanel({
                   </CopilotMessage>
                   <CopilotMessage
                     role='assistant'
-                    title='安全分析'
+                    title={assistantMessageTitle(message)}
                     icon={<SecurityAiIcon className='size-7' />}
                     action={<CopyAnswerButton text={message.answer} />}
                   >
@@ -14309,6 +14577,8 @@ function CopilotPanel({
             <AssistantComposer
               value={question}
               onChange={setQuestion}
+              mode={assistantMode}
+              onModeChange={onAssistantModeChange}
               onSubmit={onSubmit}
               busy={busy}
               placeholder='继续追问证据链、攻击路径、修复顺序或误报可能性'

@@ -3376,6 +3376,58 @@ def empty_agent_job_payload() -> dict[str, Any]:
     }
 
 
+def agent_result_module_payloads(results: Any) -> list[tuple[str, dict[str, Any]]]:
+    """把 Agent 内部工具结果转换成可写回工作空间的模块结果。"""
+
+    payloads: list[tuple[str, dict[str, Any]]] = []
+    if results.code_audit is not None:
+        serialized = serialize_code_audit(results.code_audit)
+        if serialized:
+            payloads.append(("code_audit", serialized))
+    if results.dependency_audit is not None:
+        serialized = serialize_dependency_audit(results.dependency_audit)
+        if serialized:
+            payloads.append(("dependency_audit", serialized))
+    if results.cicd_audit is not None:
+        serialized = serialize_cicd_audit(results.cicd_audit)
+        if serialized:
+            payloads.append(("cicd_audit", serialized))
+    if results.artifact_trust is not None:
+        serialized = serialize_artifact_trust(results.artifact_trust)
+        if serialized:
+            payloads.append(("artifact_trust", serialized))
+    if results.log_audit is not None:
+        serialized = serialize_log_audit(results.log_audit)
+        if serialized:
+            payloads.append(("log_audit", serialized))
+    return payloads
+
+
+def scan_suite_from_agent_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    steps = [step for step in payload.get("steps", []) if isinstance(step, dict)]
+    errors = [
+        {"module": str(step.get("id") or ""), "message": str(step.get("error") or "Agent 步骤执行失败")}
+        for step in steps
+        if step.get("status") == "failed"
+    ]
+    skipped = [
+        {"module": str(step.get("id") or ""), "reason": str(step.get("error") or step.get("description") or "本轮未调用")}
+        for step in steps
+        if step.get("status") == "skipped"
+    ]
+    completed = [str(step.get("id") or "") for step in steps if step.get("status") == "success"]
+    status = "partial" if errors else "completed"
+    return {
+        "status": status,
+        "source": "agent",
+        "agentRunId": payload.get("runId"),
+        "completed": completed,
+        "skipped": skipped,
+        "errors": errors,
+        "completedAt": datetime.now(UTC).isoformat(),
+    }
+
+
 def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[str, Any]:
     global LAST_CODE_AUDIT
     global LAST_DEPENDENCY_AUDIT
@@ -3395,10 +3447,28 @@ def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[st
     if bundle.results.log_audit is not None:
         LAST_LOG_AUDIT = bundle.results.log_audit
 
-    workspace = (
-        persist_current_workspace(workspace_id, module_key="agent", module_payload=bundle.payload)
-        if workspace_id
-        else build_workspace_payload()
+    workspace = workspace_or_current(workspace_id) if workspace_id else build_workspace_payload()
+    for module_key, module_payload in agent_result_module_payloads(bundle.results):
+        workspace = apply_module_payload_to_workspace(workspace, module_key, module_payload)
+
+    workspace["agentRun"] = bundle.payload
+    workspace["scanSuite"] = scan_suite_from_agent_payload(bundle.payload)
+    workspace["investigationAgent"] = build_investigation_state(
+        workspace,
+        errors=workspace["scanSuite"].get("errors") or [],
+    )
+    workspace = refresh_workspace_derived_state(workspace)
+    workspace["agentRun"] = bundle.payload
+    workspace["scanSuite"] = scan_suite_from_agent_payload(bundle.payload)
+    workspace["investigationAgent"] = build_investigation_state(
+        workspace,
+        errors=workspace["scanSuite"].get("errors") or [],
+    )
+    workspace = save_workspace_snapshot(
+        workspace,
+        workspace_id=workspace_id,
+        module_key="agent_run",
+        module_payload=bundle.payload,
     )
     result = {
         **bundle.payload,
@@ -3450,7 +3520,7 @@ async def security_agent_create_job(payload: AgentRunRequest, request: Request) 
     """创建一个可轮询的 Agent 调查任务。"""
 
     global LAST_AGENT_JOB_ID
-    workspace_id = await workspace_id_from_request(request)
+    workspace_id = await workspace_id_from_request(request) or payload.workspace_id
     run_id = new_agent_run_id()
     LAST_AGENT_JOB_ID = run_id
     job = {
@@ -3548,7 +3618,7 @@ def render_agent_narrative_markdown(job: dict[str, Any]) -> str:
 async def security_agent_run(payload: AgentRunRequest, request: Request) -> dict[str, Any]:
     """同步执行 Agent 编排，并把成功结果写回当前工作台。"""
 
-    workspace_id = await workspace_id_from_request(request)
+    workspace_id = await workspace_id_from_request(request) or payload.workspace_id
     bundle = run_agent_backend(payload)
     return apply_agent_results(bundle, workspace_id=workspace_id)
 

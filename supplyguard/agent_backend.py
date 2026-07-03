@@ -33,6 +33,7 @@ class AgentRunRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    workspace_id: str | None = Field(default=None, alias="workspaceId")
     import_id: str | None = Field(default=None, alias="importId")
     target_path: str | None = Field(default=None, alias="targetPath")
     artifact_path: str | None = Field(default=None, alias="artifactPath")
