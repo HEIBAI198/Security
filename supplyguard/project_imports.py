@@ -23,9 +23,12 @@ from .config import IMPORT_WORKSPACE_DIR
 
 
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+MAX_FILE_UPLOAD_BYTES = 200 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 20000
 MAX_WALK_FILES = 100000
 MAX_WINDOWS_EXTRACT_PATH = 240
+GIT_CLONE_TIMEOUT_SECONDS = 300
+GIT_CHECKOUT_TIMEOUT_SECONDS = 60
 
 IGNORED_DIRS = {
     ".git",
@@ -230,6 +233,37 @@ def create_upload_import(filename: str, content: bytes) -> dict[str, Any]:
     return metadata
 
 
+def create_files_import(files: list[tuple[str, bytes]], project_name: str | None = None) -> dict[str, Any]:
+    if not files:
+        raise ImportErrorDetail("No project files were uploaded.")
+
+    total_size = sum(len(content) for _, content in files)
+    if total_size > MAX_FILE_UPLOAD_BYTES:
+        raise ImportErrorDetail("Uploaded project files exceed the 200 MB limit.")
+    if len(files) > MAX_ARCHIVE_ENTRIES:
+        raise ImportErrorDetail("Uploaded project contains too many files.")
+
+    import_id = _new_import_id()
+    import_dir = _prepare_import_dir(import_id)
+    source_dir = import_dir / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+
+    for raw_name, content in files:
+        target = _uploaded_file_target(source_dir, raw_name)
+        if _is_windows_extract_path_too_long(target):
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+
+    project_dir = _collapse_single_root(source_dir)
+    source_ref = {"fileCount": len(files), "sizeBytes": total_size}
+    summary = analyze_project(project_dir, "upload", source_ref, project_name=project_name)
+    metadata = _build_import_metadata(import_id, "upload", project_dir, summary, source_ref)
+    _save_metadata(import_dir, metadata)
+    _save_latest_import(import_id)
+    return metadata
+
+
 def create_git_import(
     url: str,
     ref: str | None = None,
@@ -243,7 +277,14 @@ def create_git_import(
     import_id = _new_import_id()
     import_dir = _prepare_import_dir(import_id)
     source_dir = import_dir / "source"
-    clone_cmd = ["git", "clone", "--depth", "1"]
+    clone_cmd = [
+        "git",
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--filter=blob:none",
+    ]
     if ref:
         clone_cmd.extend(["--branch", ref.strip()])
     clone_cmd.extend([git_url, str(source_dir)])
@@ -255,7 +296,7 @@ def create_git_import(
             check=True,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=GIT_CLONE_TIMEOUT_SECONDS,
         )
         if commit:
             subprocess.run(
@@ -264,7 +305,7 @@ def create_git_import(
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=GIT_CHECKOUT_TIMEOUT_SECONDS,
             )
     except FileNotFoundError as exc:
         raise ImportErrorDetail("Git executable is not available on the server.") from exc
@@ -577,6 +618,18 @@ def _archive_member_target(destination: Path, member_name: str) -> Path:
     parts = [part for part in PurePosixPath(normalized).parts if part not in ("", ".")]
     if not parts or any(part == ".." for part in parts) or ":" in parts[0]:
         raise ImportErrorDetail("Archive contains an unsafe path.")
+    target = destination.joinpath(*parts).resolve()
+    target.relative_to(destination.resolve())
+    return target
+
+
+def _uploaded_file_target(destination: Path, filename: str) -> Path:
+    normalized = unquote(filename or "").replace("\\", "/")
+    parts = [part for part in PurePosixPath(normalized).parts if part not in ("", ".")]
+    if not parts:
+        raise ImportErrorDetail("Uploaded file has an empty name.")
+    if any(part == ".." for part in parts) or ":" in parts[0]:
+        raise ImportErrorDetail("Uploaded file contains an unsafe path.")
     target = destination.joinpath(*parts).resolve()
     target.relative_to(destination.resolve())
     return target

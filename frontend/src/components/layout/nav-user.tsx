@@ -1,5 +1,4 @@
-import { BadgeCheck, ChevronsUpDown, LogOut } from 'lucide-react'
-import { useNavigate } from '@tanstack/react-router'
+import { BadgeCheck, ChevronsUpDown } from 'lucide-react'
 import { authMethodLabels, useAuthStore } from '@/stores/auth-store'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -29,7 +28,6 @@ type NavUserProps = {
 
 export function NavUser({ user }: NavUserProps) {
   const { isMobile } = useSidebar()
-  const navigate = useNavigate()
   const { auth } = useAuthStore()
   const currentUser = auth.user
   const displayUser = {
@@ -40,11 +38,6 @@ export function NavUser({ user }: NavUserProps) {
     role: user.role,
   }
   const initials = displayUser.name.trim().slice(0, 2).toUpperCase() || 'SG'
-
-  function signOut() {
-    auth.reset()
-    navigate({ to: '/login', replace: true })
-  }
 
   return (
     <SidebarMenu>
@@ -97,10 +90,6 @@ export function NavUser({ user }: NavUserProps) {
             <DropdownMenuItem>
               <BadgeCheck />
               当前账号
-            </DropdownMenuItem>
-            <DropdownMenuItem variant='destructive' onClick={signOut}>
-              <LogOut />
-              退出登录
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import { getCookie, removeCookie, setCookie } from '@/lib/cookies'
+import { getCookie, setCookie } from '@/lib/cookies'
 
 const ACCESS_TOKEN = 'thisisjustarandomstring'
 const USER_SESSION = 'supplyguard.auth-user'
+const DEMO_ACCESS_TOKEN = 'supplyguard-demo-session'
 
 export type AuthMethod = 'phone' | 'github' | 'email'
 
@@ -20,6 +21,16 @@ export interface AuthUser {
   identifier?: string
   role: string[]
   exp: number
+}
+
+const DEMO_USER: AuthUser = {
+  accountNo: 'demo',
+  email: 'analyst@supplyguard.local',
+  displayName: 'SupplyGuard Analyst',
+  method: 'email',
+  identifier: 'analyst@supplyguard.local',
+  role: ['analyst'],
+  exp: 4102444800,
 }
 
 interface AuthState {
@@ -88,8 +99,8 @@ export function loginUser(payload: AuthPayload) {
 
 export const useAuthStore = create<AuthState>()((set) => {
   const cookieState = getCookie(ACCESS_TOKEN)
-  const initToken = cookieState ? JSON.parse(cookieState) : ''
-  const initUser = initToken ? readStoredUser() : null
+  const initToken = cookieState ? JSON.parse(cookieState) : DEMO_ACCESS_TOKEN
+  const initUser = readStoredUser() ?? DEMO_USER
   return {
     auth: {
       user: initUser,
@@ -106,16 +117,16 @@ export const useAuthStore = create<AuthState>()((set) => {
         }),
       resetAccessToken: () =>
         set((state) => {
-          removeCookie(ACCESS_TOKEN)
-          return { ...state, auth: { ...state.auth, accessToken: '' } }
+          setCookie(ACCESS_TOKEN, JSON.stringify(DEMO_ACCESS_TOKEN))
+          return { ...state, auth: { ...state.auth, accessToken: DEMO_ACCESS_TOKEN } }
         }),
       reset: () =>
         set((state) => {
-          removeCookie(ACCESS_TOKEN)
-          writeStoredUser(null)
+          setCookie(ACCESS_TOKEN, JSON.stringify(DEMO_ACCESS_TOKEN))
+          writeStoredUser(DEMO_USER)
           return {
             ...state,
-            auth: { ...state.auth, user: null, accessToken: '' },
+            auth: { ...state.auth, user: DEMO_USER, accessToken: DEMO_ACCESS_TOKEN },
           }
         }),
     },

@@ -56,7 +56,6 @@ import {
   GitPullRequestArrow,
   KeyRound,
   Loader2,
-  LogOut,
   MessageCircle,
   Music2,
   Network,
@@ -168,6 +167,7 @@ import {
   importGitProject,
   importLocalProject,
   uploadProjectArchive,
+  uploadProjectFiles,
   type ProjectImportRecord,
 } from '@/lib/import-api'
 import {
@@ -175,6 +175,7 @@ import {
   type DemoPresetKey,
 } from '@/features/project-import/demo-presets'
 import { useAuthStore } from '@/stores/auth-store'
+import { Logo } from '@/assets/logo'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -1221,11 +1222,6 @@ export function SecurityPlatform() {
     window.history.replaceState(null, '', '#overview')
   }
 
-  function signOut() {
-    auth.reset()
-    window.location.href = '/login'
-  }
-
   async function removeConversation(conversationId: string) {
     try {
       await deleteConversation(conversationId)
@@ -1477,22 +1473,21 @@ export function SecurityPlatform() {
         }
       >
         <div className='flex min-w-0 flex-1 items-center justify-between gap-4'>
-          <div className='min-w-0'>
-            <div className='truncate text-sm font-semibold'>SupplyGuard KG</div>
-            <div className='truncate text-xs text-muted-foreground'>
-              {workspace
-                ? `${workspace.workspace.repository} · ${workspace.workspace.commit}`
-                : draftConversation
-                  ? '新建对话 · 等待导入项目'
-                  : '历史对话 · 选择或新建项目分析'}
+          <div className='flex min-w-0 items-center gap-2'>
+            <Logo className='size-7 shrink-0' />
+            <div className='min-w-0'>
+              <div className='truncate text-sm font-semibold'>SupplyGuard KG</div>
+              <div className='truncate text-xs text-muted-foreground'>
+                {workspace
+                  ? `${workspace.workspace.repository} · ${workspace.workspace.commit}`
+                  : draftConversation
+                    ? '新建对话 · 等待导入项目'
+                    : '历史对话 · 选择或新建项目分析'}
+              </div>
             </div>
           </div>
           <div className='flex shrink-0 items-center gap-2'>
             <ThemeSwitch />
-            <Button variant='ghost' size='sm' onClick={signOut}>
-              <LogOut className='size-4' />
-              退出登录
-            </Button>
             <Button
               variant='outline'
               size='sm'
@@ -2084,7 +2079,7 @@ function EmbeddedProjectImportPanel({
   const [archive, setArchive] = useState<File | null>(null)
   const [gitUrl, setGitUrl] = useState('')
   const [gitRef, setGitRef] = useState('')
-  const [localPath, setLocalPath] = useState('')
+  const [projectFiles, setProjectFiles] = useState<File[]>([])
   const [projectName, setProjectName] = useState('')
 
   async function importDemoCase(presetKey: DemoPresetKey) {
@@ -2125,14 +2120,11 @@ function EmbeddedProjectImportPanel({
           projectName: projectName.trim() || undefined,
         })
       } else {
-        if (!localPath.trim()) {
-          toast.error('请输入后端可访问的本地项目路径')
+        if (!projectFiles.length) {
+          toast.error('请选择要上传的项目文件或文件夹')
           return
         }
-        record = await importLocalProject({
-          path: localPath.trim(),
-          projectName: projectName.trim() || undefined,
-        })
+        record = await uploadProjectFiles(projectFiles, projectName.trim() || undefined)
       }
       onImported(record)
     } catch (error) {
@@ -2213,23 +2205,29 @@ function EmbeddedProjectImportPanel({
           <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
             <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
               <FolderOpen className='size-4 text-primary' />
-              本地路径
+              上传项目文件
             </div>
             <Input
-              value={localPath}
-              onChange={(event) => setLocalPath(event.target.value)}
-              placeholder='C:/Users/.../project'
+              type='file'
+              multiple
+              className={fileInputClass}
+              ref={(element) => {
+                if (element) {
+                  element.setAttribute('webkitdirectory', '')
+                  element.setAttribute('directory', '')
+                }
+              }}
+              onChange={(event) => setProjectFiles(Array.from(event.target.files ?? []))}
             />
             <Button
               className={cn('mt-3 w-full', actionButtonClass)}
               disabled={disabled}
               onClick={() => void runImport('local')}
             >
-              {busy === 'local' ? <Loader2 className='size-4 animate-spin' /> : <FolderOpen className='size-4' />}
-              导入路径
+              {busy === 'local' ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+              {busy === 'local' ? '正在上传项目' : `上传检测${projectFiles.length ? `（${projectFiles.length} 个文件）` : ''}`}
             </Button>
           </div>
-
           <div className='rounded-md border bg-[color:var(--surface-panel)] p-3'>
             <div className='mb-3 flex items-center gap-2 text-sm font-medium'>
               <GitBranch className='size-4 text-primary' />
@@ -2253,7 +2251,7 @@ function EmbeddedProjectImportPanel({
               onClick={() => void runImport('git')}
             >
               {busy === 'git' ? <Loader2 className='size-4 animate-spin' /> : <GitBranch className='size-4' />}
-              拉取导入
+              {busy === 'git' ? '正在拉取仓库' : '拉取导入'}
             </Button>
           </div>
         </div>

@@ -127,6 +127,27 @@ export async function uploadProjectArchive(file: File) {
   return response.json() as Promise<ProjectImportRecord>
 }
 
+export async function uploadProjectFiles(files: File[], projectName?: string) {
+  const formData = new FormData()
+  for (const file of files) {
+    formData.append('files', file, file.webkitRelativePath || file.name)
+  }
+  if (projectName?.trim()) {
+    formData.append('projectName', projectName.trim())
+  }
+
+  const response = await fetch(`${apiBase}/api/imports/files`, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    throw new Error(await readError(response))
+  }
+
+  return response.json() as Promise<ProjectImportRecord>
+}
+
 export async function importGitProject(payload: GitImportPayload) {
   return apiJson<ProjectImportRecord>('/api/imports/git', {
     method: 'POST',
