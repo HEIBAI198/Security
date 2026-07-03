@@ -1161,7 +1161,17 @@ export type SecurityAssistantResponse = {
 }
 
 export type AgentRunStepStatus = 'pending' | 'running' | 'success' | 'skipped' | 'failed'
-export type AgentJobStatus = 'idle' | 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | string
+export type AgentJobStatus =
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'partial'
+  | 'needs_input'
+  | 'completed_with_risk'
+  | 'failed'
+  | 'cancelled'
+  | string
 export type AgentActionKind =
   | 'open_evidence_gap'
   | 'open_module'
@@ -1223,9 +1233,39 @@ export type AgentNextAction = {
   payload?: Record<string, unknown>
 }
 
+export type AgentRunVerdict = {
+  level: 'confirmed_attack' | 'suspected_risk' | 'insufficient_evidence' | 'clean' | string
+  label: string
+  riskScore: number
+  riskLevel: SecuritySeverity
+  confidence: number
+  conclusion: string
+  supportedClaims: string[]
+  unsupportedClaims: string[]
+  evidenceGaps: string[]
+  nextActions: string[]
+}
+
+export type AgentRunPlan = {
+  plannerType: string
+  objective: string
+  reason: string
+  selectedModules: Array<{ id: string; name: string; reason?: string }>
+  skippedModules: Array<{ id: string; name: string; reason?: string }>
+  observations?: Array<Record<string, unknown>>
+  replans?: Array<{
+    afterStep?: string
+    reason?: string
+    enabledModules?: Array<{ id: string; name: string }>
+    blockedModules?: Array<{ id: string; name: string }>
+    createdAt?: string
+  }>
+}
+
 export type AgentRunRequest = {
   workspaceId?: string
   importId?: string
+  question?: string
   targetPath?: string
   artifactPath?: string
   attestationPath?: string
@@ -1261,6 +1301,8 @@ export type AgentRunResult = {
     riskScore: number
     riskLevel: SecuritySeverity
   }
+  verdict?: AgentRunVerdict
+  plan?: AgentRunPlan
   evidenceGaps: AgentEvidenceGap[]
   nextActions: AgentNextAction[]
   narrative?: {
@@ -1351,6 +1393,13 @@ export async function downloadWorkspaceEvidencePackage(workspaceId: string) {
 
 export async function askSecurityAssistant(question: string, workspaceId?: string) {
   return api<SecurityAssistantResponse>('/api/security/assistant', {
+    method: 'POST',
+    body: JSON.stringify({ question, ...(workspaceId ? { workspaceId } : {}) }),
+  })
+}
+
+export async function askSecurityAgentChat(question: string, workspaceId?: string) {
+  return api<SecurityAssistantResponse>('/api/security/agent/chat', {
     method: 'POST',
     body: JSON.stringify({ question, ...(workspaceId ? { workspaceId } : {}) }),
   })

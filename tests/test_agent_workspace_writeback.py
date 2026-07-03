@@ -116,7 +116,7 @@ class AgentWorkspaceWritebackTests(unittest.TestCase):
             patch.object(security, "LAST_CICD_AUDIT", None),
             patch.object(security, "LAST_ARTIFACT_TRUST", None),
             patch.object(security, "LAST_LOG_AUDIT", None),
-            patch.object(security, "latest_multimodal_payload", return_value=None),
+            patch.object(security, "current_multimodal_payload", return_value=None),
         ):
             workspaces.save_workspace_snapshot(existing, workspace_id=workspace_id)
 

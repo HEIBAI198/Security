@@ -3363,6 +3363,18 @@ def empty_agent_job_payload() -> dict[str, Any]:
             "riskScore": 0,
             "riskLevel": "low",
         },
+        "verdict": {
+            "level": "insufficient_evidence",
+            "label": "等待调查",
+            "riskScore": 0,
+            "riskLevel": "low",
+            "confidence": 0,
+            "conclusion": "尚未执行 Agent 调查。",
+            "supportedClaims": [],
+            "unsupportedClaims": ["尚未执行任何调查步骤。"],
+            "evidenceGaps": [],
+            "nextActions": [],
+        },
         "evidenceGaps": [],
         "nextActions": [],
         "narrative": {
@@ -3416,7 +3428,13 @@ def scan_suite_from_agent_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if step.get("status") == "skipped"
     ]
     completed = [str(step.get("id") or "") for step in steps if step.get("status") == "success"]
-    status = "partial" if errors else "completed"
+    job_status = str(payload.get("status") or "")
+    if errors:
+        status = "failed"
+    elif job_status in {"needs_input", "partial", "completed_with_risk"}:
+        status = job_status
+    else:
+        status = "completed"
     return {
         "status": status,
         "source": "agent",
@@ -3627,22 +3645,7 @@ async def security_agent_run(payload: AgentRunRequest, request: Request) -> dict
 @router.get("/agent/latest/")
 async def security_agent_latest() -> dict[str, Any]:
     if LAST_AGENT_RUN is None:
-        return {
-            "runId": None,
-            "status": "idle",
-            "steps": [],
-            "summary": {
-                "stepCount": 0,
-                "success": 0,
-                "skipped": 0,
-                "failed": 0,
-                "evidenceGapCount": 0,
-                "riskScore": 0,
-                "riskLevel": "low",
-            },
-            "evidenceGaps": [],
-            "nextActions": [],
-        }
+        return empty_agent_job_payload()
     return LAST_AGENT_RUN
 
 

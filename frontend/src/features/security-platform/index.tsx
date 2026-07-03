@@ -85,6 +85,7 @@ import {
 import { toast } from 'sonner'
 import {
   analyzeMultimodalRecognizedText,
+  askSecurityAgentChat,
   askSecurityAssistant,
   createCICDAuditBaseline,
   createCodeAuditBaseline,
@@ -951,6 +952,49 @@ function agentRequestFromWorkspace(workspace: SecurityWorkspace): AgentRunReques
   }
 }
 
+function shouldUseExistingAgentState(question: string) {
+  const text = question.trim().toLowerCase()
+  const stateOnlyKeywords = [
+    '下一步',
+    '接下来',
+    '为什么',
+    '原因',
+    '待补',
+    '缺少',
+    '缺什么',
+    '上传',
+    '补充',
+    '状态',
+    '进度',
+    '完成',
+    '证据缺口',
+    '材料',
+    'next',
+    'missing',
+    'upload',
+    'status',
+  ]
+  const investigationKeywords = [
+    '有风险',
+    '有危险',
+    '危险吗',
+    '风险吗',
+    '是否危险',
+    '是否有风险',
+    '扫描',
+    '检测',
+    '重新',
+    '研判',
+    '攻击路径',
+    '影响发布',
+    '投毒',
+    'run',
+    'scan',
+  ]
+  return stateOnlyKeywords.some((keyword) => text.includes(keyword))
+    && !investigationKeywords.some((keyword) => text.includes(keyword))
+}
+
 function isDefenseBriefAction(action: AgentNextAction) {
   const text = `${action.actionKind || ''} ${action.title || ''} ${action.action || ''}`.toLowerCase()
   return action.actionKind === 'generate_defense_brief'
@@ -962,76 +1006,179 @@ function visibleAgentNextActions(actions?: AgentNextAction[]) {
   return (actions || []).filter((action) => !isDefenseBriefAction(action))
 }
 
-function agentRunDirectConclusion(run: AgentRunResult) {
-  const workspace = run.workspace
-  const dependencyTotal = workspace?.dependency_audit?.summary?.total_dependencies
-    ?? workspace?.dependencies?.length
-    ?? 0
-  const dependencyFindings = workspace?.dependency_audit?.summary?.finding_count
-    ?? workspace?.dependency_audit?.findings?.length
-    ?? 0
-  const cicdFindings = workspace?.cicd_audit?.summary?.finding_count
-    ?? workspace?.cicd_audit?.findings?.length
-    ?? 0
-  const artifactTrustScore = workspace?.artifact_trust?.trust_score
-    ?? workspace?.artifact_trust?.trustScore
-  const artifactIssues = (workspace?.artifact_trust?.checks ?? [])
-    .filter((check) => ['fail', 'warn', 'missing'].includes(String(check.status)))
-    .length
-  const logFindings = workspace?.log_audit?.summary?.finding_count
-    ?? workspace?.log_audit?.findings?.length
-    ?? 0
-  const attackPaths = workspace?.summary?.attack_paths
-    ?? workspace?.graph?.attack_paths?.length
-    ?? 0
-  const hasSupplyRisk = dependencyFindings > 0
-  const hasCicdRisk = cicdFindings > 0
-  const hasArtifactImpact = artifactIssues > 0 || attackPaths > 0
-  const supplyConclusion = hasSupplyRisk
-    ? `存在供应链依赖风险线索：共解析 ${dependencyTotal} 个依赖，发现 ${dependencyFindings} 个风险项。仅凭扫描结果不能证明这些依赖一定由 AI 推荐生成，但它们属于“AI 推荐依赖被直接接受”场景下需要优先复核的风险暴露。`
-    : `暂未发现明确的高风险依赖项；仅凭当前证据不能判定存在 AI 推荐依赖投毒。`
-  const cicdConclusion = hasCicdRisk
-    ? `存在 CI/CD 投毒或构建链风险：发现 ${cicdFindings} 项 workflow、权限、Action 或构建脚本风险。`
-    : `暂未发现明确的 CI/CD 构建链投毒风险。`
-  const artifactConclusion = hasArtifactImpact
-    ? `可能影响发布产物：产物可信检查发现 ${artifactIssues} 个异常/缺失项${typeof artifactTrustScore === 'number' ? `，产物可信评分 ${artifactTrustScore}/100` : ''}，并已形成 ${attackPaths} 条攻击路径候选，发布前应先阻断或暂缓。`
-    : `当前证据不足以证明风险已经影响发布产物；建议补充 artifact、provenance、签名和运行日志后再判定。`
+type AgentAnswerFocus = 'global' | 'code_audit' | 'dependency_audit' | 'cicd_audit' | 'artifact_trust' | 'log_audit'
+type FocusedAgentModule = Exclude<AgentAnswerFocus, 'global'>
+
+const AGENT_FOCUS_ORDER: FocusedAgentModule[] = ['log_audit', 'cicd_audit', 'artifact_trust', 'dependency_audit', 'code_audit']
+const AGENT_FOCUS_LABELS: Record<FocusedAgentModule, string> = {
+  code_audit: '代码可达性',
+  dependency_audit: '依赖与供应链组件',
+  cicd_audit: 'CI/CD 构建链',
+  artifact_trust: '发布产物',
+  log_audit: '日志部分',
+}
+const AGENT_FOCUS_PATTERNS: Record<FocusedAgentModule, RegExp> = {
+  code_audit: /代码|可达|import|调用|密钥|配置|source|code/i,
+  dependency_audit: /供应链组件|依赖|sbom|vex|包|dependency|package/i,
+  cicd_audit: /ci\/cd|cicd|构建链|workflow|runner|流水线|action|构建/i,
+  artifact_trust: /产物|artifact|provenance|attestation|签名|可信|发布|builder/i,
+  log_audit: /日志|运行期|运行|外联|回连|异常访问|异常行为|runtime|egress|log/i,
+}
+
+function isAgentModuleFocus(id: string): id is FocusedAgentModule {
+  return AGENT_FOCUS_ORDER.includes(id as FocusedAgentModule)
+}
+
+function agentAnswerFocus(question: string, run?: AgentRunResult): AgentAnswerFocus {
+  const text = question.trim().toLowerCase()
+  const matched = AGENT_FOCUS_ORDER.filter((focus) => AGENT_FOCUS_PATTERNS[focus].test(text))
+  if (matched.length === 1) return matched[0]
+  if (matched.length > 1) return 'global'
+  const selectedModules = (run?.plan?.selectedModules || [])
+    .map((item) => item.id)
+    .filter(isAgentModuleFocus)
+  return selectedModules.length === 1 ? selectedModules[0] : 'global'
+}
+
+function agentTextMatchesFocus(text: string, focus: AgentAnswerFocus) {
+  return focus === 'global' || AGENT_FOCUS_PATTERNS[focus].test(text)
+}
+
+function filterAgentLinesByFocus(lines: string[] | undefined, focus: AgentAnswerFocus) {
+  const values = lines || []
+  if (focus === 'global') return values
+  return values.filter((line) => agentTextMatchesFocus(line, focus))
+}
+
+function focusedAgentSummary(
+  focus: FocusedAgentModule,
+  verdict: NonNullable<AgentRunResult['verdict']>,
+  supportedClaims: string[],
+  unsupportedClaims: string[],
+  evidenceGaps: string[],
+) {
+  const label = AGENT_FOCUS_LABELS[focus]
+  const riskClaim = supportedClaims.find((item) => !/未提供明确攻击证据|未发现明确/.test(item))
+  if (riskClaim) return `${label}存在风险信号，${riskClaim}`
+  if (evidenceGaps.length) return `${label}证据还不完整，需要先补齐相关材料。`
+  if (unsupportedClaims.length) return `${label}暂未形成明确风险证据，${unsupportedClaims[0]}`
+  if (verdict.level === 'clean') return `${label}暂未发现明确风险。`
+  return `${label}没有返回独立结论，请结合对应模块详情复核。`
+}
+
+function defaultAgentActionLines(focus: AgentAnswerFocus) {
+  if (focus === 'log_audit') {
+    return ['1. 复核日志异常：核对异常外联、敏感接口访问或认证异常的源主机、进程、时间窗和目标地址。']
+  }
+  if (focus === 'cicd_audit') {
+    return ['1. 复核构建链：检查 workflow、runner、Action 版本、权限和构建日志是否存在异常变更。']
+  }
+  if (focus === 'artifact_trust') {
+    return ['1. 重新校验产物：核对 artifact、digest、provenance、签名和发布 commit 是否一致。']
+  }
+  if (focus === 'dependency_audit') {
+    return ['1. 复核高风险依赖：确认依赖是否被代码 import、是否进入构建产物、是否在运行日志中出现。']
+  }
+  if (focus === 'code_audit') {
+    return ['1. 复核代码证据：确认风险函数、入口路径、配置和密钥暴露是否可达。']
+  }
+  return []
+}
+
+function scopedAgentActions(actions: AgentNextAction[], focus: AgentAnswerFocus) {
+  const visible = actions.filter((action) => action.actionKind !== 'export_evidence_package' && action.actionKind !== 'generate_defense_brief')
+  if (focus === 'global') return visible
+  return visible.filter((action) => agentTextMatchesFocus([
+    action.targetModule,
+    action.title,
+    action.action,
+    ...(action.keywords || []),
+  ].join(' '), focus))
+}
+
+function compactAgentGapLines(gaps: AgentEvidenceGap[], focus: AgentAnswerFocus) {
+  const scoped = focus === 'global'
+    ? gaps
+    : gaps.filter((gap) => agentTextMatchesFocus([
+      gap.module,
+      gap.reason,
+      gap.question,
+      gap.uploadTo,
+      ...(gap.keywords || []),
+    ].join(' '), focus))
+  return scoped
+    .slice(0, 3)
+    .map((gap) => `- ${gap.module}：${gap.reason || gap.question || '需要补充证据'}`)
+}
+
+function agentRunDirectConclusion(run: AgentRunResult, question = '') {
+  const focus = agentAnswerFocus(question, run)
+  const verdict = run.verdict
+  if (!verdict) {
+    return [
+      `## ${focus === 'global' ? '研判结论' : `${AGENT_FOCUS_LABELS[focus]}研判结论`}`,
+      '',
+      run.narrative?.summary || '本次 Agent 尚未返回统一研判结论，请查看调用步骤和证据缺口。',
+    ].join('\n')
+  }
+  const supportedClaims = filterAgentLinesByFocus(verdict.supportedClaims, focus)
+  const unsupportedClaims = filterAgentLinesByFocus(verdict.unsupportedClaims, focus)
+  const evidenceGaps = filterAgentLinesByFocus(verdict.evidenceGaps, focus)
+  const artifactClaim = supportedClaims.find((item) => /产物|artifact|provenance|签名|可信/.test(item))
+  const impactLine = (focus === 'global' || focus === 'artifact_trust') && artifactClaim
+    ? `发布影响：${artifactClaim}发布前应阻断或重新校验产物。`
+    : (focus === 'global' || focus === 'artifact_trust') && evidenceGaps.some((item) => /产物|artifact|provenance|签名/.test(item))
+      ? '发布影响：当前还不能确认是否影响发布产物，需要补齐 artifact、provenance 或签名证据。'
+      : ''
+  const title = focus === 'global' ? '研判结论' : `${AGENT_FOCUS_LABELS[focus]}研判结论`
+  const conclusionLine = focus === 'global'
+    ? `**${verdict.label}。**${verdict.conclusion}`
+    : `**${AGENT_FOCUS_LABELS[focus]}研判。**${focusedAgentSummary(focus, verdict, supportedClaims, unsupportedClaims, evidenceGaps)}`
   return [
-    `## 直接结论`,
+    `## ${title}`,
     '',
-    `- **AI 推荐依赖/供应链风险：**${supplyConclusion}`,
-    `- **CI/CD 投毒风险：**${cicdConclusion}`,
-    `- **是否影响发布产物：**${artifactConclusion}`,
-    `- **运行期印证：**${logFindings > 0 ? `运行日志命中 ${logFindings} 个异常行为，可作为风险可达性的辅助证据。` : '当前日志证据不足，建议补充运行期日志。'}`,
-  ].join('\n')
+    conclusionLine,
+    '',
+    `风险：${verdict.riskScore}/100（${verdict.riskLevel}），可信度 ${verdict.confidence}%。`,
+    impactLine,
+    supportedClaims.length ? `\n### 关键证据\n${supportedClaims.slice(0, 4).map((item) => `- ${item}`).join('\n')}` : '',
+    unsupportedClaims.length ? `\n### 仍需确认\n${unsupportedClaims.slice(0, 3).map((item) => `- ${item}`).join('\n')}` : '',
+    evidenceGaps.length ? `\n### 证据缺口\n${evidenceGaps.slice(0, 3).map((item) => `- ${item}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n')
+}
+
+function agentRunFailedOrSkippedSteps(run: AgentRunResult, focus: AgentAnswerFocus) {
+  return (run.steps || [])
+    .filter((step) => step.status === 'failed' || step.status === 'skipped')
+    .filter((step) => agentTextMatchesFocus(`${step.id} ${step.name} ${step.error || ''}`, focus))
+    .map((step) => `- ${step.name}：${agentStepStatusLabel(step.status)}${step.error ? `，${step.error}` : ''}`)
+}
+
+function compactAgentActionLines(actions: AgentNextAction[], focus: AgentAnswerFocus) {
+  const scoped = scopedAgentActions(actions, focus)
+  const lines = scoped
+    .slice(0, 3)
+    .map((action, index) => `${index + 1}. ${action.title}：${action.action}`)
+  return lines.length ? lines : defaultAgentActionLines(focus)
 }
 
 function agentRunToAssistantResponse(question: string, run: AgentRunResult): SecurityAssistantResponse {
   const status = String(run.status || 'unknown')
-  const narrative = run.narrative
+  const focus = agentAnswerFocus(question, run)
   const actions = visibleAgentNextActions(run.nextActions)
-  const stepLines = (run.steps || [])
-    .map((step) => `- ${step.name}：${agentStepStatusLabel(step.status)}${step.error ? `，${step.error}` : ''}`)
-    .join('\n')
-  const gapLines = (run.evidenceGaps || [])
-    .slice(0, 5)
-    .map((gap) => `- ${gap.module}：${gap.reason || gap.question || '需要补充证据'}`)
-    .join('\n')
-  const actionLines = actions
-    .slice(0, 5)
-    .map((action, index) => `${index + 1}. ${action.title}：${action.action}`)
-    .join('\n')
+  const gapLines = compactAgentGapLines(run.evidenceGaps || [], focus)
+  const issueStepLines = agentRunFailedOrSkippedSteps(run, focus)
+  const actionLines = compactAgentActionLines(actions, focus)
+  const statusLine = status === 'success' || status === 'completed_with_risk'
+    ? ''
+    : `状态：${agentRunStatusLabel(status)}。`
   const answer = [
-    `## Agent 调度研判`,
-    '',
-    `Agent 已按问题自动创建调查任务 ${run.runId ? `\`${run.runId}\`` : ''}，当前状态为 **${status}**。`,
-    `\n${agentRunDirectConclusion(run)}`,
-    narrative?.summary ? `\n${narrative.summary}` : '',
-    narrative?.verdict ? `\n**研判结论：**${narrative.verdict}` : '',
-    `\n**风险评分：**${run.summary?.riskScore ?? 0}/100，证据缺口 ${run.summary?.evidenceGapCount ?? 0} 项。`,
-    stepLines ? `\n### 调用步骤\n${stepLines}` : '',
-    gapLines ? `\n### 证据缺口\n${gapLines}` : '',
-    actionLines ? `\n### 下一步动作\n${actionLines}` : '',
+    agentRunDirectConclusion(run, question),
+    statusLine,
+    '刷新此界面可将agent调用的数据同步至各个模块。',
+    gapLines.length ? `\n### 需要补证\n${gapLines.join('\n')}` : '',
+    issueStepLines.length ? `\n### 未完成模块\n${issueStepLines.join('\n')}` : '',
+    actionLines.length ? `\n### 下一步建议\n${actionLines.join('\n')}` : '',
     run.error ? `\n### 异常\n${run.error}` : '',
   ].filter(Boolean).join('\n')
 
@@ -1041,10 +1188,13 @@ function agentRunToAssistantResponse(question: string, run: AgentRunResult): Sec
     retrieval: [
       `Agent Job: ${run.runId || '-'}`,
       `Status: ${status}`,
-      ...(run.events || []).slice(-4).map((event) => `${event.stepId}: ${event.message}`),
+      ...(run.plan?.selectedModules?.length
+        ? [`Modules: ${run.plan.selectedModules.map((item) => item.name || item.id).join('、')}`]
+        : []),
+      ...(run.events || []).slice(-3).map((event) => `${event.stepId}: ${event.message}`),
     ],
     graph_rag: null,
-    next_actions: actions.map((action) => `${action.title}：${action.action}`),
+    next_actions: actionLines.map((line) => line.replace(/^\d+\.\s*/, '')),
     model: 'agent-orchestrator',
   }
 }
@@ -1107,9 +1257,12 @@ function getImportSummary(workspace: SecurityWorkspace | null) {
   return workspace?.import?.summary
 }
 
+function isCompletedScanStatus(status?: string | null) {
+  return ['completed', 'partial', 'failed', 'completed_with_risk', 'needs_input'].includes(status || '')
+}
+
 function isWorkspaceScanned(workspace: SecurityWorkspace | null) {
-  const status = workspace?.scanSuite?.status
-  return status === 'completed' || status === 'partial' || status === 'failed'
+  return isCompletedScanStatus(workspace?.scanSuite?.status)
 }
 
 function workspaceHasModuleDetails(workspace: SecurityWorkspace | null) {
@@ -1124,6 +1277,48 @@ function workspaceHasModuleDetails(workspace: SecurityWorkspace | null) {
     (workspace.multimodal_audit?.evidence?.length ?? 0) > 0 ||
     (workspace.graph?.attack_paths?.length ?? 0) > 0
   )
+}
+
+function workspaceHasModulePayload(workspace: SecurityWorkspace, moduleId: string) {
+  if (moduleId === 'code_audit') return Boolean(workspace.code_audit?.scan_id || (workspace.code_audit?.findings?.length ?? 0) > 0)
+  if (moduleId === 'dependency_audit') {
+    return Boolean(
+      workspace.dependency_audit?.scan_id ||
+      (workspace.dependency_audit?.dependencies?.length ?? 0) > 0 ||
+      (workspace.dependencies?.length ?? 0) > 0 ||
+      (workspace.dependency_audit?.findings?.length ?? 0) > 0
+    )
+  }
+  if (moduleId === 'cicd_audit') return Boolean(workspace.cicd_audit?.scan_id || (workspace.cicd_audit?.findings?.length ?? 0) > 0)
+  if (moduleId === 'artifact_trust') return Boolean(workspace.artifact_trust?.scan_id || (workspace.artifact_trust?.checks?.length ?? 0) > 0)
+  if (moduleId === 'log_audit') return Boolean(workspace.log_audit?.scan_id || (workspace.log_audit?.findings?.length ?? 0) > 0)
+  if (moduleId === 'workspace_report') return Boolean(workspace.report || (workspace.graph?.attack_paths?.length ?? 0) > 0)
+  return true
+}
+
+function workspaceMissingCompletedModuleDetails(workspace: SecurityWorkspace | null) {
+  if (!workspace) return false
+  const completed = workspace.scanSuite?.completed ?? []
+  if (!completed.length) return isWorkspaceScanned(workspace) && !workspaceHasModuleDetails(workspace)
+  return completed.some((moduleId) => !workspaceHasModulePayload(workspace, moduleId))
+}
+
+async function loadWorkspaceUntilModulePayloads(
+  workspaceId: string,
+  fallback?: SecurityWorkspace | null,
+  attempts = 5
+) {
+  let latest = fallback ?? null
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      latest = await loadSecurityWorkspaceById(workspaceId)
+      if (!workspaceMissingCompletedModuleDetails(latest)) return latest
+    } catch {
+      if (index === attempts - 1 && latest) return latest
+    }
+    await sleep(index === 0 ? 250 : 700)
+  }
+  return latest ?? loadSecurityWorkspaceById(workspaceId)
 }
 
 function conversationSummaryFromWorkspace(workspace: SecurityWorkspace): SecurityConversation['summary'] {
@@ -1217,14 +1412,14 @@ export function SecurityPlatform() {
 
   useEffect(() => {
     if (!workspace || !activeWorkspaceKey || activeWorkspaceKey === 'latest') return
-    if (!activeScanState.completed || workspaceHasModuleDetails(workspace)) return
+    if (!activeScanState.completed || !workspaceMissingCompletedModuleDetails(workspace)) return
     const repairKey = `${activeWorkspaceKey}:${workspace.scanSuite?.agentRunId ?? workspace.scanSuite?.completedAt ?? 'completed'}`
     if (moduleRepairRef.current === repairKey) return
     moduleRepairRef.current = repairKey
     loadSecurityWorkspaceById(activeWorkspaceKey)
       .then((nextWorkspace) => {
         if (activeWorkspaceRef.current !== activeWorkspaceKey) return
-        if (workspaceHasModuleDetails(nextWorkspace)) {
+        if (!workspaceMissingCompletedModuleDetails(nextWorkspace) || workspaceHasModuleDetails(nextWorkspace)) {
           applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
         }
       })
@@ -1309,12 +1504,8 @@ export function SecurityPlatform() {
         : storedScanState?.running
           ? storedScanState
           : workspaceScanState
-      setWorkspace(payload)
       loadAssistantHistory(nextWorkspaceId)
-      setWorkspaceScanState(
-        nextWorkspaceId,
-        nextScanState
-      )
+      applyWorkspaceUpdate(payload, { scanState: nextScanState, refreshModules: true })
       if (showToast) toast.success('安全态势已刷新')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '加载安全态势失败')
@@ -1445,7 +1636,12 @@ export function SecurityPlatform() {
   async function runAgentQuestion(value: string, currentWorkspace: SecurityWorkspace): Promise<SecurityAssistantResponse> {
     const request = agentRequestFromWorkspace(currentWorkspace)
     const workspaceId = getWorkspaceId(currentWorkspace)
-    const created = await createSecurityAgentJob(request)
+    if (shouldUseExistingAgentState(value)) {
+      const response = await askSecurityAgentChat(value, workspaceId)
+      toast.success('Agent 已基于现有调查状态回答')
+      return response
+    }
+    const created = await createSecurityAgentJob({ ...request, question: value })
     toast.success('Agent 任务已创建，正在自动编排检测工具')
     let result = created
     setWorkspaceScanState(workspaceId, scanStateFromAgentRun(result, currentWorkspace))
@@ -1462,12 +1658,10 @@ export function SecurityPlatform() {
         setWorkspaceScanState(workspaceId, scanStateFromAgentRun(result, snapshotWorkspace))
       }
     }
-    let finalWorkspace = result.workspace ?? currentWorkspace
-    try {
-      finalWorkspace = await loadSecurityWorkspaceById(workspaceId)
-    } catch {
-      finalWorkspace = result.workspace ?? currentWorkspace
-    }
+    const finalWorkspace = await loadWorkspaceUntilModulePayloads(
+      workspaceId,
+      result.workspace ?? currentWorkspace
+    )
     applyWorkspaceUpdate(finalWorkspace, {
       scanState: scanStateFromAgentRun(result, finalWorkspace),
       refreshModules: true,
@@ -2115,7 +2309,7 @@ function AgentProjectSidebar({
 
 function scanStateFromConversation(conversation: SecurityConversation): ScanWorkspaceState {
   const scanned =
-    ['completed', 'partial', 'failed'].includes(conversation.summary.scanStatus || '') ||
+    isCompletedScanStatus(conversation.summary.scanStatus) ||
     conversation.summary.riskScore !== null && conversation.summary.riskScore !== undefined
   if (!scanned) return freshScanState()
   return {
@@ -13357,7 +13551,8 @@ function AgentCommandCenter({
     }
     setAgentBusy(true)
     try {
-      const request = { ...agentRequestFromForm(form), workspaceId: getWorkspaceId(workspace) }
+      const workspaceId = getWorkspaceId(workspace)
+      const request = { ...agentRequestFromForm(form), workspaceId }
       const created = await createSecurityAgentJob(request)
       setAgentRun(created)
       toast.success('Agent 任务已创建，开始实时轮询调查进度')
@@ -13370,9 +13565,18 @@ function AgentCommandCenter({
         if (result.workspace) onWorkspaceUpdated(result.workspace)
       }
 
-      if (result.workspace) onWorkspaceUpdated(result.workspace)
+      const finalWorkspace = await loadWorkspaceUntilModulePayloads(workspaceId, result.workspace)
+      if (finalWorkspace) {
+        result = { ...result, workspace: finalWorkspace }
+        setAgentRun(result)
+        onWorkspaceUpdated(finalWorkspace)
+      }
       if (result.status === 'success') {
         toast.success(`智能溯源完成，生成 ${result.workspace?.summary.attack_paths ?? 0} 条攻击路径`)
+      } else if (result.status === 'completed_with_risk') {
+        toast.warning(`智能溯源完成，发现风险信号，生成 ${result.workspace?.summary.attack_paths ?? 0} 条攻击路径`)
+      } else if (result.status === 'needs_input') {
+        toast.warning('智能溯源已形成初步判断，但还需要补充证据后才能闭环')
       } else if (result.status === 'partial') {
         toast.warning('智能溯源已完成，但部分步骤跳过或失败，请查看证据缺口')
       } else {
@@ -14402,14 +14606,21 @@ function jumpToModuleName(moduleName?: string) {
 
 function agentRunStatusLabel(status?: string) {
   if (status === 'success') return '已完成'
+  if (status === 'completed_with_risk') return '完成，有风险'
+  if (status === 'needs_input') return '待补证'
   if (status === 'partial') return '部分完成'
+  if (status === 'failed') return '失败'
+  if (status === 'queued') return '排队中'
+  if (status === 'running') return '执行中'
   if (status === 'idle') return '等待执行'
   return status || '等待执行'
 }
 
 function agentRunStatusClass(status?: string, busy = false) {
   if (busy || status === 'success') return statusClasses.active
-  if (status === 'partial') return severityClasses.high
+  if (status === 'completed_with_risk') return severityClasses.critical
+  if (status === 'needs_input' || status === 'partial') return severityClasses.high
+  if (status === 'failed') return severityClasses.critical
   return statusClasses.observed
 }
 
