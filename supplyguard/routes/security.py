@@ -59,7 +59,13 @@ from ..artifact_trust import (
     save_upload_file,
     serialize_artifact_trust,
 )
-from ..agent_backend import AgentRunRequest, new_agent_run_id, run_agent_backend
+from ..agent_backend import (
+    AgentRunRequest,
+    new_agent_run_id,
+    persist_agent_run,
+    refine_agent_payload_with_workspace_graph,
+    run_agent_backend,
+)
 from ..dependency_audit import (
     DependencyAuditRequest,
     DependencyAuditResult,
@@ -3475,7 +3481,14 @@ def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[st
         workspace,
         errors=workspace["scanSuite"].get("errors") or [],
     )
-    workspace = refresh_workspace_derived_state(workspace)
+    workspace = save_workspace_snapshot(
+        workspace,
+        workspace_id=workspace_id,
+        module_key="agent_run",
+        module_payload=bundle.payload,
+    )
+    bundle.payload = refine_agent_payload_with_workspace_graph(bundle.payload, workspace)
+    persist_agent_run(bundle.payload)
     workspace["agentRun"] = bundle.payload
     workspace["scanSuite"] = scan_suite_from_agent_payload(bundle.payload)
     workspace["investigationAgent"] = build_investigation_state(

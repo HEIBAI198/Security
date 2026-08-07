@@ -28,6 +28,8 @@ FEATURE_NAMES = [
 
 RISK_KEYWORDS = [
     "postinstall",
+    "preinstall",
+    "install script",
     "exfiltrat",
     "token",
     "credential",

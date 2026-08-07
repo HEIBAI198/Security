@@ -106,7 +106,7 @@ describe('security platform supplement-file integration', () => {
     expect(platformSource).toContain('已选择新材料，当前分数仍来自上次扫描')
     expect(platformSource).toContain('artifactTrustDisplayName')
     expect(platformSource).toContain('formatArtifactTrustGeneratedAt')
-    expect(platformSource).toContain('xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]')
+    expect(platformSource).toContain('xl:grid-cols-[minmax(0,1.6fr)_minmax(340px,0.9fr)]')
     expect(platformSource).not.toContain('xl:grid-cols-[minmax(420px,42fr)_minmax(260px,26fr)_minmax(320px,32fr)]')
     expect(platformSource).toContain('请先补充产物文件和来源证明')
   })
@@ -122,28 +122,37 @@ describe('security platform supplement-file integration', () => {
     expect(dialogSource).not.toContain('md:grid-cols-2')
   })
 
-  it('uses a three-column artifact gate workbench with supplement materials in a dialog', () => {
-    expect(platformSource).toContain("xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]")
+  it('uses an artifact gate summary with a finding list and detail panel', () => {
+    expect(platformSource).toContain("xl:grid-cols-[minmax(0,1.6fr)_minmax(340px,0.9fr)]")
     expect(platformSource).toContain('open={supplementOpen}')
     expect(platformSource).toContain('setSupplementOpen(true)')
     expect(platformSource).toContain('ArtifactSupplementDialogContent')
     expect(platformSource).toContain('ArtifactGateOverviewCard')
     expect(platformSource).toContain('ArtifactIssueList')
     expect(platformSource).toContain('ArtifactIssueDetailPanel')
-    expect(platformSource).toContain("<GateMetric label='失败'")
-    expect(platformSource).toContain("<GateMetric label='缺失'")
-    expect(platformSource).toContain("<GateMetric label='警告'")
-    expect(platformSource).not.toContain("<GateMetric label='检查'")
-    expect(platformSource).not.toContain("<GateMetric label='通过'")
+    expect(platformSource).toContain("{ label: '失败', value: failCount")
+    expect(platformSource).toContain("{ label: '缺失', value: missingCount")
+    expect(platformSource).toContain("{ label: '警告', value: warnCount")
+    expect(platformSource).toContain("{ label: '通过', value: passCount")
     expect(platformSource).not.toContain("ref={evidenceInputRef}")
   })
 })
 
 describe('security platform reachability layout', () => {
+  it('shows an explicit warning when vulnerability coverage is incomplete', () => {
+    const panelStart = platformSource.indexOf('function SupplyReachabilityPanel')
+    const panelEnd = platformSource.indexOf('function ReachabilityGnnSummary')
+    const panelSource = platformSource.slice(panelStart, panelEnd)
+    expect(panelSource).toContain('vulnerability_coverage')
+    expect(panelSource).toContain('漏洞查询覆盖不完整')
+    expect(panelSource).toContain('不代表项目没有已知漏洞')
+  })
+
   it('folds the high-risk dependency table into the dependency evidence workbench', () => {
     expect(platformSource).not.toContain("<CardTitle className='text-section-title text-foreground'>高风险依赖</CardTitle>")
     expect(platformSource).not.toContain('展开全部 ${filteredRows.length} 条')
-    expect(platformSource).toContain('buildUnifiedEvidenceRows(filteredRows)')
+    expect(platformSource).toContain('<ReachabilityDependencyWorkbench')
+    expect(platformSource).toContain('items={filteredRows}')
     expect(platformSource).not.toContain('items.slice(0, 12)')
   })
 
@@ -159,14 +168,14 @@ describe('security platform reachability layout', () => {
     expect(platformSource).not.toContain('dependency-rail-active')
   })
 
-  it('keeps the three reachability workbench cards fixed while dependency evidence and detail scroll internally', () => {
-    expect(platformSource).toContain('xl:h-[420px]')
+  it('keeps reachability evidence and detail panels bounded while scrolling internally', () => {
+    expect(platformSource).toContain('h-[600px]')
     expect(platformSource).toContain('overflow-y-auto overscroll-contain')
     expect(platformSource).toContain('xl:[scrollbar-gutter:stable]')
-    expect(platformSource).toContain("className='h-full min-w-0 xl:h-[420px]'")
-    expect(platformSource).toContain("className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'")
-    expect(platformSource).not.toContain('min-h-[420px] overflow-hidden rounded-md border-border')
-    expect(platformSource).not.toContain('xl:min-h-[420px]')
+    expect(platformSource).toContain("className='h-full min-w-0 xl:h-[600px]'")
+    expect(platformSource).toContain("className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'")
+    expect(platformSource).not.toContain('min-h-[600px] overflow-hidden rounded-md border-border')
+    expect(platformSource).not.toContain('xl:min-h-[600px]')
     expect(platformSource).not.toContain('overflow-visible rounded-md border-border')
     expect(platformSource).not.toContain("className='min-w-0 flex-1 space-y-3 overflow-visible'")
     expect(platformSource).not.toContain('xl:max-h-[260px]')
@@ -175,8 +184,8 @@ describe('security platform reachability layout', () => {
 })
 
 describe('security platform CI/CD risk layout', () => {
-  it('uses a three-column CI/CD workbench with finding names and a separate detail panel', () => {
-    expect(platformSource).toContain("xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]")
+  it('uses a CI/CD summary with finding names and a separate detail panel', () => {
+    expect(platformSource).toContain("xl:grid-cols-[minmax(0,1.65fr)_minmax(340px,0.85fr)]")
     expect(platformSource).toContain('<CicdRiskOverviewCard model={displayModel} />')
     expect(platformSource).toContain('<CicdFindingNameList')
     expect(platformSource).toContain('<CicdFindingDetailPanel')
@@ -189,7 +198,7 @@ describe('security platform CI/CD risk layout', () => {
   it('moves the risk modules into the central CI/CD workbench and removes the build-chain graph', () => {
     expect(platformSource).not.toContain('<BuildStepFlow')
     expect(platformSource).not.toContain('<BuildStepDetail')
-    expect(platformSource).toContain("xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]")
+    expect(platformSource).toContain("xl:grid-cols-[minmax(0,1.65fr)_minmax(340px,0.85fr)]")
     expect(platformSource).toContain('<CicdRiskOverviewCard model={displayModel} />')
     expect(platformSource).toContain('<CicdFindingNameList')
     expect(platformSource).toContain('<CicdFindingDetailPanel')
@@ -206,19 +215,22 @@ describe('security platform CI/CD risk layout', () => {
     expect(platformSource).toContain('buildCicdDisplayModel({ audit, pipeline, artifactTrust })')
     expect(platformSource).toContain('artifactTrust={workspace.artifact_trust}')
     expect(platformSource).toContain('CicdRiskOverviewCard model={displayModel}')
-    expect(platformSource).toContain('displayModel.source.artifactFindings + displayModel.source.pipelineRisks')
+    expect(platformSource).toContain('const findings = displayModel.findings')
+    expect(platformSource).toContain('displayModel.hasBuildChainEvidence')
   })
 })
 
 describe('security platform external alert evidence layout', () => {
-  it('uses a three-column workbench with score, finding names, and selected finding attributes', () => {
-    expect(multimodalPanelSource).toContain("grid-cols-1 gap-4 xl:grid-cols-[minmax(260px,1fr)_minmax(340px,1.18fr)_minmax(380px,1.32fr)]")
-    expect(multimodalPanelSource).toContain('<MultimodalFindingNameList')
+  it('uses a three-panel external evidence workbench with selected finding attributes', () => {
+    expect(multimodalPanelSource).toContain("grid min-w-0 gap-4 xl:grid-cols-[minmax(0,25fr)_minmax(0,50fr)_minmax(0,25fr)]")
+    expect(multimodalPanelSource).toContain('<MultimodalEvidenceList')
+    expect(multimodalPanelSource).toContain('<MultimodalEvidenceDetailPanel')
     expect(multimodalPanelSource).toContain('<MultimodalFindingDetailPanel')
     expect(multimodalPanelSource).toContain('selectedFindingKey')
-    expect(multimodalPanelSource).toContain('风险属性')
+    expect(multimodalPanelSource).toContain('研判结果')
     expect(multimodalPanelSource).toContain('风险原因')
     expect(multimodalPanelSource).toContain('关键证据')
     expect(multimodalPanelSource).toContain('修复建议')
+    expect(multimodalPanelSource).toContain('下一步建议')
   })
 })

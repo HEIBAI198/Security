@@ -371,6 +371,18 @@ def _online_case_feature_values(
     )
     text = f"{normalized_package} {version} {signal_text} {vulnerability_text}"
     lowered = text.lower()
+    aliases = {
+        str(alias).strip()
+        for item in vulnerability_values
+        if isinstance(item, dict)
+        for alias in item.get("aliases", [])
+        if str(alias).strip()
+    }
+    vulnerability_sources = {
+        str(item.get("source") or "").strip().lower()
+        for item in vulnerability_values
+        if isinstance(item, dict) and str(item.get("source") or "").strip()
+    }
     values = {
         "ecosystem_npm": 1.0 if normalized_ecosystem == "npm" else 0.0,
         "ecosystem_pypi": 1.0 if normalized_ecosystem == "pypi" else 0.0,
@@ -383,8 +395,8 @@ def _online_case_feature_values(
         "has_scope": 1.0 if normalized_package.startswith("@") else 0.0,
         "has_digits": 1.0 if any(char.isdigit() for char in normalized_package) else 0.0,
         "version_count": 1.0 if version else 0.0,
-        "alias_count": float(len(vulnerability_values)),
-        "evidence_source_count": 1.0,
+        "alias_count": float(len(aliases)),
+        "evidence_source_count": float(1 + len(vulnerability_sources)),
         "risk_keyword_count": float(sum(1 for keyword in RISK_KEYWORDS if keyword in lowered)),
         "text_length": float(len(text)),
     }

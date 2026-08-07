@@ -142,15 +142,15 @@ function ExternalInfoBlock({
 }) {
   const toneClass =
     tone === 'risk'
-      ? 'border-red-300/25 bg-red-500/10 text-red-50'
+      ? 'border-red-300/60 bg-red-50 text-slate-700 dark:border-red-400/25 dark:bg-red-500/10 dark:text-slate-200'
       : tone === 'action'
-        ? 'border-cyan-300/30 bg-cyan-400/10 text-cyan-50'
+        ? 'border-cyan-300/70 bg-cyan-50 text-slate-700 dark:border-cyan-400/25 dark:bg-cyan-400/10 dark:text-slate-200'
         : 'border-border bg-[color:var(--surface-inset)]'
   const titleClass =
     tone === 'risk'
-      ? 'text-red-100'
+      ? 'text-red-800 dark:text-red-200'
       : tone === 'action'
-        ? 'text-cyan-100'
+        ? 'text-cyan-800 dark:text-cyan-200'
         : 'text-[color:var(--type-body)]'
   return (
     <div className={cn('min-w-0 overflow-hidden rounded-md border p-3', toneClass)}>
@@ -353,6 +353,203 @@ function DetailSheet({evidence,open,onClose}:{evidence:MultimodalEvidence|null;o
 
 const multimodalFindingKey = (finding: MultimodalFindingRow) => `${finding.source_name}:${finding.id}`
 
+function MultimodalEvidenceList({
+  evidence,
+  selectedId,
+  sourceFilter,
+  severityFilter,
+  onSelect,
+  onSourceFilterChange,
+  onSeverityFilterChange,
+}: {
+  evidence: MultimodalEvidence[]
+  selectedId: string | null
+  sourceFilter: MultimodalSourceType | 'all'
+  severityFilter: SecuritySeverity | 'all'
+  onSelect: (id: string) => void
+  onSourceFilterChange: (value: MultimodalSourceType | 'all') => void
+  onSeverityFilterChange: (value: SecuritySeverity | 'all') => void
+}) {
+  const visible = evidence.filter((item) => {
+    const sourceMatches = sourceFilter === 'all' || item.source_type === sourceFilter
+    const severityMatches = severityFilter === 'all' || item.findings.some((finding) => finding.severity === severityFilter)
+    return sourceMatches && severityMatches
+  })
+
+  return (
+    <Card className='flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] !shadow-none'>
+      <CardHeader className='shrink-0 space-y-3 pb-3'>
+        <div className='flex items-center justify-between gap-3'>
+          <div className='flex min-w-0 items-center gap-2'>
+            <CardTitle className='text-section-title'>证据材料</CardTitle>
+            <span className='meta-chip tabular-nums'>{evidence.length}</span>
+          </div>
+          <FileSearch className='size-4 text-cyan-600 dark:text-cyan-300' />
+        </div>
+        <div className='flex flex-wrap gap-1.5'>
+          <Select value={sourceFilter} onValueChange={(value) => onSourceFilterChange(value as MultimodalSourceType | 'all')}>
+            <SelectTrigger className='h-7 min-w-[88px] rounded-md border-border bg-[color:var(--surface-inset)] text-[11px] text-foreground'>
+              <SelectValue placeholder='全部类型' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部类型</SelectItem>
+              <SelectItem value='image'>图像</SelectItem>
+              <SelectItem value='audio'>音频</SelectItem>
+              <SelectItem value='video'>视频</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={severityFilter} onValueChange={(value) => onSeverityFilterChange(value as SecuritySeverity | 'all')}>
+            <SelectTrigger className='h-7 min-w-[88px] rounded-md border-border bg-[color:var(--surface-inset)] text-[11px] text-foreground'>
+              <SelectValue placeholder='全部风险' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部风险</SelectItem>
+              <SelectItem value='critical'>严重</SelectItem>
+              <SelectItem value='high'>高危</SelectItem>
+              <SelectItem value='medium'>中危</SelectItem>
+              <SelectItem value='low'>低危</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+      <CardContent className='min-h-0 flex-1 overflow-y-auto pt-0 [scrollbar-width:thin]'>
+        {visible.length === 0 ? (
+          <div className='rounded-md border border-dashed border-border bg-[color:var(--surface-inset)] px-3 py-8 text-center text-xs text-muted-foreground'>
+            当前筛选条件下没有证据材料。
+          </div>
+        ) : (
+          <div className='space-y-2'>
+            {visible.map((item) => {
+              const Icon = SRC_ICONS[item.source_type]
+              const selected = item.evidence_id === selectedId
+              const findingCount = item.findings.length
+              return (
+                <button
+                  key={item.evidence_id}
+                  type='button'
+                  onClick={() => onSelect(item.evidence_id)}
+                  className={cn(
+                    'group flex w-full min-w-0 items-start gap-3 rounded-md border px-3 py-3 text-left transition-[border-color,background-color,box-shadow]',
+                    selected
+                      ? 'border-cyan-500/50 bg-cyan-500/10'
+                      : 'border-border bg-[color:var(--surface-inset)] hover:border-cyan-400/35 hover:bg-cyan-500/5',
+                  )}
+                >
+                  <span className={cn('mt-0.5 grid size-8 shrink-0 place-items-center rounded-md border', selected ? 'border-cyan-400/35 bg-cyan-400/10 text-cyan-700 dark:text-cyan-200' : 'border-border bg-[color:var(--surface-card)] text-muted-foreground')}>
+                    <Icon className='size-4' />
+                  </span>
+                  <span className='min-w-0 flex-1'>
+                    <span className='block truncate text-sm font-semibold text-foreground' title={item.original_filename}>{item.original_filename}</span>
+                    <span className='mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground'>
+                      <span>{SRC_LABEL[item.source_type]}</span>
+                      <span aria-hidden='true'>·</span>
+                      <span>{fmtBytes(item.size_bytes)}</span>
+                    </span>
+                    <span className='mt-2 flex flex-wrap items-center gap-1.5'>
+                      {findingCount > 0 ? <SevBadge s={item.risk_level} /> : <span className='rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-200'>未命中</span>}
+                      <span className='text-[10px] text-muted-foreground'>{findingCount} 条风险</span>
+                    </span>
+                  </span>
+                  <ChevronRight className={cn('mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5', selected && 'text-cyan-600 dark:text-cyan-300')} />
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function MultimodalEvidenceDetailPanel({
+  evidence,
+  onSelectFinding,
+  onOpenRaw,
+}: {
+  evidence: MultimodalEvidence | null
+  onSelectFinding: (finding: MultimodalFinding) => void
+  onOpenRaw: (evidence: MultimodalEvidence) => void
+}) {
+  if (!evidence) {
+    return (
+      <Card className='flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] !shadow-none'>
+        <CardContent className='grid flex-1 place-items-center p-8 text-center text-sm text-muted-foreground'>
+          选择左侧证据材料查看识别结果。
+        </CardContent>
+      </Card>
+    )
+  }
+  const Icon = SRC_ICONS[evidence.source_type]
+  const recognition = evidence.recognitions[0]
+  return (
+    <Card className='flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] !shadow-none'>
+      <CardHeader className='shrink-0 border-b border-border/70 pb-4'>
+        <div className='flex items-start justify-between gap-3'>
+          <div className='flex min-w-0 items-start gap-3'>
+            <span className='grid size-9 shrink-0 place-items-center rounded-md border border-cyan-500/25 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200'><Icon className='size-5' /></span>
+            <div className='min-w-0'>
+              <CardTitle className='truncate text-base text-foreground' title={evidence.original_filename}>{evidence.original_filename}</CardTitle>
+              <div className='mt-1 truncate text-[11px] text-muted-foreground'>{SRC_LABEL[evidence.source_type]} · {fmtBytes(evidence.size_bytes)} · {evidence.uploaded_at?.slice(0, 19).replace('T', ' ') || '时间未知'}</div>
+            </div>
+          </div>
+          <Button variant='outline' size='sm' className='h-8 shrink-0 gap-1.5 text-xs' onClick={() => onOpenRaw(evidence)}>
+            <Eye className='size-3.5' /> 原始材料
+          </Button>
+        </div>
+        <div className='mt-4 grid grid-cols-3 gap-2'>
+          <DetailRow label='识别结果' value={`${evidence.recognitions.length} 条`} />
+          <DetailRow label='提取实体' value={`${evidence.entities.length} 个`} />
+          <DetailRow label='风险发现' value={`${evidence.findings.length} 条`} />
+        </div>
+      </CardHeader>
+      <CardContent className='min-h-0 flex-1 space-y-4 overflow-y-auto p-4 [scrollbar-width:thin]'>
+        <ExternalInfoBlock title='识别文本'>
+          {recognition?.recognized_text ? (
+            <pre className='max-h-[190px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-[color:var(--surface-panel)] p-3 font-mono text-xs leading-5 text-[color:var(--type-body)] [scrollbar-width:thin]'>{recognition.recognized_text}</pre>
+          ) : (
+            <div className='rounded-md border border-dashed border-border bg-[color:var(--surface-inset)] px-3 py-6 text-center text-xs text-muted-foreground'>暂无可展示的 OCR/ASR 文本。</div>
+          )}
+          {recognition ? <div className='mt-2 text-[11px] text-muted-foreground'>引擎：{recognition.engine} · 置信度：{Math.round(recognition.confidence * 100)}%</div> : null}
+        </ExternalInfoBlock>
+        <ExternalInfoBlock title='提取实体'>
+          {evidence.entities.length ? (
+            <div className='flex flex-wrap gap-1.5'>
+              {evidence.entities.map((entity, index) => <span key={`${entity.type}-${entity.value}-${index}`} className={cn('rounded-md border px-2 py-1 text-[10px] font-semibold', eColor(entity.type).border, eColor(entity.type).bg)}>{tLabel(entity.type)}：<span className='font-mono'>{entity.value}</span></span>)}
+            </div>
+          ) : <span className='text-xs text-muted-foreground'>未提取到可关联实体。</span>}
+        </ExternalInfoBlock>
+        <ExternalInfoBlock title='证据处理链'>
+          <div className='space-y-2 text-xs'>
+            <div className='flex items-center justify-between gap-3'><span className='text-muted-foreground'>文件摘要</span><span className='max-w-[65%] truncate font-mono text-[11px]' title={evidence.sha256}>{evidence.sha256 ? `${evidence.sha256.slice(0, 18)}...` : '—'}</span></div>
+            <div className='flex items-center justify-between gap-3'><span className='text-muted-foreground'>派生产物</span><span className='font-semibold'>{evidence.derived.length} 条</span></div>
+            <div className='flex items-center justify-between gap-3'><span className='text-muted-foreground'>识别类型</span><span className='font-semibold'>{evidence.mime_type || SRC_LABEL[evidence.source_type]}</span></div>
+          </div>
+        </ExternalInfoBlock>
+        <ExternalInfoBlock title='命中规则'>
+          {evidence.findings.length ? (
+            <div className='space-y-2'>
+              {evidence.findings.slice().sort((left, right) => right.score - left.score).map((finding) => (
+                <button key={finding.id} type='button' onClick={() => onSelectFinding(finding)} className='flex w-full items-center justify-between gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2 text-left transition-colors hover:border-cyan-400/35 hover:bg-cyan-500/5'>
+                  <span className='flex min-w-0 items-center gap-2'>
+                    <SevBadge s={finding.severity} />
+                    <span className='truncate text-xs font-semibold text-foreground' title={finding.title}>{finding.title}</span>
+                  </span>
+                  <ChevronRight className='size-3.5 shrink-0 text-muted-foreground' />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className='flex items-start gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2.5 text-xs leading-5 text-muted-foreground'>
+              <ShieldCheck className='mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-300' />
+              当前材料已完成识别，暂未命中外部告警规则。
+            </div>
+          )}
+        </ExternalInfoBlock>
+      </CardContent>
+    </Card>
+  )
+}
+
 function MultimodalFindingNameList({
   findings,
   selectedKey,
@@ -461,36 +658,67 @@ function MultimodalFindingNameList({
 function MultimodalFindingDetailPanel({
   finding,
   evidence,
-  entityFilter,
   onOpenEvidence,
-  onEntityFilter,
+  evidenceCount,
+  findingCount,
+  riskScore,
 }: {
   finding: MultimodalFindingRow | null
   evidence: MultimodalEvidence | null
-  entityFilter: string | null
-  onOpenEvidence: (finding: MultimodalFindingRow) => void
-  onEntityFilter: (value: string) => void
+  onOpenEvidence: () => void
+  evidenceCount: number
+  findingCount: number
+  riskScore: number
 }) {
   if (!finding) {
-    return <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]">
-      <CardHeader className='pb-3'>
-        <CardTitle className='min-w-0 truncate text-base text-foreground'>风险属性</CardTitle>
-      </CardHeader>
-      <CardContent className="min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]">
-        <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
-          选择一项风险后查看属性。
+    return <Card className='flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] !shadow-none'>
+      <CardHeader className='shrink-0 border-b border-border/70 pb-4'>
+        <div className='flex items-center justify-between gap-3'>
+          <CardTitle className='min-w-0 truncate text-base text-foreground'>研判结果</CardTitle>
+          <span className='rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-200'>未命中规则</span>
         </div>
+      </CardHeader>
+      <CardContent className='min-h-0 flex-1 space-y-4 overflow-y-auto p-4 [scrollbar-width:thin]'>
+        <div className='rounded-md border border-emerald-500/20 bg-emerald-500/5 p-4'>
+          <div className='flex items-start gap-3'>
+            <span className='grid size-8 shrink-0 place-items-center rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'><ShieldCheck className='size-4' /></span>
+            <div>
+              <div className='text-sm font-bold text-foreground'>当前材料暂未发现风险</div>
+              <p className='mt-1 text-xs leading-5 text-muted-foreground'>系统已完成内容识别与规则匹配，但这不等于材料绝对安全，仍应结合来源可信度和时间窗口复核。</p>
+            </div>
+          </div>
+        </div>
+        <div className='grid gap-2'>
+          <DetailRow label='当前材料' value={evidence?.original_filename || '—'} />
+          <DetailRow label='材料总数' value={`${evidenceCount} 条`} />
+          <DetailRow label='风险总数' value={`${findingCount} 条`} />
+          <DetailRow label='综合评分' value={`${riskScore}/100`} />
+        </div>
+        <ExternalInfoBlock title='已完成检查'>
+          <div className='space-y-2 text-xs'>
+            <div className='flex items-center justify-between'><span className='text-muted-foreground'>OCR/ASR 内容识别</span><span className='font-semibold text-emerald-700 dark:text-emerald-200'>已完成</span></div>
+            <div className='flex items-center justify-between'><span className='text-muted-foreground'>实体抽取</span><span className='font-semibold'>{evidence?.entities.length ?? 0} 个</span></div>
+            <div className='flex items-center justify-between'><span className='text-muted-foreground'>规则匹配</span><span className='font-semibold'>{evidence?.findings.length ?? 0} 条</span></div>
+          </div>
+        </ExternalInfoBlock>
+        <ExternalInfoBlock title='下一步建议' tone='action'>
+          <ul className='space-y-1.5 text-xs font-medium leading-5 text-slate-700 dark:text-slate-200'>
+            <li>确认截图或告警文本是否完整，避免关键上下文被裁剪。</li>
+            <li>补充同一时间窗口的构建日志或运行日志进行交叉验证。</li>
+            <li>必要时上传另一份材料，验证识别结果是否稳定。</li>
+          </ul>
+        </ExternalInfoBlock>
+        {evidence ? <Button variant='outline' className='w-full' onClick={onOpenEvidence}><Eye className='size-4' />查看原始材料</Button> : null}
       </CardContent>
     </Card>
   }
-  const Icon = SRC_ICONS[finding.source_type]
-  return <Card className="flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]">
+  return <Card className='flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] !shadow-none'>
     <CardHeader className="shrink-0 pb-3">
       <div className="flex items-start justify-between gap-3">
         <CardTitle className="min-w-0 truncate text-base text-foreground" title={finding.title}>
           {finding.title}
         </CardTitle>
-        {evidence && <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1.5 text-[11px]" onClick={() => onOpenEvidence(finding)}>
+        {evidence && <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1.5 text-[11px]" onClick={onOpenEvidence}>
           <Eye className="size-3.5" />
           原始材料
         </Button>}
@@ -542,9 +770,8 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
   const [sevF,setSevF]=useState<SecuritySeverity|'all'>('all')
   const [srcF,setSrcF]=useState<MultimodalSourceType|'all'>('all')
   const [detail,setDetail]=useState<MultimodalEvidence|null>(null)
-  const [rawOpen,setRawOpen]=useState(false)
-  const [eFilt,setEFilt]=useState<string|null>(null)
   const [selectedFindingKey,setSelectedFindingKey]=useState<string|null>(null)
+  const [selectedEvidenceId,setSelectedEvidenceId]=useState<string|null>(null)
   const [textDialogOpen,setTextDialogOpen]=useState(false)
   const fileInputRef=useRef<HTMLInputElement>(null)
 
@@ -555,22 +782,38 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
     let r=fRows
     if(sevF!=='all')r=r.filter(f=>f.severity===sevF)
     if(srcF!=='all')r=r.filter(f=>f.source_type===srcF)
-    if(eFilt)r=r.filter(f=>f.entities.some(e=>(e.normalized||e.value).toLowerCase().includes(eFilt.toLowerCase())))
     return r.sort((a,b)=>b.score-a.score)
-  },[fRows,sevF,srcF,eFilt])
+  },[fRows,sevF,srcF])
 
-  const selectedFinding = ff.find(f => multimodalFindingKey(f) === selectedFindingKey) ?? ff[0] ?? null
-  const selectedFindingEvidence = selectedFinding ? ev.find(e => e.original_filename === selectedFinding.source_name && e.findings.some(f => f.id === selectedFinding.id)) ?? null : null
+  const filteredEvidence = useMemo(() => ev.filter((item) => {
+    const sourceMatches = srcF === 'all' || item.source_type === srcF
+    const severityMatches = sevF === 'all' || item.findings.some((finding) => finding.severity === sevF)
+    return sourceMatches && severityMatches
+  }), [ev, sevF, srcF])
+  const selectedEvidence = filteredEvidence.find((item) => item.evidence_id === selectedEvidenceId) ?? filteredEvidence[0] ?? null
+  const selectedEvidenceFindings = useMemo(() => selectedEvidence ? ff.filter((finding) => selectedEvidence.findings.some((item) => item.id === finding.id)) : [], [ff, selectedEvidence])
+  const selectedFinding = selectedEvidenceFindings.find(f => multimodalFindingKey(f) === selectedFindingKey) ?? selectedEvidenceFindings[0] ?? null
+  const selectedFindingEvidence = selectedFinding ? selectedEvidence : null
 
   useEffect(() => {
-    if (!ff.length) {
+    if (!selectedEvidenceFindings.length) {
       if (selectedFindingKey) setSelectedFindingKey(null)
       return
     }
-    if (!selectedFindingKey || !ff.some(f => multimodalFindingKey(f) === selectedFindingKey)) {
-      setSelectedFindingKey(multimodalFindingKey(ff[0]))
+    if (!selectedFindingKey || !selectedEvidenceFindings.some(f => multimodalFindingKey(f) === selectedFindingKey)) {
+      setSelectedFindingKey(multimodalFindingKey(selectedEvidenceFindings[0]))
     }
-  }, [ff, selectedFindingKey])
+  }, [selectedEvidenceFindings, selectedFindingKey])
+
+  useEffect(() => {
+    if (!filteredEvidence.length) {
+      if (selectedEvidenceId) setSelectedEvidenceId(null)
+      return
+    }
+    if (!selectedEvidenceId || !filteredEvidence.some((item) => item.evidence_id === selectedEvidenceId)) {
+      setSelectedEvidenceId(filteredEvidence[0].evidence_id)
+    }
+  }, [filteredEvidence, selectedEvidenceId])
 
   /* actions */
   async function upload(fileList?: File[]){
@@ -587,7 +830,7 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
   const handleDO=(e:React.DragEvent)=>{e.preventDefault();e.stopPropagation()}
   const handleDrop=(e:React.DragEvent)=>{e.preventDefault();e.stopPropagation();const fs=Array.from(e.dataTransfer.files??[]);if(fs.length){setFiles(fs);upload(fs)}}
 
-  const hasEv=ev.length>0; const hasF=fRows.length>0
+  const hasEv=ev.length>0
   const riskScore=sum?.risk_score??0
   const riskLevel=normalizeMultimodalRiskLevel(riskScore, sum?.risk_level as string | undefined)
   const evidenceCount=sum?.evidence_count??ev.length
@@ -645,7 +888,7 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
       <section
         onDragOver={handleDO}
         onDrop={handleDrop}
-        className={cn('rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur', uploading && 'border-cyan-300/30')}
+        className={cn('rounded-md border border-border bg-[color:var(--surface-card)] p-4', uploading && 'border-cyan-300/30')}
       >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
@@ -689,36 +932,30 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
           </div>
         </div>
       </section>
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]">
-        <MultimodalRiskOverviewCard
-          score={riskScore}
-          level={riskLevel}
-          evidenceCount={evidenceCount}
-          findingCount={findingCount}
-          derivedCount={derivedCount}
-          findings={fRows}
-        />
-        <MultimodalFindingNameList
-          findings={ff}
-          selectedKey={selectedFinding ? multimodalFindingKey(selectedFinding) : null}
-          severityFilter={sevF}
+      <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,25fr)_minmax(0,50fr)_minmax(0,25fr)]'>
+        <MultimodalEvidenceList
+          evidence={ev}
+          selectedId={selectedEvidence?.evidence_id ?? null}
           sourceFilter={srcF}
-          entityFilter={eFilt}
-          reducedMotion={rm}
-          onSelect={setSelectedFindingKey}
-          onSeverityFilterChange={setSevF}
+          severityFilter={sevF}
+          onSelect={setSelectedEvidenceId}
           onSourceFilterChange={setSrcF}
-          onClearEntityFilter={() => setEFilt(null)}
+          onSeverityFilterChange={setSevF}
+        />
+        <MultimodalEvidenceDetailPanel
+          evidence={selectedEvidence}
+          onSelectFinding={(finding) => setSelectedFindingKey(multimodalFindingKey({ ...finding, source_name: selectedEvidence?.original_filename ?? finding.source_name, source_type: selectedEvidence?.source_type ?? finding.source_type }))}
+          onOpenRaw={setDetail}
         />
         <MultimodalFindingDetailPanel
           finding={selectedFinding}
           evidence={selectedFindingEvidence}
-          entityFilter={eFilt}
-          onOpenEvidence={(finding) => {
-            const source = ev.find(e => e.original_filename === finding.source_name && e.findings.some(item => item.id === finding.id))
-            if (source) setDetail(source)
+          evidenceCount={evidenceCount}
+          findingCount={findingCount}
+          riskScore={riskScore}
+          onOpenEvidence={() => {
+            if (selectedEvidence) setDetail(selectedEvidence)
           }}
-          onEntityFilter={(value) => setEFilt(eFilt === value ? null : value)}
         />
       </div>
     </motion.div>

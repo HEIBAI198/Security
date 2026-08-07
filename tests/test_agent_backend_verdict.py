@@ -10,8 +10,10 @@ from supplyguard.agent_backend import (
     AgentRunRequest,
     agent_run_status,
     build_agent_run_payload,
+    dependency_vulnerability_coverage_gap,
     observe_and_replan,
     plan_agent_request,
+    refine_agent_payload_with_workspace_graph,
     run_agent_backend,
 )
 
@@ -45,6 +47,23 @@ def skipped_step(step_id: str, name: str, reason: str) -> dict:
 
 
 class AgentBackendVerdictTests(unittest.TestCase):
+    def test_incomplete_vulnerability_coverage_becomes_evidence_gap(self):
+        result = FakeScanResult(
+            {
+                "vulnerability_coverage": {
+                    "complete": False,
+                    "requested": True,
+                    "message": "OSV 仅完成 0/1 个项目锁文件；0 条命中不能解释为没有漏洞。",
+                }
+            }
+        )
+
+        gap = dependency_vulnerability_coverage_gap(result)
+
+        self.assertIsNotNone(gap)
+        self.assertEqual(gap["id"], "dependency-vulnerability-coverage-incomplete")
+        self.assertEqual(gap["severity"], "high")
+
     def test_planner_selects_modules_from_question(self):
         planned, plan = plan_agent_request(AgentRunRequest(question="运行期日志有没有异常外联？"))
 
@@ -186,7 +205,7 @@ class AgentBackendVerdictTests(unittest.TestCase):
         self.assertEqual(payload["verdict"]["level"], "suspected_risk")
         self.assertIn("尚未证明风险进入 CI/CD", "\n".join(payload["verdict"]["unsupportedClaims"]))
 
-    def test_closed_chain_can_be_confirmed_attack(self):
+    def test_module_counts_alone_cannot_confirm_attack(self):
         steps = [
             success_step("dependency_audit", "供应链组件"),
             success_step("cicd_audit", "CI/CD 构建链"),
@@ -217,8 +236,85 @@ class AgentBackendVerdictTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["status"], "completed_with_risk")
-        self.assertEqual(payload["verdict"]["level"], "confirmed_attack")
+        self.assertEqual(payload["verdict"]["level"], "suspected_risk")
+        self.assertIn("共同实体和时间线", "\n".join(payload["verdict"]["unsupportedClaims"]))
         self.assertEqual(payload["narrative"]["verdict"], payload["verdict"]["label"])
+        self.assertEqual(payload["verdict"]["riskScoreBasis"], "max_module")
+        self.assertEqual(payload["verdict"]["riskScoreSource"]["moduleName"], "供应链组件")
+
+    def test_confirmed_graph_path_promotes_verdict(self):
+        payload = {
+            "summary": {"riskScore": 92},
+            "verdict": {
+                "level": "suspected_risk",
+                "label": "疑似供应链风险",
+                "confidence": 78,
+                "conclusion": "待关联",
+                "supportedClaims": [],
+                "unsupportedClaims": ["四类模块均发现风险，但尚未通过共同实体和时间线证明它们属于同一条攻击链。"],
+            },
+            "narrative": {"timeline": ["依赖风险", "等待图谱关联"]},
+        }
+        workspace = {
+            "graph": {
+                "attack_paths": [
+                    {
+                        "id": "attack-path:confirmed",
+                        "title": "依赖到运行期异常路径",
+                        "category": "supply-chain-compromise",
+                        "verdict": "likely-real-attack-path",
+                        "confidence": 0.84,
+                        "evidence_ids": ["ev-1", "ev-2", "ev-3", "ev-4"],
+                    }
+                ]
+            }
+        }
+
+        refined = refine_agent_payload_with_workspace_graph(payload, workspace)
+
+        self.assertEqual(refined["verdict"]["level"], "confirmed_attack")
+        self.assertEqual(refined["verdict"]["confidence"], 84)
+        self.assertEqual(refined["verdict"]["chainEvidence"]["pathId"], "attack-path:confirmed")
+        self.assertNotIn("尚未通过共同实体和时间线", "\n".join(refined["verdict"]["unsupportedClaims"]))
+        self.assertEqual(refined["summary"]["evidenceGapCount"], 0)
+
+    def test_plausible_graph_path_stays_suspected(self):
+        payload = {
+            "summary": {"riskScore": 100},
+            "verdict": {
+                "level": "suspected_risk",
+                "label": "疑似供应链风险",
+                "confidence": 78,
+                "conclusion": "待关联",
+                "supportedClaims": [],
+                "unsupportedClaims": [],
+            },
+            "narrative": {"timeline": ["依赖风险", "等待图谱关联"]},
+        }
+        workspace = {
+            "graph": {
+                "attack_paths": [
+                    {
+                        "id": "attack-path:plausible",
+                        "title": "可疑供应链路径",
+                        "category": "supply-chain-compromise",
+                        "verdict": "plausible-attack-path",
+                        "confidence": 0.71,
+                        "evidence_ids": ["ev-1", "ev-2"],
+                    }
+                ]
+            }
+        }
+
+        refined = refine_agent_payload_with_workspace_graph(payload, workspace)
+
+        self.assertEqual(refined["verdict"]["level"], "suspected_risk")
+        self.assertEqual(refined["verdict"]["confidence"], 71)
+        self.assertEqual(refined["verdict"]["confidenceType"], "graph_path")
+        self.assertEqual(refined["verdict"]["chainEvidence"]["status"], "plausible")
+        self.assertEqual(refined["summary"]["evidenceGapCount"], 1)
+        self.assertEqual(refined["evidenceGaps"][0]["id"], "graph-chain-correlation-incomplete")
+        self.assertIn("共同实体", "\n".join(refined["verdict"]["evidenceGaps"]))
 
 
 if __name__ == "__main__":

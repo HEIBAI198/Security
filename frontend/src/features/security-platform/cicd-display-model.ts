@@ -21,6 +21,7 @@ export type CicdDisplayModel = {
   summary: CicdDisplaySummary
   findings: CicdDisplayFinding[]
   workflows: string[]
+  hasBuildChainEvidence: boolean
   source: CicdDisplaySource
   scanKey: string
   targetLabel: string
@@ -106,6 +107,8 @@ export function buildCicdDisplayModel({
     summary,
     findings,
     workflows,
+    hasBuildChainEvidence:
+      workflows.length > 0 || summary.workflow_count > 0 || summary.total_steps > 0 || findings.length > 0,
     source: {
       cicdFindings: cicdFindings.length,
       artifactFindings: artifactFindings.length,

@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { motion, useReducedMotion, useSpring, useTransform } from 'motion/react'
-import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
+import { motion, useReducedMotion, useSpring } from 'motion/react'
 import {
   AlertTriangle, ArrowRight, ChevronRight, ClipboardList, Copy,
   Download, ExternalLink, FileText, Loader2,
@@ -469,7 +466,7 @@ function RiskRing({score,level:_level,ready}:{score:number;level:string;ready:bo
   const label=score>=90?'严重威胁':score>=75?'高风险':score>=55?'中风险':'低风险'
   const rm=useReducedMotion()
   return(
-    <motion.div className="relative size-56 grid place-items-center shrink-0"
+    <motion.div className="relative grid size-32 shrink-0 place-items-center"
       initial={rm?{}:{opacity:0,scale:.75}} animate={ready?{opacity:1,scale:1}:{}}
       transition={{duration:.7,delay:.15,ease:[.16,1,.3,1]}}>
       {/* Outer glow aura */}
@@ -483,33 +480,14 @@ function RiskRing({score,level:_level,ready}:{score:number;level:string;ready:bo
           strokeDasharray={circ} style={{strokeDashoffset:spr}} filter="url(#ringGlow)"/>
       </svg>
       <div className="relative flex flex-col items-center">
-        <AnimatedNumber target={score} ready={ready} className={cn('text-5xl font-black')} />
-        <span className="text-xs font-bold uppercase tracking-widest mt-1.5 px-3 py-0.5 rounded-full" style={{color:tone,background:`${tone}15`}}>{label}</span>
+        <AnimatedNumber target={score} ready={ready} className={cn('text-3xl font-black')} />
+        <span className="mt-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase" style={{color:tone,background:`${tone}15`}}>{label}</span>
       </div>
     </motion.div>
   )
 }
 
 /* ══ Glow bar for chart ══ */
-function _GlowBar(props:any){
-  const{x,y,width,height,fill,index}=props
-  if(width==null||height==null)return null
-  const progress=useSpring(0,{stiffness:50,damping:13})
-  useEffect(()=>{const t=setTimeout(()=>progress.set(1),(index||0)*120);return()=>clearTimeout(t)},[progress,index])
-  const h=useTransform(progress,[0,1],[0,height])
-  const op=useTransform(progress,[0,1],[0,1])
-  return(
-    <g>
-      <motion.rect x={x} y={useTransform(progress,v=>y+height-v*height)} width={width} height={h as any}
-        fill={fill||'#0891b2'} rx={5} opacity={op as any}
-        style={{filter:'url(#barGlow)'}}/>
-      {progress.get()>.5&&(
-        <motion.rect x={x} y={y-2} width={width} height={2} fill="#67e8f9" rx={1} opacity={useTransform(progress,[.5,1],[0,.9])}/>
-      )}
-    </g>
-  )
-}
-
 /* ══ Stage entry card — glow hover button ══ */
 function _StageCard({stage,index,ready,onClick}:{stage:ReportPathStage;index:number;ready:boolean;onClick:()=>void}){
   const rm=useReducedMotion()
@@ -1599,6 +1577,7 @@ export function ReportPanel({workspace,animationKey,onOpenModule}:{workspace:Sec
   const [heatCell,setHeatCell]=useState<{stage:ReportPathStage;type:string}|null>(null)
   const [selectedRiskSource,setSelectedRiskSource]=useState<string|null>(null)
   const [riskDrawer,setRiskDrawer]=useState<{source:RiskSourceItem;detail:RiskSourceDetail}|null>(null)
+  const [selectedStage,setSelectedStage]=useState<ReportPathStage|null>(null)
 
   const report=normalizeReportForDisplay(workspace.report||'# SupplyGuard KG 供应链攻击溯源报告\n\n暂无报告内容。',workspace)
   const wsId=workspace.workspaceId||workspace.workspace?.workspaceId
@@ -1631,220 +1610,196 @@ export function ReportPanel({workspace,animationKey,onOpenModule}:{workspace:Sec
   const riskLevel=workspace.summary.risk_level
   const levelColor=riskLevel==='critical'?'#ef4444':riskLevel==='high'?'#f97316':'#06b6d4'
   const levelLabel=riskLevel==='critical'?'严重威胁':riskLevel==='high'?'高风险':'活跃'
+  const confidence=Math.round(num(sortedAttackPaths(workspace)[0]?.confidence ?? workspace.graph?.summary?.average_path_confidence)*100)
+  const totalSignals=riskSources.reduce((sum,item)=>sum+item.value,0)
+  const primarySubject=primaryRiskSubject(workspace)
+  const generatedAt=workspace.graph?.generated_at?.slice(0,19).replace('T',' ')||workspace.generated_at?.slice(0,19).replace('T',' ')||'—'
+  const reportScope=workspace.workspace?.repository||workspace.workspace?.name||'当前项目'
+  const metrics=[
+    {label:'风险信号',value:workspace.summary.open_findings||totalSignals,detail:'待处理发现'},
+    {label:'严重 / 高危',value:(workspace.summary.critical_findings||0)+riskSources.reduce((sum,item)=>sum+item.details.filter(detail=>detail.severity==='high').length,0),detail:'优先处理'},
+    {label:'攻击路径',value:workspace.summary.attack_paths||stages.length,detail:'已识别链路'},
+    {label:'证据可信度',value:`${confidence}%`,detail:'路径平均置信度'},
+  ]
 
   const fadeIn=rm?{}:{initial:{opacity:0,y:16},animate:{opacity:1,y:0},transition:{duration:.5,ease:[.16,1,.3,1]}}
 
   return(
-    <motion.div className="max-w-full space-y-8 pb-24" {...fadeIn}>
-      {/* ════════════════════════════════════════════════
-         HERO — beam background, glow aura, spotlight
-         ════════════════════════════════════════════════ */}
-      <div className="relative overflow-hidden rounded-lg border border-border bg-[color:var(--surface-panel)] p-8 lg:p-10">
-        {/* Animated background beams */}
-        <div className="absolute inset-0 pointer-events-none">
-          {/* Radial glow centers */}
-          <div className="absolute -top-40 -right-20 w-96 h-96 rounded-full opacity-20 animate-pulse"
-            style={{background:`radial-gradient(circle, ${levelColor}30, transparent 70%)`,filter:'blur(40px)'}}/>
-          <div className="absolute -bottom-20 left-1/4 w-80 h-80 rounded-full opacity-10"
-            style={{background:'radial-gradient(circle, #06b6d420, transparent 70%)',filter:'blur(30px)'}}/>
-          {/* Scanning beam */}
-          <div className="absolute top-0 left-1/4 w-px h-full opacity-20"
-            style={{background:`linear-gradient(180deg, transparent, ${levelColor}60, transparent)`,animation:'scanBeam 4s ease-in-out infinite'}}/>
-          <div className="absolute top-0 left-3/4 w-px h-full opacity-10"
-            style={{background:'linear-gradient(180deg, transparent, #06b6d440, transparent)',animation:'scanBeam 6s ease-in-out infinite 1s'}}/>
-          {/* Grid dots */}
-          <div className="absolute inset-0 opacity-[0.03]"
-            style={{backgroundImage:'radial-gradient(circle, #fff 1px, transparent 1px)',backgroundSize:'32px 32px'}}/>
-        </div>
-
-        <style>{`@keyframes scanBeam{0%,100%{transform:translateY(-100%)}50%{transform:translateY(100%)}}`}</style>
-
-        <div className="relative grid gap-8 lg:grid-cols-[1fr_260px] items-center">
-          <div className="space-y-5">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-page-title">
-                SupplyGuard KG 供应链攻击溯源报告
-              </h1>
-              <Badge variant="outline" className="text-xs px-2.5 py-0.5 font-bold" style={{borderColor:`${levelColor}50`,color:levelColor,background:`${levelColor}10`}}>
-                {levelLabel}
-              </Badge>
+    <motion.div className="mx-auto max-w-[1440px] space-y-6 pb-24" {...fadeIn}>
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="flex flex-col gap-5 border-b border-slate-200 px-6 py-6 lg:flex-row lg:items-start lg:justify-between dark:border-slate-800">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-cyan-50 text-cyan-700 dark:bg-cyan-950/60 dark:text-cyan-300"><FileText className="size-5"/></span>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">SupplyGuard KG · 安全审计报告</p>
+                <h1 className="mt-1 text-2xl font-black tracking-tight text-slate-950 dark:text-white">供应链攻击溯源报告</h1>
+              </div>
+              <Badge variant="outline" className="text-xs font-bold" style={{borderColor:`${levelColor}55`,color:levelColor,background:`${levelColor}12`}}>{levelLabel}</Badge>
             </div>
-            <p className="text-sm text-muted-foreground max-w-lg leading-relaxed">
-              基于代码审查、供应链依赖、CI/CD 链路、产物可信验证、日志印证、多模态外部告警的全链路溯源分析
-            </p>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button size="sm" className="gap-1.5 bg-cyan-700 hover:bg-cyan-600 shadow-[0_0_20px_rgba(6,182,212,0.15)]" onClick={exportEvidence} disabled={exporting}>
-                {exporting?<Loader2 className="size-3.5 animate-spin"/>:<PackageCheck className="size-3.5"/>}导出证据包
-              </Button>
-              <Button variant="outline" size="sm" className="gap-1.5 hover:border-ring/40" onClick={expMd}><Download className="size-3.5"/>Markdown</Button>
-              <Button variant="outline" size="sm" className="gap-1.5 hover:border-ring/40" onClick={expHtml}><FileText className="size-3.5"/>HTML</Button>
-              <span className="text-[10px] text-muted-foreground ml-2">
-                生成于 {workspace.graph?.generated_at?.slice(0,19).replace('T',' ')||workspace.generated_at?.slice(0,19).replace('T',' ')||'—'}
-              </span>
+            <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
+              <span>项目：<strong className="font-semibold text-slate-700 dark:text-slate-200">{reportScope}</strong></span>
+              <span>生成时间：<strong className="font-semibold text-slate-700 dark:text-slate-200">{generatedAt}</strong></span>
+              <span>范围：代码、依赖、构建、产物、日志与外部告警</span>
             </div>
           </div>
-          <div className="flex items-center justify-center"><RiskRing score={workspace.summary.risk_score} level={riskLevel} ready={ready}/></div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button size="sm" className="gap-1.5 bg-cyan-700 text-white hover:bg-cyan-800" onClick={exportEvidence} disabled={exporting}>
+              {exporting?<Loader2 className="size-3.5 animate-spin"/>:<PackageCheck className="size-3.5"/>}导出证据包
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={expMd}><Download className="size-3.5"/>Markdown</Button>
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={expHtml}><FileText className="size-3.5"/>HTML</Button>
+          </div>
         </div>
+        <div className="grid divide-y divide-slate-200 bg-slate-50/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4 dark:divide-slate-800 dark:bg-slate-900/60">
+          {metrics.map(metric=><div key={metric.label} className="px-6 py-4">
+            <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">{metric.label}</div>
+            <div className="mt-1 text-2xl font-black tabular-nums text-slate-950 dark:text-white">{metric.value}</div>
+            <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-500">{metric.detail}</div>
+          </div>)}
+        </div>
+      </section>
 
-      </div>
+      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-300"><ShieldAlert className="size-4"/></div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">执行摘要</p>
+              <h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">先看结论，再查看证据</h2>
+              <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600 dark:text-slate-300">{decisionConclusion(workspace,confidence)}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">风险 {workspace.summary.risk_score}/100</Badge>
+                <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900/60 dark:bg-cyan-950/30 dark:text-cyan-300">首要对象 {primarySubject}</Badge>
+                <Badge variant="outline" className="border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300">{totalSignals} 个信号</Badge>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">风险评分</p>
+          <div className="mt-2 flex items-center justify-between gap-3"><RiskRing score={workspace.summary.risk_score} level={riskLevel} ready={ready}/><div className="text-right"><div className="text-xs text-slate-500">综合判断</div><div className="mt-1 text-sm font-black text-slate-900 dark:text-white">{confidence}% 可信</div></div></div>
+        </div>
+      </section>
 
       <Tabs value={mode} onValueChange={v=>setMode(v as 'preview'|'source')}>
-        <TabsList className="h-12 rounded-xl border border-cyan-400/25 bg-cyan-950/20 p-1.5 shadow-[0_0_24px_rgba(6,182,212,0.08)]">
-          <TabsTrigger value="preview" className="h-9 rounded-lg px-5 text-sm font-bold data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-100 data-[state=active]:shadow-[inset_0_0_0_1px_rgba(34,211,238,0.45)]">报告预览</TabsTrigger>
-          <TabsTrigger value="source" className="h-9 rounded-lg px-5 text-sm font-bold data-[state=active]:bg-cyan-500/20 data-[state=active]:text-cyan-100 data-[state=active]:shadow-[inset_0_0_0_1px_rgba(34,211,238,0.45)]">Markdown 预览</TabsTrigger>
+        <TabsList className="h-11 rounded-xl border border-slate-200 bg-white p-1 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          <TabsTrigger value="preview" className="h-9 rounded-lg px-5 text-sm font-bold data-[state=active]:bg-slate-900 data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-slate-950">报告预览</TabsTrigger>
+          <TabsTrigger value="source" className="h-9 rounded-lg px-5 text-sm font-bold data-[state=active]:bg-slate-900 data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-slate-950">Markdown 预览</TabsTrigger>
         </TabsList>
 
         <TabsContent value="preview" className="mt-5 space-y-6">
           {riskSources.length>0&&(
-            <Card className="surface-raised overflow-hidden">
-              <CardHeader className="pb-2">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <CardTitle className="text-sm font-bold flex items-center gap-2"><AlertTriangle className="size-4 text-cyan-400"/>风险来源分布</CardTitle>
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">风险概览</p><h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">按来源查看风险信号</h2></div>
+                <span className="text-xs text-slate-500">点击来源或风险项查看证据</span>
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {riskSources.map(item=>{
+                  const active=activeRiskSource?.name===item.name
+                  const max=Math.max(...riskSources.map(source=>source.value),1)
+                  return <button key={item.name} type="button" onClick={()=>setSelectedRiskSource(item.name)} className={cn('rounded-xl border p-4 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50/50 dark:hover:border-cyan-800 dark:hover:bg-cyan-950/20',active?'border-cyan-300 bg-cyan-50/70 dark:border-cyan-800 dark:bg-cyan-950/30':'border-slate-200 bg-slate-50/70 dark:border-slate-800 dark:bg-slate-900/60')}>
+                    <div className="flex items-center justify-between gap-3"><span className="text-sm font-bold text-slate-800 dark:text-slate-200">{item.name}</span><span className="text-xl font-black tabular-nums text-slate-950 dark:text-white">{item.value}</span></div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800"><div className="h-full rounded-full bg-cyan-600 transition-all" style={{width:`${Math.max(8,item.value/max*100)}%`}}/></div>
+                    <div className="mt-2 text-[11px] text-slate-500">{item.details.length?`最高风险：${severityLabel(item.details[0].severity)}`:'暂无可下钻详情'}</div>
+                  </button>
+                })}
+              </div>
+              {activeRiskSource&&<div className="mt-5 border-t border-slate-200 pt-5 dark:border-slate-800">
+                <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-sm font-black text-slate-900 dark:text-white">{activeRiskSource.name} 风险明细</h3><p className="mt-1 text-xs text-slate-500">共 {activeRiskSource.value} 个信号，优先展示最高风险证据。</p></div><Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={()=>openRiskSource(activeRiskSource)}>打开{activeRiskSource.name}模块<ExternalLink className="size-3"/></Button></div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {activeRiskSource.details.length?activeRiskSource.details.map((detail,index)=><button key={`${detail.title}-${index}`} onClick={()=>setRiskDrawer({source:activeRiskSource,detail})} className="group flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-cyan-800 dark:hover:bg-cyan-950/30" title={detail.title}><div className="flex min-w-0 items-center gap-2"><Badge variant="outline" className={cn('shrink-0 text-[10px] px-1 py-0 h-4',severityBadgeClass(detail.severity))}>{severityLabel(detail.severity)}</Badge><span className="min-w-0 truncate text-xs font-semibold text-slate-600 group-hover:text-slate-950 dark:text-slate-300 dark:group-hover:text-white">{detail.title}</span></div><ChevronRight className="size-3 shrink-0 text-slate-400 group-hover:text-cyan-600"/></button>):<div className="rounded-lg border border-dashed border-slate-300 p-4 text-xs text-slate-500 dark:border-slate-700">该来源暂无可下钻风险详情。</div>}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <svg width="0" height="0"><defs><filter id="barGlow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs></svg>
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart
-                    data={riskSources}
-                    margin={{top:12,right:12,left:-16,bottom:0}}
-                    onClick={(event)=>{const item=event?.activePayload?.[0]?.payload as RiskSourceItem|undefined;if(item)openRiskSource(item)}}
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={.2}/>
-                    <XAxis dataKey="name" tick={{fontSize:11,fill:'var(--muted-foreground)'}} axisLine={false} tickLine={false}/>
-                    <YAxis tick={{fontSize:10,fill:'var(--muted-foreground)'}} axisLine={false} tickLine={false}/>
-                    <Tooltip
-                      cursor={{fill:'rgba(6,182,212,0.08)'}}
-                      contentStyle={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:10,fontSize:12,boxShadow:'0 8px 24px rgba(0,0,0,0.3)'}}
-                    />
-                    <Bar dataKey="value" fill="#0891b2" radius={[5,5,0,0]} isAnimationActive={false} shape={<_GlowBar/>} key={`bar-${animationKey}`}/>
-                  </BarChart>
-                </ResponsiveContainer>
-                {activeRiskSource&&(
-                  <div className="rounded-xl border border-border/60 bg-[color:var(--surface-inset)] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <div className="text-sm font-bold">{activeRiskSource.name} 风险明细</div>
-                        <p className="mt-1 text-xs text-muted-foreground">共 {activeRiskSource.value} 个信号，优先展示最高风险证据。</p>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {riskSources.map(item=>(
-                          <button
-                            key={item.name}
-                            onClick={()=>setSelectedRiskSource(item.name)}
-                            className={cn('rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                              activeRiskSource.name===item.name?'border-cyan-400/60 bg-cyan-500/10 text-cyan-500':'border-border text-muted-foreground hover:text-foreground')}
-                          >
-                            {item.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                      {activeRiskSource.details.length?activeRiskSource.details.map((detail,index)=>(
-                        <button
-                          key={`${detail.title}-${index}`}
-                          onClick={()=>setRiskDrawer({source:activeRiskSource,detail})}
-                          className="group flex min-w-0 items-center justify-between gap-3 rounded-lg border border-border/50 bg-[color:var(--surface-card)] px-3 py-2.5 text-left transition-all hover:-translate-y-0.5 hover:border-cyan-400/40 hover:bg-cyan-500/5"
-                          title={detail.title}
-                        >
-                          <div className="flex min-w-0 items-center gap-2">
-                            <Badge variant="outline" className={cn('shrink-0 text-[10px] px-1 py-0 h-4',severityBadgeClass(detail.severity))}>{severityLabel(detail.severity)}</Badge>
-                            <span className="min-w-0 truncate text-xs font-semibold text-muted-foreground group-hover:text-foreground">{detail.title}</span>
-                          </div>
-                          <ChevronRight className="size-3 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-cyan-400"/>
-                        </button>
-                      )):<div className="rounded-lg border border-dashed border-border p-3 text-xs text-muted-foreground">该来源暂无可下钻风险详情。</div>}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+              </div>}
+            </section>
+          )}
+
+          {stages.length>0&&(
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+              <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">关键链路</p><h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">最高风险攻击路径</h2></div><div className="flex items-center gap-2"><Badge variant="outline" className="border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">风险 {workspace.summary.risk_score}</Badge><Badge variant="outline" className="border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300">置信度 {confidence}%</Badge></div></div>
+              <div className="mt-5 overflow-x-auto pb-2">
+                <div className="flex min-w-max items-stretch gap-2">
+                  {stages.slice(0,6).map((stage,index)=><div key={stage.id} className="flex items-center gap-2">
+                    <button type="button" onClick={()=>setSelectedStage(stage)} className="group w-44 rounded-xl border border-slate-200 bg-slate-50 p-4 text-left transition-colors hover:border-cyan-300 hover:bg-cyan-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-cyan-800 dark:hover:bg-cyan-950/30">
+                      <div className="flex items-center justify-between gap-2"><span className="text-[10px] font-bold uppercase text-slate-500">阶段 {index+1}</span><span className="text-[10px] font-black text-cyan-700 dark:text-cyan-300">{Math.round(stage.confidence*100)}%</span></div>
+                      <div className="mt-2 line-clamp-2 min-h-10 text-sm font-bold leading-5 text-slate-900 dark:text-white">{stage.title}</div>
+                      <div className="mt-3 flex flex-wrap gap-1">{stage.evidenceGroups.slice(0,2).map(group=><span key={group} className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{group}</span>)}</div>
+                    </button>
+                    {index<Math.min(stages.length,6)-1&&<ArrowRight className="size-4 shrink-0 text-slate-400"/>}
+                  </div>)}
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">点击任一阶段可查看来源、目标、关系和证据详情。</p>
+            </section>
           )}
 
           {actionItems.length>0&&(
-            <Card className="surface-raised">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-bold flex items-center gap-2"><ShieldAlert className="size-4 text-orange-400"/>处置建议与优先级</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {actionItems.map(item=>(
-                    <div key={`${item.priority}-${item.title}`} className={cn('rounded-xl border p-4',
-                      item.tone==='red'?'border-red-500/20 bg-red-950/15':item.tone==='orange'?'border-orange-500/20 bg-orange-950/15':'border-cyan-500/20 bg-cyan-950/15')}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={cn('text-[10px] px-1.5 py-0 h-5',
-                          item.tone==='red'?'border-red-500/40 text-red-400':item.tone==='orange'?'border-orange-500/40 text-orange-400':'border-cyan-500/40 text-cyan-400')}
-                        >
-                          {item.priority}
-                        </Badge>
-                        <div className="text-sm font-bold">{item.title}</div>
-                      </div>
-                      <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{item.detail}</p>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+              <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">修复计划</p><h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">处置建议与优先级</h2></div><span className="text-xs text-slate-500">按阻断攻击链的收益排序</span></div>
+              <div className="mt-4 divide-y divide-slate-200 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
+                {actionItems.map((item,index)=><div key={`${item.priority}-${item.title}`} className="grid gap-3 px-4 py-4 md:grid-cols-[44px_150px_minmax(0,1fr)_auto] md:items-start">
+                  <div className={cn('grid size-8 place-items-center rounded-lg text-sm font-black',item.tone==='red'?'bg-red-50 text-red-700 dark:bg-red-950/50 dark:text-red-300':item.tone==='orange'?'bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300':'bg-cyan-50 text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300')}>{index+1}</div>
+                  <Badge variant="outline" className={cn('w-fit text-[10px] font-bold',item.tone==='red'?'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300':item.tone==='orange'?'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/60 dark:bg-orange-950/30 dark:text-orange-300':'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900/60 dark:bg-cyan-950/30 dark:text-cyan-300')}>{item.priority}</Badge>
+                  <div className="min-w-0"><div className="text-sm font-bold text-slate-900 dark:text-white">{item.title}</div><p className="mt-1 text-xs leading-5 text-slate-500 dark:text-slate-400">{item.detail}</p></div>
+                  <Badge variant="outline" className="w-fit border-slate-200 text-[10px] text-slate-500 dark:border-slate-700">待处理</Badge>
+                </div>)}
+              </div>
+            </section>
           )}
 
-          <div className="grid gap-5 max-w-full">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
             {stages.length>0&&(
-              <Card className="surface-raised">
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><ClipboardList className="size-4 text-cyan-400"/>证据覆盖矩阵</CardTitle></CardHeader>
-                <CardContent className="overflow-x-auto">
-                  <table className="w-full text-xs min-w-[540px]">
-                    <thead><tr className="[&>th]:px-2 [&>th]:py-2.5 [&>th]:text-left [&>th]:font-medium [&>th]:text-muted-foreground border-b border-border/50"><th>阶段</th>{['组件','CI/CD','产物','日志','告警','代码'].map(t=><th key={t}>{t}</th>)}</tr></thead>
+              <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                <div className="flex items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">审计覆盖</p><h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">证据覆盖矩阵</h2></div><ClipboardList className="size-5 text-cyan-600"/></div>
+                <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full min-w-[540px] text-xs">
+                    <thead><tr className="border-b border-slate-200 bg-slate-50 text-left dark:border-slate-800 dark:bg-slate-900"><th className="px-3 py-3 font-bold text-slate-500">阶段</th>{['组件','CI/CD','产物','日志','告警','代码'].map(t=><th key={t} className="px-3 py-3 font-bold text-slate-500">{t}</th>)}</tr></thead>
                     <tbody>{stages.slice(0,6).map(stage=>(
-                      <tr key={stage.id} className="border-b border-border/30 hover:bg-[color:var(--surface-inset)] transition-colors">
-                        <td className="px-2 py-2.5 font-medium truncate max-w-[100px]">{stage.title?.slice(0,18)}</td>
+                      <tr key={stage.id} className="border-b border-slate-100 transition-colors last:border-0 hover:bg-slate-50 dark:border-slate-800/70 dark:hover:bg-slate-900">
+                        <td className="max-w-[150px] truncate px-3 py-3 font-semibold text-slate-700 dark:text-slate-200">{stage.title?.slice(0,22)}</td>
                         {['组件','CI/CD','产物','日志','外部告警','代码'].map(type=>{
                           const hit=stage.evidenceGroups.includes(type)||(type==='告警'&&stage.evidenceGroups.includes('外部告警'))
                           return(
-                            <td key={type} className="px-2 py-2.5">
-                              <button onClick={()=>hit&&setHeatCell({stage,type:type==='告警'?'外部告警':type})} className={cn('rounded-lg px-2.5 py-1 text-[10px] font-bold transition-all duration-200',
-                                hit?'bg-console-emerald-soft text-console-emerald hover:-translate-y-0.5 cursor-pointer shadow-[0_0_6px_rgba(52,211,153,0.08)]':'text-muted-foreground/40',
-                              )}>{hit?stage.evidenceCount:'—'}</button>
+                            <td key={type} className="px-3 py-3">
+                              <button onClick={()=>hit&&setHeatCell({stage,type:type==='告警'?'外部告警':type})} className={cn('min-w-9 rounded-md px-2 py-1 text-[10px] font-black transition-colors',hit?'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:text-emerald-300 dark:hover:bg-emerald-900/60':'text-slate-300 dark:text-slate-700')}>{hit?stage.evidenceCount:'—'}</button>
                             </td>
                           )
                         })}
                       </tr>
                     ))}</tbody>
                   </table>
-                </CardContent>
-              </Card>
-            )}
-            <Card className="surface-raised">
-              <CardHeader className="pb-2"><CardTitle className="text-sm font-bold flex items-center gap-2"><AlertTriangle className="size-4 text-amber-400"/>可信断点</CardTitle></CardHeader>
-              <CardContent>
-                <div className="max-h-[260px] space-y-2 overflow-y-auto pr-2">
-                  {breakpoints.length?breakpoints.map(bp=>(
-                    <div key={bp.id} className={cn('min-w-0 overflow-hidden rounded-lg border p-3',bp.severity==='critical'?'border-red-500/20 bg-red-950/20':bp.severity==='high'?'border-orange-500/20 bg-orange-950/20':'border-amber-500/15 bg-amber-950/15')}>
-                      <div className="flex min-w-0 items-start gap-1.5">
-                        <Badge variant="outline" className={cn('shrink-0 text-[10px] px-1 py-0 h-4',bp.severity==='critical'?'border-red-500/40 text-red-400':bp.severity==='high'?'border-orange-500/40 text-orange-400':'border-amber-500/40 text-amber-400')}>{bp.severity==='critical'?'严重':bp.severity==='high'?'高危':'中危'}</Badge>
-                        <span className="min-w-0 break-words text-xs font-semibold [overflow-wrap:anywhere]">{bp.title}</span>
-                      </div>
-                      {bp.evidence&&<p className="mt-1.5 max-w-full whitespace-pre-wrap break-words text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{bp.evidence}</p>}
-                    </div>
-                  )):<p className="text-xs text-muted-foreground">暂无断点</p>}
                 </div>
-              </CardContent>
-            </Card>
+              </section>
+            )}
+            <details className="self-start rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+              <summary className="flex cursor-pointer list-none items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">审计附录</p><h2 className="mt-1 text-lg font-black text-slate-950 dark:text-white">可信断点 <span className="text-sm font-semibold text-slate-500">{breakpoints.length} 条</span></h2></div><AlertTriangle className="size-5 text-amber-500"/></summary>
+              <div className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+                  {breakpoints.length?breakpoints.map(bp=>(
+                    <div key={bp.id} className={cn('min-w-0 overflow-hidden rounded-lg border p-3',bp.severity==='critical'?'border-red-200 bg-red-50 dark:border-red-900/60 dark:bg-red-950/30':bp.severity==='high'?'border-orange-200 bg-orange-50 dark:border-orange-900/60 dark:bg-orange-950/30':'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30')}>
+                      <div className="flex min-w-0 items-start gap-1.5">
+                        <Badge variant="outline" className={cn('shrink-0 text-[10px] px-1 py-0 h-4',bp.severity==='critical'?'border-red-200 text-red-700 dark:border-red-900/70 dark:text-red-300':bp.severity==='high'?'border-orange-200 text-orange-700 dark:border-orange-900/70 dark:text-orange-300':'border-amber-200 text-amber-700 dark:border-amber-900/70 dark:text-amber-300')}>{bp.severity==='critical'?'严重':bp.severity==='high'?'高危':'中危'}</Badge>
+                        <span className="min-w-0 break-words text-xs font-semibold text-slate-800 dark:text-slate-200 [overflow-wrap:anywhere]">{bp.title}</span>
+                      </div>
+                      {bp.evidence&&<p className="mt-1.5 max-w-full whitespace-pre-wrap break-words text-[11px] leading-relaxed text-slate-600 dark:text-slate-400 [overflow-wrap:anywhere]">{bp.evidence}</p>}
+                    </div>
+                  )):<p className="text-xs text-slate-500">暂无可信断点，当前证据链未发现完整性缺口。</p>}
+              </div>
+            </details>
           </div>
         </TabsContent>
 
         <TabsContent value="source" className="mt-5">
-          <Card className="surface-raised">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between">
-              <CardTitle className="text-sm font-bold">Markdown 预览</CardTitle>
+          <Card className="overflow-hidden border-slate-200 bg-slate-100/70 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
+            <CardHeader className="flex flex-row items-center justify-between border-b border-slate-200 bg-white pb-4 dark:border-slate-800 dark:bg-slate-950">
+              <div><CardTitle className="text-base font-black">Markdown 报告</CardTitle><p className="mt-1 text-xs text-slate-500">原始报告内容，支持搜索和复制</p></div>
               <div className="flex items-center gap-2">
-                <div className="relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground"/><Input value={mdSearch} onChange={e=>setMdSearch(e.target.value)} placeholder="搜索..." className="h-7 w-48 pl-7 text-xs"/>{mdSearch&&<button onClick={()=>setMdSearch('')} className="absolute right-1.5 top-1/2 -translate-y-1/2"><X className="size-3 text-muted-foreground"/></button>}</div>
-                <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={()=>{navigator.clipboard.writeText(report);toast.success('已复制')}}><Copy className="size-3"/>复制</Button>
+                <div className="relative"><Search className="absolute left-2.5 top-1/2 size-3 -translate-y-1/2 text-slate-400"/><Input value={mdSearch} onChange={e=>setMdSearch(e.target.value)} placeholder="搜索报告" className="h-8 w-48 bg-white pl-8 text-xs dark:bg-slate-900"/>{mdSearch&&<button onClick={()=>setMdSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2"><X className="size-3 text-slate-400"/></button>}</div>
+                <Button variant="outline" size="sm" className="h-8 gap-1 text-xs" onClick={()=>{navigator.clipboard.writeText(report);toast.success('已复制')}}><Copy className="size-3"/>复制</Button>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="max-h-[72vh] overflow-y-auto rounded-xl border border-cyan-400/15 bg-[color:var(--surface-inset)] p-5 shadow-inner">
+            <CardContent className="p-4 sm:p-8">
+              <div className="mx-auto max-h-[76vh] max-w-[980px] overflow-y-auto rounded-lg border border-slate-200 bg-white px-6 py-8 shadow-sm sm:px-10 dark:border-slate-800 dark:bg-slate-950">
                 <ReportMarkdownPreview text={report} search={mdSearch}/>
               </div>
             </CardContent>
@@ -1853,6 +1808,7 @@ export function ReportPanel({workspace,animationKey,onOpenModule}:{workspace:Sec
       </Tabs>
 
       <_RiskDetailDrawer source={riskDrawer?.source??null} detail={riskDrawer?.detail??null} open={!!riskDrawer} onClose={()=>setRiskDrawer(null)}/>
+      <_StageDrawer stage={selectedStage} open={!!selectedStage} onClose={()=>setSelectedStage(null)}/>
 
       <Sheet open={!!heatCell} onOpenChange={v=>{if(!v)setHeatCell(null)}}>
         <SheetContent side="right" className="!w-[48vw] !max-w-[520px] overflow-y-auto p-0">

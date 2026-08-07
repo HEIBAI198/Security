@@ -61,6 +61,31 @@ class PackageRiskScorerTests(unittest.TestCase):
         self.assertEqual(_risk_keyword_count("pure-eval 0.2.3"), 0)
         self.assertGreaterEqual(suspicious["risk_keyword_count"], 1.0)
 
+    def test_online_features_keep_aliases_and_sources_semantics(self):
+        scorer = PackageRiskScorer(Path("definitely-missing-model-dir"))
+        values = scorer._feature_values(
+            "npm",
+            "axios",
+            "1.6.8",
+            ["OSV: GHSA-test"],
+            [{"id": "GHSA-test", "source": "osv", "aliases": ["CVE-test"]}],
+            "axios 1.6.8 OSV: GHSA-test",
+        )
+
+        self.assertEqual(values["alias_count"], 1.0)
+        self.assertEqual(values["evidence_source_count"], 2.0)
+
+    def test_low_gnn_score_conflicts_with_active_vulnerability_evidence(self):
+        self.assertTrue(
+            PackageRiskScorer._has_evidence_conflict(
+                0.0,
+                [{"id": "GHSA-test", "source": "osv"}],
+                0,
+            )
+        )
+        self.assertTrue(PackageRiskScorer._has_evidence_conflict(0.0, [], 100))
+        self.assertFalse(PackageRiskScorer._has_evidence_conflict(0.0, [{"status": "fixed"}], 0))
+
     def _write_graphsage_fixture(self, data_dir: Path):
         (data_dir / "feature_schema.json").write_text(
             json.dumps(
@@ -355,6 +380,8 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertEqual(result["gnn_model_type"], "numpy_graphsage_mean_aggregator")
             self.assertGreaterEqual(result["gnn_score"], 0.0)
             self.assertLessEqual(result["gnn_score"], 1.0)
+            self.assertLessEqual(result["gnn_confidence"], 0.6)
+            self.assertEqual(result["gnn_inference_mode"], "package_features_only")
 
     def test_pyg_artifact_failure_falls_back_to_numpy_model(self):
         with tempfile.TemporaryDirectory() as tmp:

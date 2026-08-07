@@ -196,6 +196,11 @@ export type SecurityDependency = {
   gnn_model_available?: boolean
   gnn_model_type?: string
   gnn_confidence?: number
+  gnn_decision_margin?: number
+  gnn_inference_mode?: string
+  gnn_reliability?: 'model' | 'limited' | 'fallback' | string
+  gnn_evidence_conflict?: boolean
+  gnn_target?: string
   gnn_explanations?: string[]
   similar_malicious_packages?: Array<{
     package?: string
@@ -287,6 +292,15 @@ export type DependencyAuditResult = {
     unknown_licenses: number
     vulnerable_dependencies: number
     osv_matches?: number
+    vulnerability_coverage?: {
+      state: 'complete' | 'incomplete' | 'no_supported_target' | 'not_requested' | 'not_scanned' | string
+      complete: boolean
+      requested: boolean
+      target_count: number
+      completed_targets: number
+      failed_targets: number
+      message: string
+    }
     suspicious_names: number
     exact_versions?: number
     transitive_dependencies?: number
@@ -1143,6 +1157,7 @@ export type SecurityWorkspace = {
   normalized_findings?: Array<Record<string, unknown>>
   report_html?: string | null
   report?: string | null
+  agentRun?: AgentRunResult | null
   scanSuite?: {
     status?: 'completed' | 'partial' | 'failed' | 'running' | 'idle' | string
     completed?: string[]
@@ -1238,12 +1253,27 @@ export type AgentRunVerdict = {
   label: string
   riskScore: number
   riskLevel: SecuritySeverity
+  riskScoreBasis?: 'max_module' | string
+  riskScoreSource?: {
+    moduleId?: string
+    moduleName?: string
+    score?: number
+  }
   confidence: number
+  confidenceType?: 'graph_path' | 'evidence_completeness' | string
   conclusion: string
   supportedClaims: string[]
   unsupportedClaims: string[]
   evidenceGaps: string[]
   nextActions: string[]
+  chainEvidence?: {
+    status: 'confirmed' | 'plausible' | 'missing' | string
+    pathId?: string
+    title?: string
+    verdict?: string
+    confidence?: number
+    evidenceIds?: string[]
+  }
 }
 
 export type AgentRunPlan = {
@@ -1300,6 +1330,12 @@ export type AgentRunResult = {
     evidenceGapCount: number
     riskScore: number
     riskLevel: SecuritySeverity
+    riskScoreBasis?: 'max_module' | string
+    riskScoreSource?: {
+      moduleId?: string
+      moduleName?: string
+      score?: number
+    }
   }
   verdict?: AgentRunVerdict
   plan?: AgentRunPlan

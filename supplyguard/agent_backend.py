@@ -189,6 +189,9 @@ def run_agent_backend(
             ),
             summarize_dependency_audit,
         )
+        dependency_gap = dependency_vulnerability_coverage_gap(results.dependency_audit)
+        if dependency_gap is not None:
+            evidence_gaps.append(dependency_gap)
         finish_step("dependency_audit")
         observe("dependency_audit")
     else:
@@ -803,6 +806,7 @@ def summarize_code_audit(result: CodeAuditResult) -> dict[str, Any]:
 
 
 def summarize_dependency_audit(result: DependencyAuditResult) -> dict[str, Any]:
+    coverage = result.summary.get("vulnerability_coverage") or {}
     return {
         "scanId": result.scan_id,
         "target": result.target,
@@ -810,6 +814,35 @@ def summarize_dependency_audit(result: DependencyAuditResult) -> dict[str, Any]:
         "findings": result.summary.get("finding_count", 0),
         "riskScore": result.summary.get("risk_score", 0),
         "riskLevel": result.summary.get("risk_level", "low"),
+        "vulnerabilityCoverage": coverage,
+    }
+
+
+def dependency_vulnerability_coverage_gap(result: DependencyAuditResult | None) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    coverage = result.summary.get("vulnerability_coverage")
+    if not isinstance(coverage, dict) or coverage.get("complete") is True:
+        return None
+    if coverage.get("requested") is False:
+        return None
+    reason = str(coverage.get("message") or "依赖漏洞查询未完整完成。")
+    return {
+        "id": "dependency-vulnerability-coverage-incomplete",
+        "module": "供应链组件",
+        "severity": "high",
+        "question": "OSV 漏洞查询未完整完成，当前不能把0条命中解释为没有漏洞。",
+        "missingItems": ["完整的 OSV 漏洞查询结果"],
+        "reason": reason,
+        "whereToFind": ["检查 OSV-Scanner 网络访问", "检查项目锁文件", "查看依赖扫描工具状态"],
+        "uploadTo": "供应链组件",
+        "proves": "只有漏洞查询完整完成后，才能判断当前版本是否命中已知漏洞。",
+        "keywords": ["OSV-Scanner", "vulnerability coverage", "timeout"],
+        "examplePaths": [],
+        "actionButtons": [
+            {"label": "查看供应链组件", "actionKind": "open_module", "targetModule": "供应链组件"},
+            {"label": "复制检索关键词", "actionKind": "copy_keywords"},
+        ],
     }
 
 
@@ -894,11 +927,12 @@ def build_agent_next_actions(
             }
         )
     if results.artifact_trust is not None and results.artifact_trust.trust_score < 70:
+        artifact_target = f"{results.artifact_trust.artifact}（{results.artifact_trust.digest}）"
         actions.append(
             {
                 "priority": "high",
                 "title": "阻断低可信产物发布",
-                "action": "重新生成 artifact 和 provenance，核对 digest、仓库、commit、workflow、builder 与 runner 策略。",
+                "action": f"阻断 {artifact_target} 发布；重新生成 artifact 和 provenance，核对 digest、仓库、commit、workflow、builder 与 runner 策略。",
                 "targetModule": "产物可信",
                 "keywords": compact_keywords([results.artifact_trust.artifact, results.artifact_trust.digest]),
                 "actionKind": "rerun_artifact_trust",
@@ -909,23 +943,42 @@ def build_agent_next_actions(
             }
         )
     if results.dependency_audit is not None and int(results.dependency_audit.summary.get("finding_count") or 0) > 0:
+        dependency_targets = "、".join(dict.fromkeys(finding.dependency for finding in results.dependency_audit.findings[:5]))
         actions.append(
             {
                 "priority": "medium",
                 "title": "复核高风险依赖",
-                "action": "优先确认高风险依赖是否被代码 import、是否进入构建产物、是否在运行日志中出现。",
+                "action": f"优先复核 {dependency_targets or '高风险依赖'}：确认是否被代码 import、是否进入构建产物、是否在运行日志中出现。",
                 "targetModule": "供应链组件",
                 "keywords": compact_keywords([finding.dependency for finding in results.dependency_audit.findings[:5]]),
                 "actionKind": "review_high_risk_dependencies",
                 "payload": {"findingCount": results.dependency_audit.summary.get("finding_count", 0)},
             }
         )
+    if results.cicd_audit is not None and int(results.cicd_audit.summary.get("finding_count") or 0) > 0:
+        cicd_targets = "、".join(
+            dict.fromkeys(f"{finding.workflow}:{finding.line}（{finding.rule_id}）" for finding in results.cicd_audit.findings[:5])
+        )
+        actions.append(
+            {
+                "priority": "high",
+                "title": "修复构建链风险",
+                "action": f"复核 {cicd_targets or '风险工作流'}，收紧 GITHUB_TOKEN 权限、固定 Action 版本并核对 runner。",
+                "targetModule": "CI/CD 构建链",
+                "keywords": compact_keywords([finding.rule_id for finding in results.cicd_audit.findings[:5]]),
+                "actionKind": "open_module",
+                "payload": {"findingCount": results.cicd_audit.summary.get("finding_count", 0)},
+            }
+        )
     if results.log_audit is not None and int(results.log_audit.summary.get("finding_count") or 0) > 0:
+        log_targets = "、".join(
+            f"{finding.event}（{finding.time}）" for finding in results.log_audit.findings[:5]
+        )
         actions.append(
             {
                 "priority": "medium",
                 "title": "复核日志异常",
-                "action": "核对异常外联、敏感接口访问或认证异常的源主机、进程、时间窗和目标地址，并与发布记录对齐。",
+                "action": f"复核 {log_targets or '异常日志'} 的源主机、进程、时间窗和目标地址，并与构建及发布记录对齐。",
                 "targetModule": "日志印证",
                 "keywords": compact_keywords([finding.signal for finding in results.log_audit.findings[:5]]),
                 "actionKind": "scan_logs",
@@ -1019,10 +1072,10 @@ def build_agent_verdict(
         for step in steps
         if step.get("status") == "skipped" and step.get("id") != "workspace_report"
     ]
-    supported_claims = supported_agent_claims(signals)
+    supported_claims = supported_agent_claims(signals, results)
     unsupported_claims = unsupported_agent_claims(signals, evidence_gaps, failed_steps, skipped_steps)
     gap_texts = [str(gap.get("reason") or gap.get("question") or gap.get("module")) for gap in evidence_gaps[:6]]
-    chain_closed = (
+    has_all_stage_signals = (
         signals["dependency_findings"] > 0
         and signals["cicd_findings"] > 0
         and signals["artifact_impacted"]
@@ -1030,17 +1083,15 @@ def build_agent_verdict(
         and not evidence_gaps
         and not failed_steps
     )
+    if has_all_stage_signals:
+        unsupported_claims.append("四类模块均发现风险，但尚未通过共同实体和时间线证明它们属于同一条攻击链。")
     risk_score = int(summary.get("riskScore") or 0)
     risk_signal_count = agent_risk_signal_count(results)
 
-    if chain_closed and risk_score >= 80:
-        level = "confirmed_attack"
-        label = "已确认供应链攻击路径"
-        conclusion = "依赖、构建链、产物可信和运行日志四类证据已形成闭环，应按真实供应链攻击路径处置。"
-    elif risk_signal_count > 0:
+    if risk_signal_count > 0:
         level = "suspected_risk"
         label = "疑似供应链风险"
-        conclusion = "已发现供应链风险信号，但证据链尚未完全闭环，不能直接宣称攻击已经成立。"
+        conclusion = "已发现供应链风险信号；只有依赖、构建、产物和运行期证据通过共同实体及连续时间线关联后，才能确认攻击路径。知识图谱用于呈现关联，不是独立证明。"
     elif evidence_gaps or failed_steps or skipped_steps:
         level = "insufficient_evidence"
         label = "证据不足"
@@ -1055,7 +1106,10 @@ def build_agent_verdict(
         "label": label,
         "riskScore": risk_score,
         "riskLevel": summary.get("riskLevel") or risk_level(risk_score),
+        "riskScoreBasis": "max_module",
+        "riskScoreSource": deepcopy(summary.get("riskScoreSource") or {}),
         "confidence": verdict_confidence(level, signals, evidence_gaps, failed_steps, skipped_steps),
+        "confidenceType": "evidence_completeness",
         "conclusion": conclusion,
         "supportedClaims": supported_claims,
         "unsupportedClaims": unsupported_claims,
@@ -1065,7 +1119,233 @@ def build_agent_verdict(
             for item in actions
             if item.get("actionKind") not in {"export_evidence_package", "generate_defense_brief"}
         ][:5],
+        "chainEvidence": {
+            "status": "missing",
+            "verdict": "awaiting-graph-correlation",
+            "confidence": 0,
+            "evidenceIds": [],
+        },
     }
+
+
+def refine_agent_payload_with_workspace_graph(
+    payload: dict[str, Any],
+    workspace: dict[str, Any],
+) -> dict[str, Any]:
+    """使用知识图谱路径收紧或升级 Agent 结论。"""
+
+    refined = deepcopy(payload)
+    verdict = refined.get("verdict") if isinstance(refined.get("verdict"), dict) else {}
+    graph = workspace.get("graph") if isinstance(workspace.get("graph"), dict) else {}
+    paths = [item for item in graph.get("attack_paths", []) if isinstance(item, dict)]
+    relevant_paths = [
+        item
+        for item in paths
+        if str(item.get("category") or "") in {
+            "supply-chain-compromise",
+            "multimodal-supply-chain-correlation",
+        }
+    ]
+    confirmed_path = best_graph_path(
+        relevant_paths,
+        {"likely-real-attack-path", "cross-modal-corroborated-path"},
+    )
+    plausible_path = best_graph_path(
+        relevant_paths,
+        {"plausible-attack-path", "plausible-cross-modal-path"},
+    )
+
+    if confirmed_path is not None:
+        confidence = graph_path_confidence_percent(confirmed_path)
+        evidence_ids = graph_path_evidence_ids(confirmed_path)
+        verdict.update(
+            {
+                "level": "confirmed_attack",
+                "label": "已确认高可信供应链攻击路径",
+                "confidence": confidence,
+                "confidenceType": "graph_path",
+                "conclusion": "依赖、构建、产物和运行期证据已通过共同实体及连续时间线关联为同一条高可信路径，应按真实攻击事件处置；知识图谱用于呈现该关联。",
+                "chainEvidence": graph_chain_evidence("confirmed", confirmed_path),
+            }
+        )
+        append_unique_claim(
+            verdict,
+            "supportedClaims",
+            f"图谱路径 {confirmed_path.get('id') or '-'} 关联 {len(evidence_ids)} 条证据，路径置信度 {confidence}%。",
+        )
+        remove_claims_containing(verdict, "unsupportedClaims", "尚未通过共同实体和时间线")
+        remove_claims_containing(verdict, "evidenceGaps", "共同实体和连续时间线")
+        verdict["evidenceGapCount"] = len(verdict.get("evidenceGaps") or [])
+        remove_graph_correlation_gap(refined)
+        path_line = f"图谱确认同一攻击路径，关联 {len(evidence_ids)} 条证据，路径置信度 {confidence}%"
+    elif plausible_path is not None:
+        confidence = graph_path_confidence_percent(plausible_path)
+        evidence_ids = graph_path_evidence_ids(plausible_path)
+        verdict["chainEvidence"] = graph_chain_evidence("plausible", plausible_path)
+        if verdict.get("level") == "confirmed_attack":
+            verdict["level"] = "suspected_risk"
+            verdict["label"] = "疑似供应链风险"
+        verdict["confidence"] = confidence
+        verdict["confidenceType"] = "graph_path"
+        verdict["conclusion"] = "当前证据可关联为一条可疑路径，但仍包含启发式关联或证据缺口，不能宣称真实攻击已经成立；知识图谱用于呈现该关联。"
+        append_unique_claim(
+            verdict,
+            "supportedClaims",
+            f"图谱生成可疑路径 {plausible_path.get('id') or '-'}，关联 {len(evidence_ids)} 条证据。",
+        )
+        append_unique_claim(
+            verdict,
+            "unsupportedClaims",
+            f"该路径当前判定为 {plausible_path.get('verdict') or 'plausible'}，路径置信度 {confidence}%，仍需补充直接关联证据。",
+        )
+        append_unique_claim(
+            verdict,
+            "evidenceGaps",
+            "可疑路径仍缺少把依赖、构建、产物和运行期行为直接绑定到同一事件的共同实体和连续时间线。",
+        )
+        verdict["evidenceGapCount"] = len(verdict.get("evidenceGaps") or [])
+        append_graph_correlation_gap(refined, "plausible", confidence)
+        path_line = f"图谱仅形成可疑路径，关联 {len(evidence_ids)} 条证据，路径置信度 {confidence}%"
+    else:
+        verdict["chainEvidence"] = {
+            "status": "missing",
+            "verdict": "no-correlated-attack-path",
+            "confidence": 0,
+            "evidenceIds": [],
+        }
+        if verdict.get("level") == "confirmed_attack":
+            verdict["level"] = "suspected_risk"
+            verdict["label"] = "疑似供应链风险"
+        if verdict.get("level") == "suspected_risk":
+            verdict["conclusion"] = "模块中存在风险信号，但知识图谱尚未形成同一条可关联攻击路径，不能确认真实攻击。"
+            append_unique_claim(
+                verdict,
+                "unsupportedClaims",
+                "尚未找到把依赖、构建、产物与运行期行为关联为同一事件的图谱路径。",
+            )
+            append_unique_claim(
+                verdict,
+                "evidenceGaps",
+                "缺少把依赖、构建、产物和运行期行为关联到同一事件的共同实体和连续时间线。",
+            )
+            verdict["evidenceGapCount"] = len(verdict.get("evidenceGaps") or [])
+            append_graph_correlation_gap(refined, "missing", 0)
+        path_line = "图谱尚未形成同一条可关联攻击路径"
+
+    refined["verdict"] = verdict
+    sync_agent_narrative_with_verdict(refined, path_line)
+    return refined
+
+
+def best_graph_path(paths: list[dict[str, Any]], allowed_verdicts: set[str]) -> dict[str, Any] | None:
+    candidates = [item for item in paths if str(item.get("verdict") or "") in allowed_verdicts]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (float(item.get("confidence") or 0), len(graph_path_evidence_ids(item))))
+
+
+def graph_path_confidence_percent(path: dict[str, Any]) -> int:
+    value = float(path.get("confidence") or 0)
+    return max(0, min(100, round(value * 100 if value <= 1 else value)))
+
+
+def graph_path_evidence_ids(path: dict[str, Any]) -> list[str]:
+    return [str(item) for item in path.get("evidence_ids", []) if item]
+
+
+def graph_chain_evidence(status: str, path: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": status,
+        "pathId": str(path.get("id") or ""),
+        "title": str(path.get("title") or ""),
+        "verdict": str(path.get("verdict") or ""),
+        "confidence": graph_path_confidence_percent(path),
+        "evidenceIds": graph_path_evidence_ids(path),
+    }
+
+
+def append_graph_correlation_gap(payload: dict[str, Any], status: str, confidence: int) -> None:
+    gaps = payload.setdefault("evidenceGaps", [])
+    if not isinstance(gaps, list) or any(item.get("id") == "graph-chain-correlation-incomplete" for item in gaps if isinstance(item, dict)):
+        return
+    reason = (
+        f"图谱仅形成可疑路径（路径置信度 {confidence}%），仍缺少共同实体和连续时间线的直接关联证据。"
+        if status == "plausible"
+        else "图谱尚未形成跨依赖、构建、产物和运行期行为的同一事件路径。"
+    )
+    gaps.append(
+        {
+            "id": "graph-chain-correlation-incomplete",
+            "module": "攻击路径图谱",
+            "severity": "high",
+            "question": "这些跨模块风险是否确实属于同一次供应链事件？",
+            "missingItems": ["共同实体标识", "连续时间线", "构建到产物及运行期的直接关联记录"],
+            "reason": reason,
+            "whereToFind": ["构建运行记录", "产物 provenance", "部署记录", "运行日志"],
+            "uploadTo": "攻击路径图谱",
+            "proves": "用于确认各模块风险是否属于同一条真实供应链攻击路径。",
+            "keywords": ["run id", "commit", "artifact digest", "process hash", "timestamp"],
+            "examplePaths": [],
+            "actionButtons": [{"label": "查看攻击路径", "actionKind": "open_module", "targetModule": "攻击路径图谱"}],
+        }
+    )
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    summary["evidenceGapCount"] = len(gaps)
+    payload["summary"] = summary
+
+
+def remove_graph_correlation_gap(payload: dict[str, Any]) -> None:
+    gaps = payload.get("evidenceGaps") if isinstance(payload.get("evidenceGaps"), list) else []
+    payload["evidenceGaps"] = [
+        item for item in gaps if not isinstance(item, dict) or item.get("id") != "graph-chain-correlation-incomplete"
+    ]
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    summary["evidenceGapCount"] = len(payload["evidenceGaps"])
+    payload["summary"] = summary
+
+
+def append_unique_claim(verdict: dict[str, Any], key: str, claim: str) -> None:
+    claims = verdict.setdefault(key, [])
+    if isinstance(claims, list) and claim not in claims:
+        claims.append(claim)
+
+
+def remove_claims_containing(verdict: dict[str, Any], key: str, text: str) -> None:
+    claims = verdict.get(key)
+    if isinstance(claims, list):
+        verdict[key] = [str(item) for item in claims if text not in str(item)]
+
+
+def sync_agent_narrative_with_verdict(payload: dict[str, Any], path_line: str) -> None:
+    verdict = payload.get("verdict") if isinstance(payload.get("verdict"), dict) else {}
+    narrative = payload.get("narrative") if isinstance(payload.get("narrative"), dict) else {}
+    timeline = [str(item) for item in narrative.get("timeline", []) if item]
+    if timeline:
+        timeline[-1] = path_line
+    else:
+        timeline.append(path_line)
+    label = str(verdict.get("label") or "证据不足")
+    confidence = int(verdict.get("confidence") or 0)
+    key_evidence = timeline[:6]
+    risk_score = int((payload.get("summary") or {}).get("riskScore") or 0)
+    risk_source = (payload.get("summary") or {}).get("riskScoreSource") or {}
+    risk_source_text = str(risk_source.get("moduleName") or "已执行模块")
+    narrative.update(
+        {
+            "summary": f"{label}：{' → '.join(timeline)}",
+            "timeline": timeline,
+            "verdict": label,
+            "confidence": confidence,
+            "keyEvidence": key_evidence,
+            "defenseBrief": (
+                "【调查范围】Agent 已核查依赖、构建链、产物可信和运行期证据。\n\n"
+                f"【风险评分】最高模块风险分为 {risk_score}/100，来源为{risk_source_text}；图谱路径置信度为 {confidence}%，二者都不是攻击发生概率。\n\n"
+                f"【关键证据】{'；'.join(key_evidence) or '当前关键证据仍需补充。'}\n\n"
+                f"【研判结论】{verdict.get('conclusion') or label}"
+            ),
+        }
+    )
+    payload["narrative"] = narrative
 
 
 def agent_verdict_signals(results: AgentInternalResults) -> dict[str, Any]:
@@ -1091,18 +1371,51 @@ def agent_verdict_signals(results: AgentInternalResults) -> dict[str, Any]:
     }
 
 
-def supported_agent_claims(signals: dict[str, Any]) -> list[str]:
+def supported_agent_claims(signals: dict[str, Any], results: AgentInternalResults) -> list[str]:
     claims: list[str] = []
     if signals["dependency_findings"] > 0:
-        claims.append(f"供应链组件存在 {signals['dependency_findings']} 个风险信号。")
-    if signals["cicd_findings"] > 0:
-        claims.append(f"CI/CD 构建链存在 {signals['cicd_findings']} 个风险信号。")
-    if signals["artifact_impacted"]:
+        targets = "；".join(
+            f"{finding.dependency}（{finding.id}：{finding.title}）"
+            for finding in (getattr(results.dependency_audit, "findings", [])[:2] if results.dependency_audit else [])
+        )
         claims.append(
-            f"产物可信存在异常，可信评分 {signals['artifact_trust_score']}/100，异常项 {signals['artifact_findings']} 个。"
+            f"供应链组件存在 {signals['dependency_findings']} 个风险信号"
+            + (f"，重点对象：{targets}。" if targets else "。")
+        )
+    if signals["cicd_findings"] > 0:
+        targets = "；".join(
+            f"{finding.workflow}:{finding.line}（{finding.rule_id}：{finding.title}）"
+            for finding in (getattr(results.cicd_audit, "findings", [])[:2] if results.cicd_audit else [])
+        )
+        claims.append(
+            f"CI/CD 构建链存在 {signals['cicd_findings']} 个风险信号"
+            + (f"，重点对象：{targets}。" if targets else "。")
+        )
+    if signals["artifact_impacted"]:
+        artifact = results.artifact_trust
+        targets = "；".join(
+            f"{finding.id}：{finding.title}"
+            for finding in (getattr(artifact, "findings", [])[:2] if artifact else [])
+        )
+        artifact_ref = ""
+        if artifact is not None:
+            artifact_name = str(getattr(artifact, "artifact", "") or "")
+            artifact_digest = str(getattr(artifact, "digest", "") or "")
+            if artifact_name or artifact_digest:
+                artifact_ref = f"，产物 {artifact_name or '-'}，digest {artifact_digest or '-'}"
+        claims.append(
+            f"产物可信存在异常，可信评分 {signals['artifact_trust_score']}/100，异常项 {signals['artifact_findings']} 个"
+            f"{artifact_ref}" + (f"，重点检查：{targets}。" if targets else "。")
         )
     if signals["log_findings"] > 0:
-        claims.append(f"运行或构建日志命中 {signals['log_findings']} 个异常行为。")
+        targets = "；".join(
+            f"{finding.id}：{finding.signal} {finding.event}，{finding.time}"
+            for finding in (getattr(results.log_audit, "findings", [])[:2] if results.log_audit else [])
+        )
+        claims.append(
+            f"运行或构建日志命中 {signals['log_findings']} 个异常行为"
+            + (f"，重点事件：{targets}。" if targets else "。")
+        )
     if not claims:
         claims.append("当前已执行模块未提供明确攻击证据。")
     return claims
@@ -1172,7 +1485,9 @@ def build_agent_narrative(
     artifact_score = int((results.artifact_trust.summary if results.artifact_trust else {}).get("trust_score") or 0)
     artifact_findings = int((results.artifact_trust.summary if results.artifact_trust else {}).get("finding_count") or 0)
     log_findings = int((results.log_audit.summary if results.log_audit else {}).get("finding_count") or 0)
-    risk_score = int(summarize_agent_run(steps, evidence_gaps, results).get("riskScore") or 0)
+    run_summary = summarize_agent_run(steps, evidence_gaps, results)
+    risk_score = int(run_summary.get("riskScore") or 0)
+    risk_source = run_summary.get("riskScoreSource") or {}
     confidence = narrative_confidence(dep_findings, cicd_findings, artifact_score, artifact_findings, log_findings, evidence_gaps)
 
     timeline = [
@@ -1188,7 +1503,7 @@ def build_agent_narrative(
     gap_summary = "；".join(str(gap.get("reason")) for gap in evidence_gaps[:3]) or "当前未发现阻断调查的核心证据缺口。"
     defense_brief = (
         "【案例背景】本次 Agent 围绕软件供应链攻击检测与溯源展开，重点核查依赖、构建链、产物可信和运行期证据。\n\n"
-        f"【检测流程】系统按顺序完成依赖异常、CI/CD 构建风险、产物可信异常、日志印证和攻击路径生成。综合风险评分为 {risk_score}/100。\n\n"
+        f"【检测流程】系统按计划调用代码、依赖、CI/CD、产物、日志和图谱汇总模块。最高模块风险分为 {risk_score}/100，来源为{risk_source.get('moduleName') or '已执行模块'}，不是攻击发生概率。\n\n"
         f"【关键证据】{'；'.join(key_evidence[:4]) or '当前关键证据仍需补充。'}\n\n"
         f"【攻击路径】{summary}\n\n"
         f"【处置建议】{gap_summary} 建议先补齐高优先级证据，再阻断低可信产物发布、复核高风险依赖并导出证据包。"
@@ -1235,8 +1550,8 @@ def log_narrative(has_result: bool, finding_count: int) -> str:
 
 def path_narrative(confidence: int, evidence_gaps: list[dict[str, Any]]) -> str:
     if evidence_gaps:
-        return f"形成待补证攻击路径，当前可信度约 {confidence}%"
-    return f"形成可解释攻击路径，当前可信度约 {confidence}%"
+        return f"跨模块关联仍待补证，当前证据完整度约 {confidence}%"
+    return "已收集跨模块风险信号，等待知识图谱验证共同实体和时间线"
 
 
 def narrative_confidence(
@@ -1280,13 +1595,15 @@ def summarize_agent_run(
     success_count = sum(1 for step in steps if step["status"] == "success")
     skipped_count = sum(1 for step in steps if step["status"] == "skipped")
     failed_count = sum(1 for step in steps if step["status"] == "failed")
-    risk_score = max(
-        int((results.code_audit.summary if results.code_audit else {}).get("risk_score") or 0),
-        int((results.dependency_audit.summary if results.dependency_audit else {}).get("risk_score") or 0),
-        int((results.cicd_audit.summary if results.cicd_audit else {}).get("risk_score") or 0),
-        int((results.artifact_trust.summary if results.artifact_trust else {}).get("risk_score") or 0),
-        int((results.log_audit.summary if results.log_audit else {}).get("risk_score") or 0),
-    )
+    module_scores = [
+        ("code_audit", "代码可达性", int((results.code_audit.summary if results.code_audit else {}).get("risk_score") or 0)),
+        ("dependency_audit", "供应链组件", int((results.dependency_audit.summary if results.dependency_audit else {}).get("risk_score") or 0)),
+        ("cicd_audit", "CI/CD 构建链", int((results.cicd_audit.summary if results.cicd_audit else {}).get("risk_score") or 0)),
+        ("artifact_trust", "产物可信", int((results.artifact_trust.summary if results.artifact_trust else {}).get("risk_score") or 0)),
+        ("log_audit", "日志印证", int((results.log_audit.summary if results.log_audit else {}).get("risk_score") or 0)),
+    ]
+    risk_source = max(module_scores, key=lambda item: item[2])
+    risk_score = risk_source[2]
     return {
         "stepCount": len(steps),
         "success": success_count,
@@ -1295,6 +1612,12 @@ def summarize_agent_run(
         "evidenceGapCount": len(evidence_gaps),
         "riskScore": risk_score,
         "riskLevel": risk_level(risk_score),
+        "riskScoreBasis": "max_module",
+        "riskScoreSource": {
+            "moduleId": risk_source[0],
+            "moduleName": risk_source[1],
+            "score": risk_source[2],
+        },
     }
 
 

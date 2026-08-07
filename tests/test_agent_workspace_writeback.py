@@ -6,7 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
-from supplyguard import workspaces
+from supplyguard import agent_backend, workspaces
 from supplyguard.agent_backend import AgentInternalResults, AgentRunBundle
 
 
@@ -111,6 +111,7 @@ class AgentWorkspaceWritebackTests(unittest.TestCase):
         with (
             patch.object(workspaces, "WORKSPACE_STORAGE_DIR", storage_dir),
             patch.object(workspaces, "LATEST_FILE", storage_dir / "latest.json"),
+            patch.object(agent_backend, "AGENT_RUN_STORAGE_DIR", storage_dir / "agent_runs"),
             patch.object(security, "LAST_CODE_AUDIT", None),
             patch.object(security, "LAST_DEPENDENCY_AUDIT", None),
             patch.object(security, "LAST_CICD_AUDIT", None),
@@ -128,6 +129,52 @@ class AgentWorkspaceWritebackTests(unittest.TestCase):
             self.assertEqual(workspace["workspace"]["importId"], "imp-3cx")
             self.assertEqual(workspace["workspace"]["preset"], "3cx")
             self.assertEqual(workspace["import"]["importId"], "imp-3cx")
+
+    def test_agent_verdict_uses_graph_built_during_workspace_save(self):
+        bundle = AgentRunBundle(
+            payload={
+                "runId": "agent-graph-order",
+                "status": "completed_with_risk",
+                "steps": [],
+                "summary": {"evidenceGapCount": 0, "riskScore": 90, "riskLevel": "critical"},
+                "verdict": {
+                    "level": "suspected_risk",
+                    "label": "疑似供应链风险",
+                    "confidence": 78,
+                    "supportedClaims": [],
+                    "unsupportedClaims": [],
+                    "evidenceGaps": [],
+                },
+                "evidenceGaps": [],
+                "nextActions": [],
+                "narrative": {"timeline": ["等待图谱关联"]},
+            },
+            results=AgentInternalResults(),
+        )
+        saved_workspace = deepcopy(security.SECURITY_WORKSPACE)
+        saved_workspace["graph"] = {
+            "attack_paths": [
+                {
+                    "id": "attack-path:save-order",
+                    "title": "保存后生成的可疑路径",
+                    "category": "supply-chain-compromise",
+                    "verdict": "plausible-attack-path",
+                    "confidence": 0.69,
+                    "evidence_ids": ["ev-1", "ev-2"],
+                }
+            ]
+        }
+
+        with (
+            patch.object(security, "workspace_or_current", return_value=deepcopy(security.SECURITY_WORKSPACE)),
+            patch.object(security, "save_workspace_snapshot", side_effect=[saved_workspace, saved_workspace]) as save_mock,
+            patch.object(security, "persist_agent_run"),
+        ):
+            result = security.apply_agent_results(bundle, workspace_id="ws-save-order")
+
+        self.assertEqual(result["verdict"]["chainEvidence"]["status"], "plausible")
+        self.assertEqual(result["verdict"]["confidence"], 69)
+        self.assertEqual(save_mock.call_count, 2)
 
 
 if __name__ == "__main__":

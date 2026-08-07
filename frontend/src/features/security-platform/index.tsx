@@ -57,6 +57,7 @@ import {
   KeyRound,
   Loader2,
   MessageCircle,
+  MoreHorizontal,
   Music2,
   Network,
   PackageCheck,
@@ -179,6 +180,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { Logo } from '@/assets/logo'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
+import { decideAgentQuestionAction } from './agent-question-routing'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -505,13 +507,41 @@ function scanProgressPercent(steps: ScanStepState[], running = false) {
   return Math.min(100, Math.round(((finished + runningWeight) / Math.max(1, steps.length)) * 100))
 }
 
+const agentModuleIdByScanStep: Partial<Record<ScanStepState['id'], string>> = {
+  code: 'code_audit',
+  supply: 'dependency_audit',
+  pipeline: 'cicd_audit',
+  artifact: 'artifact_trust',
+  logs: 'log_audit',
+  multimodal: 'multimodal_evidence',
+  graph: 'workspace_report',
+}
+
 function scanStateFromWorkspace(workspace: SecurityWorkspace | null): ScanWorkspaceState {
   if (!workspace) return freshScanState()
   if (!isWorkspaceScanned(workspace)) return freshScanState()
   const errors = new Map(
     (workspace.scanSuite?.errors ?? []).map((item) => [item.module, item.message])
   )
+  const completedModuleIds = new Set(workspace.scanSuite?.completed ?? [])
+  const skippedModules = new Map(
+    (workspace.scanSuite?.skipped ?? []).map((item) => [item.module, item.reason || '本轮未调用'])
+  )
+  const hasExplicitModuleResults = Array.isArray(workspace.scanSuite?.completed)
   const steps = scanStepSeed.map((step) => {
+    const moduleKey = agentModuleIdByScanStep[step.id] || String(step.id)
+    const error = errors.get(moduleKey) || errors.get(String(step.id))
+    if (hasExplicitModuleResults) {
+      if (error) return { ...step, status: 'failed' as const, message: error }
+      if (completedModuleIds.has(moduleKey)) {
+        return { ...step, status: 'completed' as const, message: '本轮执行完成' }
+      }
+      return {
+        ...step,
+        status: 'skipped' as const,
+        message: skippedModules.get(moduleKey) || '本轮未调用',
+      }
+    }
     if (step.id === 'artifact') {
       return workspace.artifact_trust?.scan_id
         ? { ...step, status: 'completed' as const, message: '扫描完成' }
@@ -532,12 +562,6 @@ function scanStateFromWorkspace(workspace: SecurityWorkspace | null): ScanWorksp
         ? { ...step, status: 'failed' as const, message: '汇总时出现错误' }
         : { ...step, status: 'completed' as const, message: '图谱与报告已更新' }
     }
-    const moduleKey =
-      step.id === 'code' ? 'code_audit' :
-      step.id === 'supply' ? 'dependency_audit' :
-      step.id === 'pipeline' ? 'cicd_audit' :
-      String(step.id)
-    const error = errors.get(moduleKey) || errors.get(String(step.id))
     return error
       ? { ...step, status: 'failed' as const, message: error }
       : { ...step, status: 'completed' as const, message: '扫描完成' }
@@ -555,21 +579,13 @@ function scanStateFromAgentRun(run: AgentRunResult, workspace?: SecurityWorkspac
     skipped: 'skipped',
     failed: 'failed',
   }
-  const agentStepIds: Partial<Record<ScanStepState['id'], string>> = {
-    code: 'code_audit',
-    supply: 'dependency_audit',
-    pipeline: 'cicd_audit',
-    artifact: 'artifact_trust',
-    logs: 'log_audit',
-    graph: 'workspace_report',
-  }
   const steps = scanStepSeed.map((seed) => {
     if (seed.id === 'multimodal') {
       return multimodalCount > 0
         ? { ...seed, status: 'completed' as const, message: '已纳入外部证据' }
         : { ...seed, status: 'skipped' as const, message: 'Agent 本轮未调用多模态证据' }
     }
-    const agentStep = agentStepById.get(agentStepIds[seed.id] || '')
+    const agentStep = agentStepById.get(agentModuleIdByScanStep[seed.id] || '')
     if (!agentStep) return { ...seed }
     return {
       ...seed,
@@ -929,10 +945,11 @@ function assistantModeLabel(mode: AssistantMode) {
 }
 
 function assistantMessageTitle(message: SecurityAssistantResponse) {
-  if (message.model === 'agent-orchestrator') return 'Agent 调度'
-  if (message.model === 'rule-based-investigation-agent') return '规则调查 Agent'
+  if (message.model === 'agent-orchestrator') return 'SupplyGuard Agent'
+  if (message.model === 'agent-graphrag') return 'SupplyGuard Agent · GraphRAG'
+  if (message.model.includes('investigation-agent')) return 'SupplyGuard Agent'
   if (message.model === 'waiting-for-scan') return '等待扫描'
-  return 'GraphRAG 分析'
+  return 'SupplyGuard GraphRAG'
 }
 
 function agentRequestFromWorkspace(workspace: SecurityWorkspace): AgentRunRequest {
@@ -950,49 +967,6 @@ function agentRequestFromWorkspace(workspace: SecurityWorkspace): AgentRunReques
     includeLogAudit: true,
     timeoutSeconds: 240,
   }
-}
-
-function shouldUseExistingAgentState(question: string) {
-  const text = question.trim().toLowerCase()
-  const stateOnlyKeywords = [
-    '下一步',
-    '接下来',
-    '为什么',
-    '原因',
-    '待补',
-    '缺少',
-    '缺什么',
-    '上传',
-    '补充',
-    '状态',
-    '进度',
-    '完成',
-    '证据缺口',
-    '材料',
-    'next',
-    'missing',
-    'upload',
-    'status',
-  ]
-  const investigationKeywords = [
-    '有风险',
-    '有危险',
-    '危险吗',
-    '风险吗',
-    '是否危险',
-    '是否有风险',
-    '扫描',
-    '检测',
-    '重新',
-    '研判',
-    '攻击路径',
-    '影响发布',
-    '投毒',
-    'run',
-    'scan',
-  ]
-  return stateOnlyKeywords.some((keyword) => text.includes(keyword))
-    && !investigationKeywords.some((keyword) => text.includes(keyword))
 }
 
 function isDefenseBriefAction(action: AgentNextAction) {
@@ -1126,25 +1100,48 @@ function agentRunDirectConclusion(run: AgentRunResult, question = '') {
   const evidenceGaps = filterAgentLinesByFocus(verdict.evidenceGaps, focus)
   const artifactClaim = supportedClaims.find((item) => /产物|artifact|provenance|签名|可信/.test(item))
   const impactLine = (focus === 'global' || focus === 'artifact_trust') && artifactClaim
-    ? `发布影响：${artifactClaim}发布前应阻断或重新校验产物。`
+    ? `发布门禁建议：${artifactClaim}发布前应阻断或重新校验产物；这表示门禁未通过，不等于已经证明产物遭到攻击。`
     : (focus === 'global' || focus === 'artifact_trust') && evidenceGaps.some((item) => /产物|artifact|provenance|签名/.test(item))
-      ? '发布影响：当前还不能确认是否影响发布产物，需要补齐 artifact、provenance 或签名证据。'
+      ? '发布门禁建议：当前还不能确认是否影响发布产物，需要补齐 artifact、provenance 或签名证据后再决定是否放行。'
       : ''
   const title = focus === 'global' ? '研判结论' : `${AGENT_FOCUS_LABELS[focus]}研判结论`
   const conclusionLine = focus === 'global'
     ? `**${verdict.label}。**${verdict.conclusion}`
     : `**${AGENT_FOCUS_LABELS[focus]}研判。**${focusedAgentSummary(focus, verdict, supportedClaims, unsupportedClaims, evidenceGaps)}`
+  const riskSource = verdict.riskScoreSource?.moduleName || run.summary.riskScoreSource?.moduleName || '已执行模块'
+  const confidenceLine = verdict.confidenceType === 'graph_path' || verdict.chainEvidence?.status === 'plausible' || verdict.chainEvidence?.status === 'confirmed'
+    ? `图谱路径置信度：${verdict.confidence}%（表示当前跨模块路径的证据支持程度，不是攻击发生概率）。`
+    : `当前证据完整度：${verdict.confidence}%（不是攻击发生概率）。`
+  const fallbackEvidenceGaps = run.evidenceGaps?.length ? [] : evidenceGaps
   return [
     `## ${title}`,
     '',
     conclusionLine,
     '',
-    `风险：${verdict.riskScore}/100（${verdict.riskLevel}），可信度 ${verdict.confidence}%。`,
+    `最高模块风险分：${verdict.riskScore}/100（${severityLabels[verdict.riskLevel] || verdict.riskLevel}），来源：${riskSource}。该分数不是项目综合攻击概率。`,
+    confidenceLine,
     impactLine,
-    supportedClaims.length ? `\n### 关键证据\n${supportedClaims.slice(0, 4).map((item) => `- ${item}`).join('\n')}` : '',
+    supportedClaims.length ? `\n### 关键证据\n${supportedClaims.slice(0, 6).map((item) => `- ${item}`).join('\n')}` : '',
     unsupportedClaims.length ? `\n### 仍需确认\n${unsupportedClaims.slice(0, 3).map((item) => `- ${item}`).join('\n')}` : '',
-    evidenceGaps.length ? `\n### 证据缺口\n${evidenceGaps.slice(0, 3).map((item) => `- ${item}`).join('\n')}` : '',
+    fallbackEvidenceGaps.length ? `\n### 证据缺口\n${fallbackEvidenceGaps.slice(0, 3).map((item) => `- ${item}`).join('\n')}` : '',
   ].filter(Boolean).join('\n')
+}
+
+function agentCalledModuleLines(run: AgentRunResult) {
+  return (run.steps || [])
+    .filter((step) => step.status !== 'pending' && step.status !== 'skipped')
+    .map((step) => {
+      const summary = step.summary || {}
+      let result = ''
+      if (step.id === 'code_audit') result = `发现 ${Number(summary.total || 0)} 项`
+      if (step.id === 'dependency_audit') result = `解析 ${Number(summary.dependencies || 0)} 个依赖，发现 ${Number(summary.findings || 0)} 项`
+      if (step.id === 'cicd_audit') result = `${Number(summary.workflows || 0)} 个工作流、${Number(summary.steps || 0)} 个步骤，发现 ${Number(summary.findings || 0)} 项`
+      if (step.id === 'artifact_trust') result = `${Number(summary.checks || 0)} 项检查，可信评分 ${Number(summary.trustScore || 0)}/100，发现 ${Number(summary.findings || 0)} 项`
+      if (step.id === 'log_audit') result = `${Number(summary.files || 0)} 个文件、${Number(summary.events || 0)} 个事件，发现 ${Number(summary.findings || 0)} 项`
+      if (step.id === 'workspace_report') result = '生成攻击路径图谱和溯源报告'
+      const duration = step.durationSeconds > 0 ? `，耗时 ${step.durationSeconds.toFixed(2)} 秒` : ''
+      return `- ${step.name}：${agentStepStatusLabel(step.status)}${result ? `，${result}` : ''}${duration}`
+    })
 }
 
 function agentRunFailedOrSkippedSteps(run: AgentRunResult, focus: AgentAnswerFocus) {
@@ -1169,13 +1166,15 @@ function agentRunToAssistantResponse(question: string, run: AgentRunResult): Sec
   const gapLines = compactAgentGapLines(run.evidenceGaps || [], focus)
   const issueStepLines = agentRunFailedOrSkippedSteps(run, focus)
   const actionLines = compactAgentActionLines(actions, focus)
+  const calledModuleLines = agentCalledModuleLines(run)
   const statusLine = status === 'success' || status === 'completed_with_risk'
     ? ''
     : `状态：${agentRunStatusLabel(status)}。`
   const answer = [
     agentRunDirectConclusion(run, question),
     statusLine,
-    '刷新此界面可将agent调用的数据同步至各个模块。',
+    calledModuleLines.length ? `\n### 本次调用模块\n${calledModuleLines.join('\n')}` : '',
+    calledModuleLines.length ? `本次扫描结果已自动同步到各模块，无需刷新页面。总耗时 ${Number(run.durationSeconds || 0).toFixed(2)} 秒。` : '',
     gapLines.length ? `\n### 需要补证\n${gapLines.join('\n')}` : '',
     issueStepLines.length ? `\n### 未完成模块\n${issueStepLines.join('\n')}` : '',
     actionLines.length ? `\n### 下一步建议\n${actionLines.join('\n')}` : '',
@@ -1230,7 +1229,7 @@ function createWorkspaceTab(module: PlatformTab, overrides: Partial<WorkspaceTab
 }
 
 function canonicalWorkspaceTab(module: PlatformTab): PlatformTab {
-  return module === 'code' ? 'supply' : module
+  return module
 }
 
 function defaultWorkspaceTabs(initialTab: PlatformTab = 'overview') {
@@ -1240,6 +1239,7 @@ function defaultWorkspaceTabs(initialTab: PlatformTab = 'overview') {
 }
 
 const agentModuleTabs: PlatformTab[] = [
+  'code',
   'supply',
   'pipeline',
   'artifact',
@@ -1636,13 +1636,35 @@ export function SecurityPlatform() {
   async function runAgentQuestion(value: string, currentWorkspace: SecurityWorkspace): Promise<SecurityAssistantResponse> {
     const request = agentRequestFromWorkspace(currentWorkspace)
     const workspaceId = getWorkspaceId(currentWorkspace)
-    if (shouldUseExistingAgentState(value)) {
+    const decision = decideAgentQuestionAction(value, isWorkspaceScanned(currentWorkspace))
+    if (decision.action === 'answer') {
       const response = await askSecurityAgentChat(value, workspaceId)
-      toast.success('Agent 已基于现有调查状态回答')
-      return response
+      const reusedModules = (currentWorkspace.agentRun?.steps || [])
+        .filter((step) => step.status === 'success')
+        .map((step) => step.name)
+      toast.success('Agent 已复用当前扫描证据，本次未重复扫描')
+      return {
+        ...response,
+        answer: [
+          response.answer,
+          '\n### 本次调用说明',
+          '- 本次未重新调用扫描工具。',
+          reusedModules.length ? `- 复用已完成模块：${reusedModules.join('、')}。` : '- 复用当前工作区已保存的扫描证据。',
+          `- 回答方式：${response.graph_rag ? 'GraphRAG 检索攻击路径和证据关系' : '基于当前调查状态研判'}。`,
+        ].join('\n'),
+        retrieval: [
+          '执行方式：复用当前工作区证据，未重新调用扫描工具。',
+          ...(response.retrieval || []),
+        ],
+        model: response.graph_rag ? 'agent-graphrag' : response.model,
+      }
     }
     const created = await createSecurityAgentJob({ ...request, question: value })
-    toast.success('Agent 任务已创建，正在自动编排检测工具')
+    toast.success(
+      decision.reason === 'first_scan'
+        ? 'Agent 正在规划并执行首次扫描'
+        : 'Agent 正在按问题范围增量重新扫描'
+    )
     let result = created
     setWorkspaceScanState(workspaceId, scanStateFromAgentRun(result, currentWorkspace))
     for (let index = 0; index < 120; index += 1) {
@@ -1662,11 +1684,14 @@ export function SecurityPlatform() {
       workspaceId,
       result.workspace ?? currentWorkspace
     )
+    const finalResult = finalWorkspace.agentRun?.runId === result.runId
+      ? finalWorkspace.agentRun
+      : result
     applyWorkspaceUpdate(finalWorkspace, {
-      scanState: scanStateFromAgentRun(result, finalWorkspace),
+      scanState: scanStateFromAgentRun(finalResult, finalWorkspace),
       refreshModules: true,
     })
-    return agentRunToAssistantResponse(value, { ...result, workspace: finalWorkspace })
+    return agentRunToAssistantResponse(value, { ...finalResult, workspace: finalWorkspace })
   }
 
   async function selectConversation(conversation: SecurityConversation) {
@@ -1752,7 +1777,17 @@ export function SecurityPlatform() {
     const workspaceId = getWorkspaceId(workspace)
     const newImportId = record.importId
 
-    if (targetTab === 'supply') {
+    if (targetTab === 'code') {
+      const audit = await runCodeAuditScan({
+        workspaceId,
+        importId: newImportId,
+        includeCheckov: true,
+        timeoutSeconds: 180,
+      })
+      const nextWorkspace = await loadSecurityWorkspaceById(workspaceId)
+      applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
+      toast.success(`补充文件已纳入代码审查，发现 ${audit.summary.total} 项风险`)
+    } else if (targetTab === 'supply') {
       const audit = await runDependencyAuditScan({ workspaceId, importId: newImportId })
       const nextWorkspace = await loadSecurityWorkspaceById(workspaceId)
       applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
@@ -2028,6 +2063,23 @@ export function SecurityPlatform() {
 
               {workspace ? (
                 <>
+          <TabsContent value='code' className={moduleTabContentClass}>
+            <WorkbenchMotionLayer motionKey={`code-${moduleViewKey}-${workspaceDataKey}`}>
+            <CodeAuditPanel
+              workspace={workspace}
+              workspaceId={workspace.workspaceId || workspace.workspace?.workspaceId}
+              importId={workspace.code_audit?.target?.importId ?? workspace.workspace?.importId}
+              onScanned={async (audit) => {
+                setWorkspace((current) => current ? { ...current, code_audit: audit } : { ...workspace, code_audit: audit })
+                const nextWorkspace = await loadSecurityWorkspaceById(getWorkspaceId(workspace))
+                applyWorkspaceUpdate(nextWorkspace, { refreshModules: true })
+                toast.success(`代码审查完成，发现 ${audit.summary.total} 项风险`)
+              }}
+              onSupplementProjectArchive={(file) => supplementProjectArchive(file, 'code')}
+            />
+            </WorkbenchMotionLayer>
+          </TabsContent>
+
           <TabsContent value='supply' className={moduleTabContentClass}>
             <WorkbenchMotionLayer motionKey={`supply-${moduleViewKey}-${workspaceDataKey}`}>
             <SupplyReachabilityPanel
@@ -2190,8 +2242,11 @@ export function SecurityPlatform() {
             </WorkbenchMotionLayer>
           </TabsContent>
 
-          <TabsContent value='graph' className={cn(moduleTabContentClass, 'h-[calc(100vh-8.5rem)]')}>
-            <WorkbenchMotionLayer motionKey={`graph-${moduleViewKey}-${workspaceDataKey}`}>
+          <TabsContent value='graph' className='m-0 h-full min-h-[640px]'>
+            <WorkbenchMotionLayer
+              motionKey={`graph-${moduleViewKey}-${workspaceDataKey}`}
+              className='h-full min-h-0'
+            >
             <AttackChainGraph workspace={workspace} />
             </WorkbenchMotionLayer>
           </TabsContent>
@@ -2258,34 +2313,95 @@ function AgentProjectSidebar({
   onDelete: (conversationId: string) => void
   onRename: (conversationId: string, title: string) => void
 }) {
+  const [query, setQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN')
+  const filteredConversations = useMemo(() => {
+    if (!normalizedQuery) return conversations
+    return conversations.filter((conversation) =>
+      [conversation.title, conversation.projectName, conversation.sourcePath]
+        .filter(Boolean)
+        .some((value) => String(value).toLocaleLowerCase('zh-CN').includes(normalizedQuery))
+    )
+  }, [conversations, normalizedQuery])
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', focusSearch)
+    return () => window.removeEventListener('keydown', focusSearch)
+  }, [])
+
   return (
-    <aside className='flex min-h-[calc(100svh-4rem)] flex-col border-r border-cyan-950/70 bg-[linear-gradient(180deg,rgba(8,145,178,0.08),rgba(2,6,23,0.1))]'>
-      <div className='border-b border-cyan-950/70 p-4'>
+    <aside className='flex min-h-[calc(100svh-4rem)] min-w-0 flex-col border-r border-border bg-[color:var(--surface-shell)]'>
+      <div className='space-y-2 border-b border-border p-3'>
+        <div className='group relative'>
+          <Search className='pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-cyan-600 dark:group-focus-within:text-cyan-300' />
+          <Input
+            ref={searchInputRef}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder='搜索项目或路径'
+            aria-label='搜索历史对话'
+            className='h-10 rounded-md border-border bg-[color:var(--surface-card)] pl-9 pr-14 text-sm shadow-sm focus-visible:border-cyan-400/60 focus-visible:ring-cyan-400/20'
+          />
+          {query ? (
+            <Button
+              type='button'
+              variant='ghost'
+              size='icon'
+              className='absolute right-1 top-1/2 size-8 -translate-y-1/2 rounded-md text-muted-foreground hover:text-foreground'
+              onClick={() => {
+                setQuery('')
+                searchInputRef.current?.focus()
+              }}
+              aria-label='清除搜索'
+            >
+              <X className='size-3.5' />
+            </Button>
+          ) : (
+            <kbd className='pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-border bg-[color:var(--surface-inset)] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground'>
+              Ctrl K
+            </kbd>
+          )}
+        </div>
         <Button
-          className='group h-11 w-full justify-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-400 text-slate-950 shadow-[0_12px_30px_rgba(8,145,178,0.25)] transition-[background-color,box-shadow,transform] hover:-translate-y-0.5 hover:bg-cyan-300 hover:shadow-[0_16px_36px_rgba(34,211,238,0.25)]'
+          variant='outline'
+          className='group h-10 w-full justify-start gap-2 rounded-md border-border bg-[color:var(--surface-card)] px-3 text-sm font-semibold shadow-sm hover:border-cyan-400/45 hover:bg-cyan-400/10 hover:text-foreground'
           onClick={onNewConversation}
         >
-          <Plus className='size-4 transition-transform duration-300 group-hover:rotate-90' />
+          <span className='grid size-6 place-items-center rounded border border-cyan-400/25 bg-cyan-400/10 text-cyan-700 dark:text-cyan-200'>
+            <Plus className='size-3.5 transition-transform duration-200 group-hover:rotate-90' />
+          </span>
           新建对话
         </Button>
       </div>
 
-      <div className='flex-1 space-y-2.5 overflow-y-scroll overscroll-contain p-3 [scrollbar-gutter:stable]'>
-        <div className='flex items-center justify-between px-1 text-xs font-medium text-muted-foreground'>
+      <div className='flex-1 overflow-y-auto overscroll-contain p-2 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+        <div className='mb-1 flex h-8 items-center justify-between px-2 text-xs font-medium text-muted-foreground'>
           <span>历史对话</span>
-          <span>{conversations.length}</span>
+          <span className='min-w-6 rounded-full border border-border bg-[color:var(--surface-inset)] px-1.5 py-0.5 text-center text-[10px] tabular-nums'>
+            {normalizedQuery ? `${filteredConversations.length}/${conversations.length}` : conversations.length}
+          </span>
         </div>
 
         {draftActive ? (
-          <Card className='rounded-xl border-cyan-400/35 bg-cyan-400/10 shadow-sm'>
-            <CardContent className='space-y-2 p-3'>
-              <div className='text-sm font-semibold'>新建溯源对话</div>
-            </CardContent>
-          </Card>
+          <div className='mb-1 flex min-h-14 items-center gap-2 rounded-md border border-cyan-400/45 bg-cyan-400/10 px-3 shadow-sm'>
+            <span className='size-2 shrink-0 rounded-full bg-cyan-500 shadow-[0_0_0_4px_rgba(6,182,212,0.12)]' />
+            <div className='min-w-0'>
+              <div className='truncate text-sm font-semibold text-foreground'>新建溯源对话</div>
+              <div className='truncate text-xs text-muted-foreground'>等待导入项目</div>
+            </div>
+          </div>
         ) : null}
 
-        {conversations.length ? (
-          conversations.map((conversation) => (
+        <div className='space-y-1'>
+        {filteredConversations.length ? (
+          filteredConversations.map((conversation) => (
             <ConversationHistoryCard
               key={conversation.conversationId}
               conversation={conversation}
@@ -2296,13 +2412,19 @@ function AgentProjectSidebar({
               onRename={(title) => onRename(conversation.conversationId, title)}
             />
           ))
+        ) : normalizedQuery ? (
+          <div className='rounded-md border border-dashed border-border px-3 py-8 text-center'>
+            <Search className='mx-auto mb-2 size-5 text-muted-foreground/60' />
+            <div className='text-sm font-medium text-foreground'>未找到相关项目</div>
+            <div className='mt-1 text-xs text-muted-foreground'>尝试搜索项目名称或本地路径</div>
+          </div>
         ) : !draftActive ? (
-          <div className='rounded-xl border border-dashed border-cyan-400/20 bg-background/40 p-4 text-sm text-muted-foreground'>
-            暂无历史对话。新建对话后导入项目开始分析。
+          <div className='rounded-md border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground'>
+            暂无历史对话，新建对话后导入项目开始分析。
           </div>
         ) : null}
+        </div>
       </div>
-
     </aside>
   )
 }
@@ -2328,19 +2450,19 @@ function ConversationProgressRing({ state }: { state: ScanWorkspaceState }) {
   const percent = scanProgressPercent(state.steps, state.running)
   const displayPercent = state.running ? Math.max(10, percent) : percent
   const tone = state.running
-    ? 'text-cyan-400'
+    ? 'text-cyan-600 dark:text-cyan-400'
     : state.completed
-      ? 'text-emerald-400'
+      ? 'text-emerald-600 dark:text-emerald-400'
       : 'text-muted-foreground/45'
   const dotTone = state.running
-    ? 'bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.55)]'
+    ? 'bg-cyan-600 shadow-[0_0_8px_rgba(8,145,178,0.35)] dark:bg-cyan-400'
     : state.completed
-      ? 'bg-emerald-400'
+      ? 'bg-emerald-600 dark:bg-emerald-400'
       : 'bg-muted-foreground/30'
 
   return (
     <div
-      className={cn('relative grid size-7 shrink-0 place-items-center rounded-full', tone)}
+      className={cn('relative grid size-6 shrink-0 place-items-center rounded-full', tone)}
       aria-label={`扫描进度约 ${percent}%`}
       title={`扫描进度约 ${percent}%`}
     >
@@ -2357,7 +2479,7 @@ function ConversationProgressRing({ state }: { state: ScanWorkspaceState }) {
           <span className='absolute left-1/2 top-0 size-1.5 -translate-x-1/2 rounded-full bg-current' />
         ) : null}
       </div>
-      <div className='absolute inset-[3px] rounded-full bg-slate-950' />
+      <div className='absolute inset-[3px] rounded-full bg-[color:var(--surface-card)]' />
       <span className={cn('relative size-1.5 rounded-full transition-colors duration-300', dotTone)} />
     </div>
   )
@@ -2386,107 +2508,107 @@ function ConversationHistoryCard({
 
   useEffect(() => setTitle(conversation.title), [conversation.title])
 
+  const commitTitle = () => {
+    const nextTitle = title.trim()
+    setEditing(false)
+    if (nextTitle && nextTitle !== conversation.title) {
+      onRename(nextTitle)
+    } else {
+      setTitle(conversation.title)
+    }
+  }
+
   return (
     <motion.div
       layout={!reducedMotion}
       initial={false}
-      animate={reducedMotion ? undefined : { y: active ? -3 : 0, scale: active ? 1.018 : 1 }}
-      transition={{ type: 'spring', stiffness: 360, damping: 28, mass: 0.75 }}
+      transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.7 }}
     >
-      <Card
+      <div
         className={cn(
-          'group relative overflow-hidden rounded-xl transition-all duration-300',
-          'before:absolute before:inset-y-3 before:left-0 before:w-1 before:rounded-r-full before:bg-cyan-300 before:opacity-0 before:transition-opacity',
-          'hover:-translate-y-0.5 hover:border-cyan-400/35 hover:bg-cyan-950/20 hover:shadow-[0_14px_34px_rgba(2,6,23,0.25)]',
+          'group relative overflow-hidden rounded-md border transition-[border-color,background-color,box-shadow] duration-200',
+          'before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-r-full before:bg-cyan-500 before:opacity-0 before:transition-opacity',
           active
-            ? 'border-cyan-400/70 bg-cyan-950/25 shadow-[0_16px_42px_rgba(8,145,178,0.18)] ring-1 ring-cyan-300/20 before:opacity-100'
-            : 'border-slate-700/70 bg-slate-950/35'
+            ? 'border-cyan-400/50 bg-cyan-400/10 shadow-sm before:opacity-100'
+            : 'border-transparent bg-transparent hover:border-border hover:bg-[color:var(--surface-inset)]'
         )}
       >
-      <CardContent className={cn('space-y-2.5 p-3 transition-[padding] duration-300', active && 'p-3.5 pl-4')}>
-        <button type='button' className='w-full text-left' onClick={onSelect}>
-          <div className='flex items-start justify-between gap-2'>
-            <div className='min-w-0'>
-              {active && editing ? (
-                <Input
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  onBlur={() => {
-                    setEditing(false)
-                    if (title.trim() && title.trim() !== conversation.title) onRename(title.trim())
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.currentTarget.blur()
-                    }
-                  }}
-                  className='h-8'
-                  autoFocus
-                />
-              ) : (
-                <div className={cn('truncate font-semibold leading-6', active ? 'text-sm text-foreground' : 'text-sm text-foreground/75')}>
-                  {conversation.title}
-                </div>
-              )}
-              <div className='mt-0.5 truncate text-xs text-muted-foreground/75'>
-                {conversation.sourcePath || conversation.projectName || '项目路径未记录'}
-              </div>
-            </div>
-            <ConversationProgressRing state={restoredScanState} />
+        {editing ? (
+          <div className='p-2.5 pl-3'>
+            <Input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              onBlur={commitTitle}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur()
+                if (event.key === 'Escape') {
+                  setTitle(conversation.title)
+                  setEditing(false)
+                }
+              }}
+              className='h-9 rounded-md bg-[color:var(--surface-card)] text-sm'
+              aria-label='编辑对话标题'
+              autoFocus
+            />
           </div>
-        </button>
+        ) : (
+          <button type='button' className='block w-full px-3 py-2.5 pr-11 text-left' onClick={onSelect}>
+            <div className={cn('truncate text-sm font-semibold leading-5', active ? 'text-foreground' : 'text-foreground/85')}>
+              {conversation.title}
+            </div>
+            <div className='mt-0.5 truncate text-xs text-muted-foreground'>
+              {conversation.sourcePath || conversation.projectName || '项目路径未记录'}
+            </div>
+            {active ? (
+              <motion.div
+                className='mt-2 flex min-w-0 items-center gap-1.5 text-[10px]'
+                initial={reducedMotion ? false : { opacity: 0, y: -4 }}
+                animate={reducedMotion ? undefined : { opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: workbenchMotionEase }}
+              >
+                <span className='rounded border border-border bg-[color:var(--surface-card)] px-1.5 py-0.5 text-muted-foreground'>
+                  {scanned ? '风险' : '预检'} <strong className='font-semibold text-foreground'>{scanned ? conversation.summary.riskScore ?? '-' : compactNumber(conversation.summary.preflightFiles ?? 0)}</strong>
+                </span>
+                <span className='rounded border border-border bg-[color:var(--surface-card)] px-1.5 py-0.5 text-muted-foreground'>
+                  {scanned ? '路径' : '依赖/CI'} <strong className='font-semibold text-foreground'>{scanned ? conversation.summary.attackPaths ?? 0 : `${conversation.summary.dependencyFiles ?? 0}/${conversation.summary.ciFiles ?? 0}`}</strong>
+                </span>
+              </motion.div>
+            ) : null}
+          </button>
+        )}
 
-        {active ? (
-          <motion.div
-            className='space-y-2.5'
-            initial={reducedMotion ? false : { opacity: 0, y: -8, filter: 'blur(6px)' }}
-            animate={reducedMotion ? undefined : { opacity: 1, y: 0, filter: 'blur(0px)' }}
-            transition={{ duration: 0.34, ease: workbenchMotionEase }}
-          >
-            <div className='grid grid-cols-2 gap-2 text-xs'>
-              <div className='rounded-lg border border-cyan-400/10 bg-slate-900/55 p-2'>
-                <div className='text-muted-foreground'>{scanned ? '风险评分' : '预检文件'}</div>
-                <div className='mt-1 font-semibold text-foreground'>
-                  {scanned
-                    ? conversation.summary.riskScore
-                    : compactNumber(conversation.summary.preflightFiles ?? 0)}
-                </div>
-              </div>
-              <div className='rounded-lg border border-cyan-400/10 bg-slate-900/55 p-2'>
-                <div className='text-muted-foreground'>{scanned ? '攻击路径' : '依赖/CI'}</div>
-                <div className='mt-1 font-semibold text-foreground'>
-                  {scanned
-                    ? conversation.summary.attackPaths
-                    : `${conversation.summary.dependencyFiles ?? 0}/${conversation.summary.ciFiles ?? 0}`}
-                </div>
-              </div>
+        {!editing ? (
+          <div className='absolute right-2 top-2'>
+            <div className='transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0'>
+              <ConversationProgressRing state={restoredScanState} />
             </div>
-            <div className='flex items-center justify-between gap-2'>
-              <Button
-                type='button'
-                variant='ghost'
-                size='sm'
-                className='h-8 rounded-lg px-2 text-muted-foreground hover:bg-cyan-400/10 hover:text-cyan-100'
-                onClick={() => setEditing(true)}
-              >
-                <Pencil className='size-3.5' />
-                <span className='text-xs'>重命名</span>
-              </Button>
-              <Button
-                type='button'
-                variant='ghost'
-                size='icon'
-                className='size-8 rounded-lg text-muted-foreground hover:bg-red-500/10 hover:text-red-300'
-                title='永久删除对话'
-                onClick={onDelete}
-              >
-                <Trash2 className='size-4' />
-              </Button>
-            </div>
-          </motion.div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='icon'
+                  className='absolute inset-0 size-6 rounded-md bg-[color:var(--surface-card)] text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 data-[state=open]:opacity-100'
+                  aria-label={`管理对话：${conversation.title}`}
+                >
+                  <MoreHorizontal className='size-4' />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align='end' className='w-36'>
+                <DropdownMenuItem onSelect={() => setEditing(true)}>
+                  <Pencil className='size-3.5' />
+                  重命名
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className='text-red-600 focus:text-red-600 dark:text-red-300 dark:focus:text-red-300' onSelect={onDelete}>
+                  <Trash2 className='size-3.5' />
+                  永久删除
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ) : null}
-      </CardContent>
-    </Card>
+      </div>
     </motion.div>
   )
 }
@@ -2778,10 +2900,53 @@ function AgentConversationHome({
   onOpenModule: (module: PlatformTab) => void
 }) {
   const visibleModules = agentModuleTabs.filter((module) => module !== 'copilot' && module !== 'report')
+  const stepByModule = new Map<ScanStepState['id'], ScanStepState>(
+    scanSteps.map((step) => [step.id, step])
+  )
+  const detectionModules = visibleModules.filter((module) => module !== 'graph')
+  const completedDetectionModules = detectionModules.filter(
+    (module) => moduleLaunchStep(module, stepByModule)?.status === 'completed'
+  )
+  const failedDetectionModules = detectionModules.filter(
+    (module) => moduleLaunchStep(module, stepByModule)?.status === 'failed'
+  )
+  const completedModuleLabels = completedDetectionModules.map(
+    (module) => moduleLaunchStep(module, stepByModule)?.label ?? workspaceTabTitles[module]
+  )
+  const remainingDetectionCount = Math.max(
+    0,
+    detectionModules.length - completedDetectionModules.length - failedDetectionModules.length
+  )
+  const reportStepCompleted = stepByModule.get('graph')?.status === 'completed'
+  const currentReportReady = reportStepCompleted && Boolean(workspace.report)
+  const fullReportReady = currentReportReady && completedDetectionModules.length === detectionModules.length
+  const statusTitle = fullReportReady
+    ? '项目研判已完成'
+    : completedDetectionModules.length === 1
+      ? `${completedModuleLabels[0]}已完成`
+      : completedDetectionModules.length > 1
+        ? `本次已完成 ${completedDetectionModules.length} 个检测模块`
+        : '本次研判未完成'
+  const statusDetails = [
+    completedDetectionModules.length === detectionModules.length
+      ? `${detectionModules.length} 个检测模块已完成`
+      : completedDetectionModules.length
+        ? `本次完成 ${completedDetectionModules.length} 个检测模块：${completedModuleLabels.join('、')}`
+        : '没有检测模块成功完成',
+    remainingDetectionCount ? `其余 ${remainingDetectionCount} 个检测模块未执行` : '',
+    failedDetectionModules.length ? `${failedDetectionModules.length} 个检测模块执行失败` : '',
+    fullReportReady
+      ? '完整供应链溯源报告已生成'
+      : currentReportReady
+        ? '阶段性报告已更新，尚未形成完整供应链溯源报告'
+        : '尚未生成完整供应链溯源报告',
+  ].filter(Boolean)
+  const statusDescription = statusDetails.join('；')
 
   return (
     <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-5xl flex-col'>
-      <div className='flex-1 space-y-5 pb-40'>
+      <div className='flex-1 space-y-8 pb-40'>
+        {!analysisStarted || scanRunning ? (
         <div className='rounded-md border bg-card p-5 shadow-[var(--shadow-soft)]'>
           <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
           <ModuleLaunchGrid
@@ -2793,28 +2958,31 @@ function AgentConversationHome({
             onOpenModule={onOpenModule}
           />
         </div>
-
-        {analysisStarted ? (
-        <div className='rounded-md border bg-card p-4 shadow-[var(--shadow-soft)]'>
-          <div className='min-w-0'>
-            <div className='flex items-center justify-between gap-4'>
-              <p className='text-sm leading-7 text-foreground/90'>
-                <strong>溯源报告已生成</strong>
-              </p>
-              <Button
-                variant='outline'
-                size='sm'
-                className='group flex shrink-0 items-center gap-2 rounded-md border bg-muted/30 px-4 py-2.5 text-sm text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                onClick={() => onOpenModule('report')}
-              >
+        ) : (
+          <div className='space-y-4'>
+            <div className='flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 pb-4'>
+              <div className='flex min-w-0 items-center gap-3'>
+                <span className='grid size-8 shrink-0 place-items-center rounded-lg bg-emerald-500/10 text-emerald-500'>
+                  <CheckCircle2 className='size-4' />
+                </span>
+                <div className='min-w-0'>
+                  <p className='text-sm font-semibold'>{statusTitle}</p>
+                  <p className='mt-0.5 text-xs leading-5 text-muted-foreground'>{statusDescription}</p>
+                </div>
+              </div>
+              {currentReportReady ? <Button variant='ghost' size='sm' className='group rounded-md text-muted-foreground hover:text-foreground' onClick={() => onOpenModule('report')}>
                 <FileText className='size-4' />
-                <span className='font-medium'>查看报告</span>
-                <ChevronRight className='size-4 transition-transform duration-200 group-hover:translate-x-0.5' />
-              </Button>
+                {fullReportReady ? '查看报告' : '查看阶段性报告'}
+                <ChevronRight className='size-4 transition-transform group-hover:translate-x-0.5' />
+              </Button> : null}
             </div>
+            <ModuleResultNavigation
+              modules={visibleModules}
+              scanSteps={scanSteps}
+              onOpenModule={onOpenModule}
+            />
           </div>
-        </div>
-        ) : null}
+        )}
 
         {messages.length ? (
           messages.map((message, index) => (
@@ -2836,14 +3004,33 @@ function AgentConversationHome({
             </CopilotMessage>
             </Fragment>
           ))
-        ) : null}
-
-        {busy ? (
-          <div className='flex items-center gap-3 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground'>
-            <Loader2 className='size-4 animate-spin text-primary' />
-            正在整理当前项目的证据与处置建议...
+        ) : analysisStarted ? (
+          <div className='mx-auto flex w-full max-w-3xl flex-col items-center py-10 text-center'>
+            <div className='grid size-12 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-400'>
+              <SecurityAiIcon className='size-9' />
+            </div>
+            <h2 className='mt-4 text-lg font-semibold'>{fullReportReady ? '项目证据已就绪' : '已完成模块的证据已就绪'}</h2>
+            <div className='mt-6 grid w-full gap-2 sm:grid-cols-2'>
+              {[
+                '这个项目是否存在供应链风险？',
+                '最需要优先修复的风险是什么？',
+                '说明当前攻击链和关键证据',
+                '这些发现是否可能是误报？',
+              ].map((prompt) => (
+                <button
+                  key={prompt}
+                  type='button'
+                  className='min-h-12 rounded-lg border border-border/80 bg-background px-4 py-3 text-left text-sm leading-6 text-foreground transition-colors hover:border-cyan-400/50 hover:bg-muted/35'
+                  onClick={() => setQuestion(prompt)}
+                >
+                  {prompt}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
+
+        {busy ? <AssistantThinkingState label='正在整理当前项目的证据与处置建议' /> : null}
       </div>
 
       <div className='sticky -bottom-4 z-40 w-full bg-[color:var(--surface-shell)] pt-4 pb-3'>
@@ -2858,6 +3045,88 @@ function AgentConversationHome({
         />
       </div>
     </div>
+  )
+}
+
+const compactModuleLabels: Partial<Record<PlatformTab, string>> = {
+  code: '代码审查',
+  supply: '供应链',
+  pipeline: 'CI/CD',
+  artifact: '产物可信',
+  logs: '日志印证',
+  multimodal: '多模态证据',
+  graph: '图谱与报告',
+}
+
+function ModuleResultNavigation({
+  modules,
+  scanSteps,
+  onOpenModule,
+}: {
+  modules: PlatformTab[]
+  scanSteps: ScanStepState[]
+  onOpenModule: (module: PlatformTab) => void
+}) {
+  const stepByModule = new Map<ScanStepState['id'], ScanStepState>(
+    scanSteps.map((step) => [step.id, step])
+  )
+  const completedCount = modules.filter(
+    (module) => moduleLaunchStep(module, stepByModule)?.status === 'completed'
+  ).length
+
+  return (
+    <nav aria-label='模块详情' className='space-y-2'>
+      <div className='flex items-center justify-between gap-3 px-1'>
+        <h2 className='text-sm font-semibold'>模块详情</h2>
+        <span className='text-xs text-muted-foreground'>{completedCount} 已完成 · {modules.length - completedCount} 未完成</span>
+      </div>
+      <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6'>
+        {modules.map((module) => {
+          const step = moduleLaunchStep(module, stepByModule)
+          const status = step?.status ?? 'pending'
+          const moduleMeta = evidenceModuleCards[module]
+          const Icon = moduleMeta?.icon ?? ShieldCheck
+          const label = compactModuleLabels[module] ?? moduleMeta?.title ?? workspaceTabTitles[module]
+          const statusLabel = status === 'completed'
+            ? '已完成'
+            : status === 'failed'
+              ? '执行失败'
+              : status === 'running'
+                ? '执行中'
+                : '本轮未执行'
+
+          return (
+            <button
+              key={module}
+              type='button'
+              className='group flex min-h-14 min-w-0 items-center gap-2 rounded-md border border-border/75 bg-background px-3 py-2 text-left transition-colors hover:border-cyan-400/50 hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/40'
+              onClick={() => onOpenModule(module)}
+            >
+              <span className={cn(
+                'grid size-8 shrink-0 place-items-center rounded-md',
+                status === 'completed' && 'bg-emerald-500/10 text-emerald-500',
+                status === 'failed' && 'bg-red-500/10 text-red-500',
+                status === 'running' && 'bg-cyan-500/10 text-cyan-500',
+                !['completed', 'failed', 'running'].includes(status) && 'bg-muted text-muted-foreground'
+              )}>
+                <Icon className='size-4' />
+              </span>
+              <span className='min-w-0 flex-1'>
+                <span className='block truncate text-xs font-semibold text-foreground' title={label}>{label}</span>
+                <span className={cn(
+                  'mt-0.5 block truncate text-[11px]',
+                  status === 'completed' && 'text-emerald-500',
+                  status === 'failed' && 'text-red-500',
+                  status === 'running' && 'text-cyan-500',
+                  !['completed', 'failed', 'running'].includes(status) && 'text-muted-foreground'
+                )}>{statusLabel}</span>
+              </span>
+              <ChevronRight className='size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-foreground' />
+            </button>
+          )
+        })}
+      </div>
+    </nav>
   )
 }
 
@@ -2892,9 +3161,8 @@ function AssistantComposer({
   }
 
   return (
-    <div className='mx-auto w-full max-w-4xl space-y-3'>
-      <div className='group relative overflow-hidden rounded-2xl border border-cyan-400/25 bg-[linear-gradient(180deg,rgba(14,165,233,0.08),rgba(15,23,42,0.12))] shadow-[0_18px_48px_rgba(2,6,23,0.28)] transition-[border-color,box-shadow] focus-within:border-cyan-300/70 focus-within:shadow-[0_0_0_1px_rgba(34,211,238,0.2),0_18px_58px_rgba(8,145,178,0.22)]'>
-        <div className='pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent opacity-70' />
+    <div className='mx-auto w-full max-w-5xl'>
+      <div className='group relative overflow-hidden rounded-2xl border border-border/90 bg-card shadow-[0_16px_48px_rgba(2,6,23,0.3)] transition-[border-color,box-shadow] focus-within:border-cyan-400/60 focus-within:shadow-[0_0_0_1px_rgba(34,211,238,0.12),0_20px_56px_rgba(2,6,23,0.4)]'>
         <Textarea
           ref={textareaRef}
           value={value}
@@ -2910,58 +3178,64 @@ function AssistantComposer({
           }}
           placeholder={placeholder}
           className={cn(
-            'min-h-24 resize-none border-0 bg-transparent pb-16 pl-5 pr-16 pt-5 text-sm leading-7 shadow-none focus-visible:ring-0',
-            'placeholder:text-cyan-100/55',
-            compact && 'min-h-20 pb-14 pt-4'
+            'min-h-28 resize-none border-0 bg-transparent px-5 pb-16 pt-5 text-[15px] leading-7 shadow-none focus-visible:ring-0',
+            'placeholder:text-muted-foreground/75',
+            compact && 'min-h-24 pb-16 pt-4'
           )}
           style={{ overflow: 'hidden' }}
         />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        <div className='absolute inset-x-3 bottom-3 flex h-10 items-center gap-1.5'>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
             <Button
               type='button'
               variant='ghost'
               size='sm'
-              className='absolute bottom-4 left-4 h-9 rounded-xl px-3 text-xs font-medium text-cyan-100/80 hover:bg-cyan-400/10 hover:text-cyan-50'
+              className='h-9 rounded-xl px-3 text-xs font-medium text-foreground hover:bg-muted'
             >
-              <span className='text-cyan-200'>{assistantModeLabel(mode)}</span>
-              <ChevronDown className='size-4 opacity-70' />
+              {mode === 'agent' ? <Bot className='size-4 text-cyan-500' /> : <Network className='size-4 text-cyan-500' />}
+              <span>{assistantModeLabel(mode)}</span>
+              <ChevronDown className='size-3.5 text-muted-foreground' />
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align='start' side='top' className='w-36 border-cyan-500/20 bg-popover'>
-            <DropdownMenuItem
-              onClick={() => onModeChange('graphrag')}
-              className='flex cursor-pointer items-center justify-between gap-2'
-            >
-              <span>GraphRAG</span>
-              {mode === 'graphrag' ? <CheckCircle2 className='size-4 text-cyan-500' /> : null}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() => onModeChange('agent')}
-              className='flex cursor-pointer items-center justify-between gap-2'
-            >
-              <span>Agent</span>
-              {mode === 'agent' ? <CheckCircle2 className='size-4 text-cyan-500' /> : null}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start' side='top' className='w-64'>
+              <DropdownMenuLabel>回答方式</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => onModeChange('graphrag')} className='flex cursor-pointer items-start gap-3 py-2.5'>
+                <Network className='mt-0.5 size-4 text-cyan-500' />
+                <div className='min-w-0 flex-1'>
+                  <div className='flex items-center justify-between gap-2'><span>GraphRAG</span>{mode === 'graphrag' ? <CheckCircle2 className='size-4 text-cyan-500' /> : null}</div>
+                  <p className='mt-0.5 text-xs text-muted-foreground'>快速检索当前图谱和已有证据</p>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onModeChange('agent')} className='flex cursor-pointer items-start gap-3 py-2.5'>
+                <Bot className='mt-0.5 size-4 text-cyan-500' />
+                <div className='min-w-0 flex-1'>
+                  <div className='flex items-center justify-between gap-2'><span>Agent</span>{mode === 'agent' ? <CheckCircle2 className='size-4 text-cyan-500' /> : null}</div>
+                  <p className='mt-0.5 text-xs text-muted-foreground'>按需调用扫描模块并形成研判</p>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-        <Button
-          type='button'
-          onClick={submit}
-          disabled={busy || !value.trim()}
-          size='icon'
-          className={cn(
-            'absolute bottom-4 right-4 size-10 rounded-xl border transition-[border-color,background-color,box-shadow,transform]',
-            value.trim()
-              ? 'border-cyan-300/70 bg-cyan-400 text-slate-950 shadow-[0_0_24px_rgba(34,211,238,0.35)] hover:-translate-y-0.5 hover:bg-cyan-300'
-              : 'border-slate-600/55 bg-slate-900/45 text-slate-500'
-          )}
-          aria-label='发送'
-        >
-          {busy ? <Loader2 className='size-4 animate-spin' /> : <ArrowUp className='size-4' />}
-        </Button>
+          <div className='flex-1' />
+
+          <Button
+            type='button'
+            onClick={submit}
+            disabled={busy || !value.trim()}
+            size='icon'
+            className={cn(
+              'size-9 rounded-xl transition-[background-color,color,transform]',
+              value.trim() && !busy
+                ? 'bg-cyan-400 text-slate-950 hover:-translate-y-0.5 hover:bg-cyan-300'
+                : 'bg-muted text-muted-foreground'
+            )}
+            aria-label={busy ? '正在生成回答' : '发送'}
+          >
+            {busy ? <Loader2 className='size-4 animate-spin' /> : <ArrowUp className='size-4' />}
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -3005,8 +3279,8 @@ const evidenceModuleCards: Partial<Record<PlatformTab, {
   icon: LucideIcon
 }>> = {
   code: {
-    title: '供应链可达性研判',
-    icon: Route,
+    title: '代码审查研判',
+    icon: Code2,
   },
   supply: {
     title: '供应链可达性研判',
@@ -3190,14 +3464,6 @@ function moduleLaunchStep(
   module: PlatformTab,
   stepByModule: Map<ScanStepState['id'], ScanStepState>
 ): ScanStepState | undefined {
-  if (module === 'supply') {
-    const code = stepByModule.get('code')
-    const supply = stepByModule.get('supply')
-    if (code?.status === 'running' || supply?.status === 'running') return code?.status === 'running' ? code : supply
-    if (code?.status === 'failed' || supply?.status === 'failed') return code?.status === 'failed' ? code : supply
-    if (code?.status === 'completed' && supply?.status === 'completed') return { ...(supply ?? code), status: 'completed' }
-    return supply ?? code
-  }
   return stepByModule.get(module === 'report' ? 'graph' : module)
 }
 
@@ -3973,6 +4239,7 @@ function SupplyReachabilityPanel({
   onSupplementProjectArchive: (file: File) => Promise<void>
   animationKey: number
 }) {
+  const vulnerabilityCoverage = workspace.dependency_audit?.summary.vulnerability_coverage
   const dependencies = useMemo(
     () => {
       const rows = [
@@ -3995,7 +4262,7 @@ function SupplyReachabilityPanel({
   const [reachabilityFilter, setReachabilityFilter] = useState<ReachabilityStatus | 'all'>('all')
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
   const [selectedDependencyId, setSelectedDependencyId] = useState('')
-  const [activeEvidence, setActiveEvidence] = useState('dependency')
+  const [, setActiveEvidence] = useState('dependency')
   const [scanning, setScanning] = useState(false)
   const [supplementing, setSupplementing] = useState(false)
   const supplementInputRef = useRef<HTMLInputElement>(null)
@@ -4047,16 +4314,20 @@ function SupplyReachabilityPanel({
       filteredSeverities: countBy(filteredRows, (row) => normalizeSeverity(row.severity)),
     })
   }, [baseRows, filteredRows, reachabilityFilter, severityFilter])
-  const pathSteps = [
-    { id: 'dependency', label: '可疑依赖', value: selectedItem?.name || '-', tone: 'risk' as const },
-    { id: 'code', label: '代码引用', value: selectedItem?.evidence.codeRefs ?? 0, tone: (selectedItem?.evidence.codeRefs ?? 0) > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'entry', label: '入口命中', value: selectedItem?.evidence.entryHits ?? 0, tone: (selectedItem?.evidence.entryHits ?? 0) > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'execution', label: '执行证据', value: selectedItem?.evidence.runtimeEvidence ?? 0, tone: (selectedItem?.evidence.runtimeEvidence ?? 0) > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'external', label: '外部告警', value: selectedItem?.evidence.externalAlerts ?? 0, tone: (selectedItem?.evidence.externalAlerts ?? 0) > 0 ? 'hit' as const : 'gap' as const },
-    { id: 'graph', label: '攻击链关联', value: selectedItem?.evidence.attackChainLinks ?? 0, tone: (selectedItem?.evidence.attackChainLinks ?? 0) > 0 ? 'hit' as const : 'gap' as const },
-  ]
-  const matrixRows = buildUnifiedEvidenceRows(filteredRows)
-  const gapLabels = selectedItem?.missing ?? []
+  const hasDependencies = reachabilityItems.length > 0
+  const dependencyAuditCompleted = Boolean(workspace.dependency_audit?.scan_id)
+  const directDependencies = reachabilityItems.filter((item) => item.dependency.dependency_type !== 'transitive').length
+  const vulnerableDependencies = workspace.dependency_audit?.summary.vulnerable_dependencies
+    ?? reachabilityItems.filter((item) => item.advisories.length > 0).length
+  const reachableDependencies = reachabilityItems.filter((item) => normalizeReachabilityStatus(item.status) === 'reachable').length
+  const pendingDependencies = reachabilityItems.length - reachableDependencies
+  const evidenceGapCount = reachabilityItems.reduce((count, item) => count + item.missing.length, 0)
+  const ecosystems = Array.from(new Set(reachabilityItems.map((item) => item.packageManager).filter(Boolean)))
+  const projectLabel = workspace.import?.projectName || workspace.workspace.name || '当前项目'
+  const branchLabel = workspace.workspace.branch || '未识别分支'
+  const generatedAt = workspace.dependency_audit?.generated_at
+    ? workspace.dependency_audit.generated_at.slice(0, 16).replace('T', ' ')
+    : ''
 
   async function rerunReachability() {
     setScanning(true)
@@ -4101,76 +4372,388 @@ function SupplyReachabilityPanel({
 
   return (
     <div className='space-y-4'>
-      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] px-5 py-4'>
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div className='min-w-0'>
             <div className='flex items-center gap-3'>
-              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-600 dark:text-cyan-100'>
                 <Route className='size-5' />
               </span>
               <h2 className='text-page-title text-page-title-on-dark'>供应链可达性研判</h2>
             </div>
-            <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
             <div className='mt-3 flex flex-wrap items-center gap-2'>
-              <span className='meta-chip-dark'>{selectedItem ? `${selectedItem.name}@${selectedItem.currentVersion || '-'}` : '-'}</span>
-              <span className='meta-chip-dark'>{selectedItem?.packageManager || 'npm'}</span>
-              {selectedItem?.sourceFiles.slice(0, 2).map((source) => <span key={source} className='meta-chip-dark' title={source}>{compactWorkflowPath(source)}</span>)}
+              <span className='text-sm font-medium text-foreground'>{projectLabel}</span>
+              <span className='text-muted-foreground'>/</span>
+              <span className='text-sm text-muted-foreground'>{branchLabel}</span>
+              <span className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium',
+                hasDependencies
+                  ? 'border-emerald-300/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'
+                  : 'border-amber-300/45 bg-amber-500/10 text-amber-700 dark:text-amber-200'
+              )}>
+                <span className={cn('size-1.5 rounded-full', hasDependencies ? 'bg-emerald-500' : 'bg-amber-500')} />
+                {hasDependencies ? `已识别 ${reachabilityItems.length} 个依赖` : dependencyAuditCompleted ? '未识别到依赖' : '尚未研判'}
+              </span>
+              {generatedAt ? <span className='text-xs text-muted-foreground'>更新于 {generatedAt}</span> : null}
             </div>
           </div>
           <div className='flex flex-wrap gap-2'>
             <Button size='sm' className={actionButtonClass} onClick={() => void rerunReachability()} disabled={scanning}>
               {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
-              重新研判
+              {dependencyAuditCompleted ? '重新研判' : '开始研判'}
             </Button>
             <input ref={supplementInputRef} type='file' accept={SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT} className='hidden' onChange={(event) => void handleSupplementFileChange(event)} />
-            <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
-              {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
-              {SUPPLEMENT_FILE_LABEL}
-            </Button>
-            <Button size='sm' variant='outline' onClick={() => downloadReport(normalizeReportForDisplay(getWorkspaceReport(workspace), workspace))}>
-              <Download className='size-4' />
-              导出报告
-            </Button>
+            {hasDependencies ? (
+              <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
+                {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+                {SUPPLEMENT_FILE_LABEL}
+              </Button>
+            ) : null}
+            {dependencyAuditCompleted ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size='icon' variant='outline' className='size-8' aria-label='更多研判操作' title='更多研判操作'>
+                    <MoreHorizontal className='size-4' />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='end' className='w-40'>
+                  <DropdownMenuItem onSelect={() => downloadReport(normalizeReportForDisplay(getWorkspaceReport(workspace), workspace))}>
+                    <Download className='size-4' />
+                    导出报告
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </div>
         </div>
       </section>
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
-        <RiskScoreWorkbenchCard
-          score={selectedItem?.riskScore ?? 0}
-          severity={selectedItem?.severity ?? 'low'}
-          entryHits={selectedItem?.evidence.entryHits ?? 0}
-          codeHits={selectedItem?.evidence.codeRefs ?? 0}
-          runtimeHits={selectedItem?.evidence.runtimeEvidence ?? 0}
-          graphHits={selectedItem?.evidence.attackChainLinks ?? 0}
-          gapCount={gapLabels.length || reachability.gapCount}
-          selectedKey={selectedItem?.id ?? 'empty'}
-        />
-        <ReachabilityFlowWorkbench
-          steps={pathSteps}
-          activeEvidence={activeEvidence}
-          onActiveEvidence={setActiveEvidence}
-          selectedItem={selectedItem}
-          rows={matrixRows}
-          selectedId={selectedItem?.id ?? ''}
-          onSelectDependency={setSelectedDependencyId}
-          reachabilityFilter={reachabilityFilter}
-          onReachabilityFilter={setReachabilityFilter}
-          severityFilter={severityFilter}
-          onSeverityFilter={setSeverityFilter}
-          reachabilityOptions={reachabilityOptions}
-          severityOptions={severityOptions}
-          filteredCount={filteredRows.length}
-          totalCount={reachabilityItems.length}
-        />
-        <DependencyDetailWorkbench
+      {hasDependencies && vulnerabilityCoverage && !vulnerabilityCoverage.complete ? (
+        <Alert className='rounded-md border-amber-500/40 bg-amber-500/5'>
+          <AlertTriangle className='size-4 text-amber-500' />
+          <AlertTitle>漏洞查询覆盖不完整</AlertTitle>
+          <AlertDescription>
+            {vulnerabilityCoverage.message} 当前“OSV 命中 {workspace.dependency_audit?.summary.osv_matches ?? 0}”不代表项目没有已知漏洞。
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {!hasDependencies ? (
+        <SupplyReachabilityEmptyState
           workspace={workspace}
-          item={selectedItem}
-          onActiveEvidence={setActiveEvidence}
+          completed={dependencyAuditCompleted}
+          scanning={scanning}
+          supplementing={supplementing}
+          onScan={() => void rerunReachability()}
+          onSupplement={() => supplementInputRef.current?.click()}
         />
-      </div>
+      ) : (
+        <>
+          <SupplyReachabilitySummary
+            total={reachabilityItems.length}
+            direct={directDependencies}
+            vulnerable={vulnerableDependencies}
+            reachable={reachableDependencies}
+            pending={pendingDependencies}
+            gaps={evidenceGapCount}
+            ecosystems={ecosystems}
+          />
+          <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]'>
+            <ReachabilityDependencyWorkbench
+              items={filteredRows}
+              totalCount={reachabilityItems.length}
+              selectedId={selectedItem?.id ?? ''}
+              onSelectDependency={setSelectedDependencyId}
+              reachabilityFilter={reachabilityFilter}
+              onReachabilityFilter={setReachabilityFilter}
+              severityFilter={severityFilter}
+              onSeverityFilter={setSeverityFilter}
+              reachabilityOptions={reachabilityOptions}
+              severityOptions={severityOptions}
+            />
+            <DependencyDetailWorkbench
+              workspace={workspace}
+              item={selectedItem}
+              onActiveEvidence={setActiveEvidence}
+            />
+          </div>
+        </>
+      )}
     </div>
   )
+}
+
+function SupplyReachabilityEmptyState({
+  workspace,
+  completed,
+  scanning,
+  supplementing,
+  onScan,
+  onSupplement,
+}: {
+  workspace: SecurityWorkspace
+  completed: boolean
+  scanning: boolean
+  supplementing: boolean
+  onScan: () => void
+  onSupplement: () => void
+}) {
+  const dependencyFiles = workspace.import?.summary?.dependencyFiles ?? []
+  const targetLabel = workspace.import?.sourcePath || workspace.workspace.repository || '当前导入项目'
+  const fileStats = workspace.import?.summary?.fileStats
+
+  return (
+    <section className='overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)]'>
+      <div className='grid xl:grid-cols-[minmax(0,1fr)_360px]'>
+        <div className='flex min-h-[430px] items-center px-6 py-10 sm:px-10 xl:px-14'>
+          <div className='max-w-2xl'>
+            <span className='grid size-12 place-items-center rounded-md border border-amber-300/35 bg-amber-500/10 text-amber-700 dark:text-amber-200'>
+              <Boxes className='size-6' />
+            </span>
+            <p className='mt-6 text-xs font-semibold tracking-[0.08em] text-amber-700 uppercase dark:text-amber-300'>证据不足</p>
+            <h3 className='mt-2 text-2xl font-semibold tracking-[0] text-foreground'>
+              {completed ? '本次研判未识别到依赖' : '尚未执行供应链可达性研判'}
+            </h3>
+            <p className='mt-3 max-w-xl text-sm leading-6 text-muted-foreground'>
+              {completed
+                ? '当前项目没有可用于构建依赖图的清单或锁定文件，因此无法判断漏洞、引入路径和代码可达性。这不是“低风险”或“零风险”。'
+                : '系统需要先读取依赖清单或锁定文件，建立直接与传递依赖关系，才能继续匹配漏洞、代码引用、入口和运行证据。'}
+            </p>
+
+            <dl className='mt-7 grid gap-x-8 gap-y-4 border-y border-border py-5 text-sm sm:grid-cols-2'>
+              <div className='min-w-0'>
+                <dt className='text-xs text-muted-foreground'>项目位置</dt>
+                <dd className='mt-1 truncate font-medium text-foreground' title={targetLabel}>{targetLabel}</dd>
+              </div>
+              <div>
+                <dt className='text-xs text-muted-foreground'>已识别依赖文件</dt>
+                <dd className='mt-1 font-medium tabular-nums text-foreground'>{dependencyFiles.length}</dd>
+              </div>
+              <div>
+                <dt className='text-xs text-muted-foreground'>项目文件</dt>
+                <dd className='mt-1 font-medium tabular-nums text-foreground'>{fileStats?.total ?? '待统计'}</dd>
+              </div>
+              <div>
+                <dt className='text-xs text-muted-foreground'>当前结论</dt>
+                <dd className='mt-1 font-medium text-amber-700 dark:text-amber-200'>无法评估依赖风险</dd>
+              </div>
+            </dl>
+
+            <div className='mt-7 flex flex-wrap items-center gap-3'>
+              <Button className={actionButtonClass} onClick={onSupplement} disabled={supplementing}>
+                {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+                补充依赖文件
+              </Button>
+              <Button variant='outline' onClick={onScan} disabled={scanning}>
+                {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+                {scanning ? '正在研判' : completed ? '重新研判' : '开始研判'}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <aside className='border-t border-border bg-[color:var(--surface-inset)] px-6 py-8 xl:border-t-0 xl:border-l'>
+          <div className='flex items-center gap-2'>
+            <FileSearch className='size-4 text-cyan-600 dark:text-cyan-300' />
+            <h4 className='text-sm font-semibold'>可补充的依赖材料</h4>
+          </div>
+          <div className='mt-5 space-y-5'>
+            {[
+              ['Node.js', 'package-lock.json、package.json、yarn.lock、pnpm-lock.yaml'],
+              ['Python', 'requirements.txt、Pipfile.lock、poetry.lock'],
+              ['Java', 'pom.xml、build.gradle、gradle.lockfile'],
+              ['其他生态', 'go.mod、Cargo.lock、composer.lock 或 CycloneDX SBOM'],
+            ].map(([title, description]) => (
+              <div key={title} className='grid grid-cols-[20px_minmax(0,1fr)] gap-3'>
+                <FileText className='mt-0.5 size-4 text-cyan-600 dark:text-cyan-300' />
+                <div>
+                  <div className='text-sm font-medium text-foreground'>{title}</div>
+                  <p className='mt-1 text-xs leading-5 text-muted-foreground'>{description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className='mt-7 border-t border-border pt-5 text-xs leading-5 text-muted-foreground'>
+            建议优先上传锁定文件，它能提供确定版本和传递依赖关系，减少误报。
+          </p>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+function SupplyReachabilitySummary({
+  total,
+  direct,
+  vulnerable,
+  reachable,
+  pending,
+  gaps,
+  ecosystems,
+}: {
+  total: number
+  direct: number
+  vulnerable: number
+  reachable: number
+  pending: number
+  gaps: number
+  ecosystems: string[]
+}) {
+  const metrics = [
+    { label: '依赖总数', value: total, tone: 'text-foreground' },
+    { label: '直接依赖', value: direct, tone: 'text-cyan-700 dark:text-cyan-300' },
+    { label: '漏洞依赖', value: vulnerable, tone: 'text-red-600 dark:text-red-300' },
+    { label: '已可达', value: reachable, tone: 'text-orange-600 dark:text-orange-300' },
+    { label: '待研判', value: pending, tone: 'text-amber-600 dark:text-amber-300' },
+    { label: '证据缺口', value: gaps, tone: 'text-amber-600 dark:text-amber-300' },
+  ]
+
+  return (
+    <section className='rounded-md border border-border bg-[color:var(--surface-card)]'>
+      <div className='flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3'>
+        <div>
+          <h3 className='text-sm font-semibold text-foreground'>依赖研判概览</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{ecosystems.length ? ecosystems.join(' / ') : '依赖生态待确认'}</p>
+        </div>
+        <span className='text-xs text-muted-foreground'>传递依赖 {Math.max(0, total - direct)}</span>
+      </div>
+      <div className='grid grid-cols-2 divide-x divide-y divide-border sm:grid-cols-3 xl:grid-cols-6 xl:divide-y-0'>
+        {metrics.map((metric) => (
+          <div key={metric.label} className='px-5 py-4'>
+            <div className='text-xs text-muted-foreground'>{metric.label}</div>
+            <div className={cn('mt-1 text-2xl font-semibold tabular-nums tracking-[0]', metric.tone)}>{metric.value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ReachabilityDependencyWorkbench({
+  items,
+  totalCount,
+  selectedId,
+  onSelectDependency,
+  reachabilityFilter,
+  onReachabilityFilter,
+  severityFilter,
+  onSeverityFilter,
+  reachabilityOptions,
+  severityOptions,
+}: {
+  items: ReachabilityAnalysisItem[]
+  totalCount: number
+  selectedId: string
+  onSelectDependency: (id: string) => void
+  reachabilityFilter: ReachabilityStatus | 'all'
+  onReachabilityFilter: (value: ReachabilityStatus | 'all') => void
+  severityFilter: SecuritySeverity | 'all'
+  onSeverityFilter: (value: SecuritySeverity | 'all') => void
+  reachabilityOptions: ReachabilityStatus[]
+  severityOptions: SecuritySeverity[]
+}) {
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleItems = normalizedQuery
+    ? items.filter((item) => `${item.name} ${item.currentVersion} ${item.packageManager} ${item.sourceFiles.join(' ')}`.toLowerCase().includes(normalizedQuery))
+    : items
+
+  return (
+    <Card className='flex h-[600px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'>
+      <CardHeader className='border-b border-border pb-3'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div>
+            <div className='flex items-center gap-2'>
+              <CardTitle className='text-section-title'>依赖与可达性</CardTitle>
+              <span className='meta-chip'>{visibleItems.length}/{totalCount}</span>
+            </div>
+            <p className='mt-1 text-xs text-muted-foreground'>按风险和证据确定修复优先级</p>
+          </div>
+          <div className='flex flex-wrap items-center gap-2'>
+            <Select value={reachabilityFilter} onValueChange={(value) => onReachabilityFilter(value as ReachabilityStatus | 'all')}>
+              <SelectTrigger size='sm' className='h-8 min-w-[104px] bg-[color:var(--surface-inset)]'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部状态</SelectItem>
+                {reachabilityOptions.map((status) => <SelectItem key={status} value={status}>{reachabilityStatusLabel(status)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={severityFilter} onValueChange={(value) => onSeverityFilter(value as SecuritySeverity | 'all')}>
+              <SelectTrigger size='sm' className='h-8 min-w-[104px] bg-[color:var(--surface-inset)]'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部等级</SelectItem>
+                {severityOptions.map((severity) => <SelectItem key={severity} value={severity}>{severityLabel(severity)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className='relative mt-3'>
+          <Search className='pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground' />
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder='搜索包名、版本或来源文件' className='h-9 bg-[color:var(--surface-inset)] pr-9 pl-9' />
+          {query ? (
+            <button type='button' onClick={() => setQuery('')} className='absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-[color:var(--surface-hover)]' aria-label='清空依赖搜索'>
+              <X className='size-3.5' />
+            </button>
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent className='min-h-0 flex-1 p-0'>
+        {visibleItems.length ? (
+          <div className='h-full overflow-y-auto [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            <div className='divide-y divide-border'>
+              {visibleItems.map((item) => {
+                const evidenceCount = item.evidence.codeRefs + item.evidence.entryHits + item.evidence.runtimeEvidence + item.evidence.externalAlerts + item.evidence.attackChainLinks
+                const selected = item.id === selectedId
+                const safeVersion = dependencySafeVersion(item)
+                return (
+                  <button
+                    key={item.id}
+                    type='button'
+                    onClick={() => onSelectDependency(item.id)}
+                    className={cn(
+                      'grid w-full gap-3 px-5 py-3 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center',
+                      selected ? 'border-l-2 border-l-cyan-500 bg-cyan-500/[0.07] pl-[18px]' : 'border-l-2 border-l-transparent hover:bg-[color:var(--surface-hover)]'
+                    )}
+                  >
+                    <span className='min-w-0'>
+                      <span className='flex min-w-0 flex-wrap items-center gap-2'>
+                        <span className='truncate text-sm font-semibold text-foreground'>{item.name}@{item.currentVersion || '-'}</span>
+                        <ReachabilitySeverityBadge severity={item.severity} />
+                        <ReachabilityStatePill state={item.status} />
+                      </span>
+                      <span className='mt-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground'>
+                        <span>{item.dependency.dependency_type === 'transitive' ? '传递依赖' : '直接依赖'}</span>
+                        <span>{item.packageManager}</span>
+                        <span>{item.advisories.length} 个漏洞</span>
+                        <span>{evidenceCount} 条证据</span>
+                        {safeVersion ? <span className='text-emerald-700 dark:text-emerald-300'>可升级 {safeVersion}</span> : null}
+                      </span>
+                      <span className='mt-1 block truncate font-mono text-[11px] text-muted-foreground' title={item.sourceFiles.join(' / ')}>
+                        {item.sourceFiles.length ? item.sourceFiles.map(compactDependencySource).join(' · ') : '来源文件待确认'}
+                      </span>
+                    </span>
+                    <span className='hidden items-center gap-4 text-xs tabular-nums text-muted-foreground sm:flex'>
+                      <span>风险 <strong className='text-foreground'>{item.riskScore}</strong></span>
+                      <ChevronRight className='size-4' />
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className='grid h-full place-items-center px-6 text-center text-sm text-muted-foreground'>当前筛选条件下没有依赖。</div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function dependencySafeVersion(item: ReachabilityAnalysisItem) {
+  return Array.from(new Set((item.dependency.vulnerabilities ?? []).flatMap((vulnerability) => vulnerability.fixed_versions ?? []))).filter(Boolean)[0] || ''
 }
 
 type ReachabilityWorkbenchStep = {
@@ -4224,7 +4807,7 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
         <ReachabilityGnnMetric label='覆盖依赖' value={`${gnnItems.length}/${items.length}`} />
         <ReachabilityGnnMetric label='高危标签' value={String(highCount)} />
         <ReachabilityGnnMetric label='提升风险' value={String(elevatedCount)} />
-        <ReachabilityGnnMetric label='平均置信' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
+        <ReachabilityGnnMetric label='平均判定确定度' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
       </div>
 
       <div className='mt-3 grid gap-2 lg:grid-cols-4'>
@@ -4270,9 +4853,9 @@ function ReachabilityGnnPill({ dependency }: { dependency: SecurityDependency })
   return (
     <span
       className={cn('rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums', tone)}
-      title={dependency.gnn_reasons?.join('；') || dependency.gnn_model_type || 'GNN risk score'}
+      title={dependency.gnn_reasons?.join('；') || dependency.gnn_model_type || 'GNN 风险分：表示模型输出的风险强度，不是总体风险评分'}
     >
-      GNN {formatPercent(dependency.gnn_score)}
+      GNN 风险 {formatPercent(dependency.gnn_score)}
     </span>
   )
 }
@@ -4301,10 +4884,14 @@ function ReachabilityGnnEvidence({ dependency }: { dependency: SecurityDependenc
         ) : null}
         {typeof dependency.gnn_confidence === 'number' ? (
           <span className='rounded-full border border-slate-400/15 bg-[color:var(--surface-inset)] px-2 py-0.5 text-[11px] text-[color:var(--type-body)]'>
-            置信 {formatPercent(dependency.gnn_confidence)}
+            判定确定度 {formatPercent(dependency.gnn_confidence)}
           </span>
         ) : null}
       </div>
+
+      <p className='mt-2 text-[11px] leading-5 text-muted-foreground'>
+        GNN 风险分表示模型判断的风险强度；判定确定度表示模型对这个分数的确定程度，二者不是同一个指标。总体风险还会综合漏洞、依赖和其他证据。
+      </p>
 
       {explanations.length ? (
         <ul className='mt-2 space-y-1 text-xs leading-5 text-muted-foreground'>
@@ -4557,88 +5144,114 @@ function DependencyDetailWorkbench({
 
   return (
     <motion.div
-      className='h-full min-w-0 xl:h-[560px]'
+      className='h-full min-w-0 xl:h-[600px]'
       key={item?.id ?? 'empty-detail'}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.24 }}
     >
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
+    <Card className='flex h-[600px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)]'>
+      <CardHeader className='border-b border-border pb-3'>
         <CardTitle className='min-w-0 truncate text-base text-foreground'>
           {item ? `${item.name}@${item.currentVersion || '-'}` : '依赖详情'}
         </CardTitle>
-      </CardHeader>
-      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
-        <div className='flex flex-wrap gap-2'>
+        <div className='mt-2 flex flex-wrap gap-2'>
           <ReachabilityStatePill state={item?.status ?? 'pending'} />
-          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
+          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-200'>
             风险 {item?.riskScore ?? 0}
           </span>
+          {item ? <span className='rounded-full border border-border bg-[color:var(--surface-inset)] px-2 py-0.5 text-xs text-muted-foreground'>{item.dependency.dependency_type === 'transitive' ? '传递依赖' : '直接依赖'}</span> : null}
           {item ? <ReachabilityGnnPill dependency={item.dependency} /> : null}
         </div>
-        <div className='grid gap-2 text-sm'>
-          <DetailRow label='当前版本' value={item?.currentVersion || '-'} />
-          <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
-          <DetailRow label='生态' value={item?.packageManager || '-'} />
-          <DetailRow label='来源' value={<DependencySourceValue sources={item?.sourceFiles ?? []} />} />
-          <DetailRow label='代码引用' value={item?.evidence.codeRefs ?? 0} onClick={() => openEvidenceDetail('code')} actionLabel='查看代码引用详情' />
-          <DetailRow label='入口命中' value={item?.evidence.entryHits ?? 0} onClick={() => openEvidenceDetail('entry')} actionLabel='查看入口命中详情' />
-          <DetailRow label='执行证据' value={item?.evidence.runtimeEvidence ?? 0} onClick={() => openEvidenceDetail('execution')} actionLabel='查看执行证据详情' />
-          <DetailRow label='外部告警' value={item?.evidence.externalAlerts ?? 0} onClick={() => openEvidenceDetail('external')} actionLabel='查看外部告警详情' />
-          <DetailRow label='攻击链关联' value={item?.evidence.attackChainLinks ?? 0} onClick={() => openEvidenceDetail('graph')} actionLabel='查看攻击链关联详情' />
-        </div>
-        {item ? <ReachabilityGnnEvidence dependency={item.dependency} /> : null}
-        {(item?.advisories.length ?? 0) > 0 ? (
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button variant='outline' size='sm' className='w-full justify-between'>
-                风险编号
-                <ChevronDown className='size-4' />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className='mt-2 flex flex-wrap gap-1.5'>
-              {item?.advisories.slice(0, 6).map((id) => (
-                <span key={id} title={id} className='max-w-full truncate rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-1 font-mono text-[11px] text-muted-foreground'>
-                  {id}
-                </span>
-              ))}
-            </CollapsibleContent>
-          </Collapsible>
-        ) : null}
-        {(item?.rawEvidence.length ?? 0) > 0 ? (
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button variant='outline' size='sm' className='w-full justify-between'>
-                原始证据
-                <ChevronDown className='size-4' />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className='mt-2 min-w-0 space-y-1.5 overflow-hidden'>
-              {item?.rawEvidence.slice(0, 4).map((evidence) => (
-                <div key={evidence} className='code-evidence block min-w-0 truncate px-2 py-1.5' title={evidence}>
-                  {evidence}
+      </CardHeader>
+      <CardContent className='min-h-0 min-w-0 flex-1 p-0'>
+        <Tabs defaultValue='overview' className='flex h-full min-h-0 flex-col'>
+          <TabsList className='mx-4 mt-3 grid h-9 grid-cols-4 rounded-md'>
+            <TabsTrigger value='overview'>概览</TabsTrigger>
+            <TabsTrigger value='vulnerabilities'>漏洞</TabsTrigger>
+            <TabsTrigger value='evidence'>证据</TabsTrigger>
+            <TabsTrigger value='remediation'>修复</TabsTrigger>
+          </TabsList>
+
+          <div className='min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            <TabsContent value='overview' className='mt-0 space-y-3'>
+              <div className='grid gap-2 text-sm'>
+                <DetailRow label='当前版本' value={item?.currentVersion || '-'} />
+                <DetailRow label='请求版本' value={item?.requestedVersion || '-'} />
+                <DetailRow label='生态' value={item?.packageManager || '-'} />
+                <DetailRow label='来源' value={<DependencySourceValue sources={item?.sourceFiles ?? []} />} />
+                <DetailRow label='许可证' value={item?.dependency.license || '未知'} />
+              </div>
+              {item ? <ReachabilityGnnEvidence dependency={item.dependency} /> : null}
+            </TabsContent>
+
+            <TabsContent value='vulnerabilities' className='mt-0 space-y-2'>
+              {(item?.dependency.vulnerabilities ?? []).length ? item?.dependency.vulnerabilities?.map((vulnerability) => (
+                <div key={vulnerability.id} className='rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
+                  <div className='flex flex-wrap items-center justify-between gap-2'>
+                    <span className='font-mono text-sm font-semibold text-foreground'>{vulnerability.id}</span>
+                    <ReachabilitySeverityBadge severity={normalizeSeverity(vulnerability.severity)} />
+                  </div>
+                  <p className='mt-2 text-sm leading-6 text-muted-foreground'>{vulnerability.summary || vulnerability.affected}</p>
+                  <div className='mt-3 grid gap-2 text-xs'>
+                    <div><span className='text-muted-foreground'>受影响版本：</span><span className='text-foreground'>{vulnerability.affected || '-'}</span></div>
+                    <div><span className='text-muted-foreground'>安全版本：</span><span className='text-emerald-700 dark:text-emerald-300'>{vulnerability.fixed_versions?.join('、') || '尚无已知修复版本'}</span></div>
+                  </div>
                 </div>
+              )) : (
+                <ReachabilityEmptyState text='当前依赖没有已匹配的漏洞编号；仍需结合恶意包信号和证据缺口继续研判。' />
+              )}
+            </TabsContent>
+
+            <TabsContent value='evidence' className='mt-0 space-y-2'>
+              {([
+                ['code', '代码引用', item?.evidence.codeRefs ?? 0],
+                ['entry', '入口命中', item?.evidence.entryHits ?? 0],
+                ['execution', '执行证据', item?.evidence.runtimeEvidence ?? 0],
+                ['external', '外部告警', item?.evidence.externalAlerts ?? 0],
+                ['graph', '攻击链关联', item?.evidence.attackChainLinks ?? 0],
+              ] as Array<[ReachabilityEvidenceKind, string, number]>).map(([kind, label, value]) => (
+                <button key={kind} type='button' onClick={() => openEvidenceDetail(kind)} className='flex w-full items-center justify-between rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2.5 text-left transition-colors hover:border-cyan-300/35 hover:bg-cyan-400/10'>
+                  <span className='text-sm font-medium text-foreground'>{label}</span>
+                  <span className='flex items-center gap-2 text-sm tabular-nums text-muted-foreground'>{value} 条 <ChevronRight className='size-4' /></span>
+                </button>
               ))}
-            </CollapsibleContent>
-          </Collapsible>
-        ) : null}
-        <div className='rounded-md border border-amber-300/20 bg-amber-400/10 p-3'>
-          <div className='text-xs text-amber-100/80'>缺失项</div>
-          <div className='mt-2 flex flex-wrap gap-1.5'>
-            {(item?.missing.length ? item.missing : ['-']).map((gap) => (
-              <span key={gap} className='rounded-full border border-amber-300/25 px-2 py-0.5 text-xs text-amber-100'>
-                {gap}
-              </span>
-            ))}
+              {(item?.rawEvidence.length ?? 0) > 0 ? (
+                <div className='space-y-1.5 pt-2'>
+                  <div className='text-xs font-semibold text-muted-foreground'>原始证据</div>
+                  {item?.rawEvidence.slice(0, 4).map((evidence) => (
+                    <div key={evidence} className='code-evidence block min-w-0 truncate px-2 py-1.5' title={evidence}>{evidence}</div>
+                  ))}
+                </div>
+              ) : null}
+            </TabsContent>
+
+            <TabsContent value='remediation' className='mt-0 space-y-3'>
+              <div className='rounded-md border border-cyan-300/25 bg-cyan-400/10 p-4'>
+                <div className='flex items-center gap-2 text-sm font-semibold text-cyan-800 dark:text-cyan-100'>
+                  <ShieldCheck className='size-4' />
+                  建议处置
+                </div>
+                <p className='mt-2 text-sm leading-6 text-[color:var(--type-body)]'>{item?.dependency.recommendation || '优先确认依赖的安全版本、引入路径与真实调用证据，再决定升级或隔离。'}</p>
+                {item && dependencySafeVersion(item) ? <p className='mt-3 text-sm font-medium text-emerald-700 dark:text-emerald-300'>建议升级至 {dependencySafeVersion(item)}</p> : null}
+              </div>
+              <div className='rounded-md border border-amber-300/30 bg-amber-400/10 p-3'>
+                <div className='text-xs font-semibold text-amber-800 dark:text-amber-100'>仍需补充</div>
+                <div className='mt-2 flex flex-wrap gap-1.5'>
+                  {(item?.missing.length ? item.missing : ['当前证据完整']).map((gap) => (
+                    <span key={gap} className='rounded-full border border-amber-300/35 px-2 py-0.5 text-xs text-amber-800 dark:text-amber-100'>{gap}</span>
+                  ))}
+                </div>
+              </div>
+              {item?.missing.includes('运行日志') ? (
+                <Button variant='outline' className='w-full' onClick={() => jumpToPlatformTab('logs')}>
+                  <Upload className='size-4' />
+                  上传日志补充运行证据
+                </Button>
+              ) : null}
+            </TabsContent>
           </div>
-        </div>
-        {item?.missing.includes('运行日志') ? (
-          <Button variant='outline' className='w-full' onClick={() => jumpToPlatformTab('logs')}>
-            <Upload className='size-4' />
-            上传日志
-          </Button>
-        ) : null}
+        </Tabs>
       </CardContent>
     </Card>
     <ReachabilityEvidenceDetailSheet
@@ -5198,10 +5811,10 @@ function compactDependencySource(source: string) {
 
 function SeverityPill({ severity }: { severity: SecuritySeverity }) {
   const classes = {
-    critical: 'border-red-400/35 bg-red-500/10 text-red-200',
-    high: 'border-orange-400/35 bg-orange-500/10 text-orange-200',
-    medium: 'border-amber-400/35 bg-amber-500/10 text-amber-200',
-    low: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-200',
+    critical: 'border-red-400/35 bg-red-500/10 text-red-700 dark:text-red-200',
+    high: 'border-orange-400/35 bg-orange-500/10 text-orange-700 dark:text-orange-200',
+    medium: 'border-amber-400/35 bg-amber-500/10 text-amber-700 dark:text-amber-200',
+    low: 'border-cyan-400/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200',
   }[severity]
   return (
     <span className={cn('inline-flex h-[26px] min-w-[44px] shrink-0 items-center justify-center whitespace-nowrap rounded-full border px-[10px] text-[13px] font-bold leading-none', classes)}>
@@ -5420,19 +6033,23 @@ export function CodeAuditPanel({
   workspace,
   workspaceId,
   importId,
-  animationKey,
   onScanned,
+  onSupplementProjectArchive,
 }: {
   workspace: SecurityWorkspace
   workspaceId?: string
   importId?: string
-  animationKey: number
   onScanned: (audit: CodeAuditResult) => void
+  onSupplementProjectArchive: (file: File) => Promise<void>
 }) {
   const audit = workspace.code_audit
   const [scanning, setScanning] = useState(false)
+  const [supplementing, setSupplementing] = useState(false)
   const [state, setState] = useState<CodeAuditState | null>(null)
   const [mutating, setMutating] = useState(false)
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
+  const [severityFilter, setSeverityFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
   const [githubOpen, setGithubOpen] = useState(false)
   const [githubOwner, setGithubOwner] = useState('HEIBAI198')
   const [githubRepo, setGithubRepo] = useState('Sysml')
@@ -5442,6 +6059,7 @@ export function CodeAuditPanel({
   const [githubUploading, setGithubUploading] = useState(false)
   const [githubResult, setGithubResult] =
     useState<GitHubCodeScanningUploadResult | null>(null)
+  const supplementInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     let alive = true
@@ -5466,10 +6084,13 @@ export function CodeAuditPanel({
         includeCheckov: true,
         timeoutSeconds: 180,
       })
+      setSeverityFilter('all')
+      setCategoryFilter('all')
+      setSelectedFindingId(nextAudit.findings[0] ? codeFindingKey(nextAudit.findings[0]) : null)
       onScanned(nextAudit)
       setState(await loadCodeAuditState())
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '可达性佐证失败')
+      toast.error(error instanceof Error ? error.message : '代码审查失败')
     } finally {
       setScanning(false)
     }
@@ -5557,51 +6178,130 @@ export function CodeAuditPanel({
     }
   }
 
-  const total = audit?.summary.total ?? 0
-  const findings = audit?.findings ?? []
-  const scanners = audit?.scanners ?? []
+  async function handleSupplementFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!isSupplementProjectArchive(file.name)) {
+      toast.error('请选择 .zip、.tar.gz 或 .tgz 项目压缩包')
+      return
+    }
+    setSupplementing(true)
+    try {
+      await onSupplementProjectArchive(file)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '补充文件处理失败')
+    } finally {
+      setSupplementing(false)
+    }
+  }
+
+  const findings = useMemo(() => audit?.findings ?? [], [audit])
+  const scanners = useMemo(() => audit?.scanners ?? [], [audit])
+  const categories = useMemo(
+    () => Array.from(new Set(findings.map((finding) => finding.category).filter(Boolean))).sort(),
+    [findings]
+  )
+  const filteredFindings = useMemo(() => findings.filter((finding) => {
+    if (severityFilter !== 'all' && finding.severity !== severityFilter) return false
+    if (categoryFilter !== 'all' && finding.category !== categoryFilter) return false
+    return true
+  }), [categoryFilter, findings, severityFilter])
+  const selectedFinding = filteredFindings.find((finding) => codeFindingKey(finding) === selectedFindingId)
+    ?? filteredFindings[0]
+  const severitySummary = codeAuditSeveritySummary(audit, findings)
+  const riskScore = codeAuditRiskScore(findings, severitySummary)
+  const riskFiles = Array.from(new Set(findings.map((finding) => finding.risk_file).filter(Boolean)))
+  const activeScanners = scanners.filter((scanner) => scanner.available)
   const trend = state?.trend ?? []
   const reachability = buildReachabilityViewModel(workspace)
+  const codeAnimationKey = audit?.generated_at ? Date.parse(audit.generated_at) || findings.length : findings.length
+  const hasCompletedAudit = Boolean(audit?.scan_id)
+  const scannerLabel = activeScanners.length
+    ? activeScanners.slice(0, 3).map((scanner) => scanner.name).join(' / ')
+    : '代码安全扫描'
+  const projectLabel = workspace.import?.projectName || workspace.workspace.name || '当前项目'
+  const branchLabel = workspace.workspace.branch || '未识别分支'
+  const scanGeneratedAt = audit?.generated_at
+    ? audit.generated_at.slice(0, 16).replace('T', ' ')
+    : ''
 
   return (
     <div className='space-y-4'>
-      <Card className={cn(moduleCardClass, 'overflow-hidden')}>
-        <CardHeader>
-          <div className='flex flex-wrap items-start justify-between gap-3'>
-            <div>
-              <CardTitle className='flex items-center gap-2 text-2xl font-semibold tracking-normal'>
-                <Code2 className='size-4 text-cyan-600' />
-                可达性验证
-              </CardTitle>
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] px-5 py-4'>
+        <div className='flex flex-wrap items-start justify-between gap-4'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-3'>
+              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-600 dark:text-cyan-100'>
+                <Code2 className='size-5' />
+              </span>
+              <h2 className='text-page-title text-page-title-on-dark'>代码审查研判</h2>
             </div>
-            <div className='flex flex-wrap gap-2'>
-              <Button variant='outline' onClick={() => void establishBaseline()} disabled={!audit || mutating}>
-                <ShieldCheck />
-                建立基线
-              </Button>
-              <Button variant='outline' onClick={() => void downloadSarif()} disabled={!audit}>
-                <Download />
-                导出 SARIF
-              </Button>
-              <Button variant='outline' onClick={() => setGithubOpen(true)} disabled={!audit}>
-                <IconGithub />
-                Code Scanning
-              </Button>
-              <Button className={actionButtonClass} onClick={() => void startScan()} disabled={scanning}>
-                {scanning ? <Loader2 className='animate-spin' /> : <RefreshCw />}
-                验证当前风险可达性
-              </Button>
+            <div className='mt-3 flex flex-wrap items-center gap-2'>
+              <span className='text-sm font-medium text-foreground'>{projectLabel}</span>
+              <span className='text-muted-foreground'>/</span>
+              <span className='text-sm text-muted-foreground'>{branchLabel}</span>
+              <span className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium',
+                hasCompletedAudit
+                  ? 'border-emerald-300/45 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200'
+                  : 'border-amber-300/45 bg-amber-500/10 text-amber-700 dark:text-amber-200'
+              )}>
+                <span className={cn('size-1.5 rounded-full', hasCompletedAudit ? 'bg-emerald-500' : 'bg-amber-500')} />
+                {hasCompletedAudit ? '扫描完成' : '尚未扫描'}
+              </span>
+              {scanGeneratedAt ? <span className='text-xs text-muted-foreground'>更新于 {scanGeneratedAt}</span> : null}
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <ReachabilityVerdictDashboard
-            key={`reachability-dashboard-${animationKey}`}
-            model={reachability}
-            animationKey={animationKey}
-          />
-        </CardContent>
-      </Card>
+          <div className='flex flex-wrap gap-2'>
+            <input
+              ref={supplementInputRef}
+              type='file'
+              accept={SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT}
+              className='hidden'
+              onChange={(event) => void handleSupplementFileChange(event)}
+            />
+            {hasCompletedAudit ? (
+              <>
+                <Button size='sm' className={actionButtonClass} onClick={() => void startScan()} disabled={scanning}>
+                  {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+                  重新扫描
+                </Button>
+                <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
+                  {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+                  {SUPPLEMENT_FILE_LABEL}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size='icon' variant='outline' className='size-8' aria-label='更多扫描操作' title='更多扫描操作'>
+                      <MoreHorizontal className='size-4' />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align='end' className='w-44'>
+                    <DropdownMenuItem onSelect={() => downloadReport(audit?.report || '# 代码审查报告')}>
+                      <FileText className='size-4' />
+                      导出报告
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void downloadSarif()}>
+                      <Download className='size-4' />
+                      导出 SARIF
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem disabled={mutating} onSelect={() => void establishBaseline()}>
+                      <ShieldCheck className='size-4' />
+                      建立当前基线
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setGithubOpen(true)}>
+                      <IconGithub className='size-4' />
+                      提交 Code Scanning
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </section>
 
       <GitHubCodeScanningDialog
         open={githubOpen}
@@ -5622,82 +6322,606 @@ export function CodeAuditPanel({
         onRefresh={() => void refreshGithubUploadStatus()}
       />
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_440px]'>
-        <div className='space-y-4'>
-          <ReachabilityPathGraph
-            model={reachability}
-            scanning={scanning}
-            onScan={() => void startScan()}
+      {!hasCompletedAudit ? (
+        <CodeAuditEmptyState
+          workspace={workspace}
+          scanning={scanning}
+          supplementing={supplementing}
+          onScan={() => void startScan()}
+          onSupplement={() => supplementInputRef.current?.click()}
+        />
+      ) : (
+        <>
+          <CodeAuditScanSummary
+            summary={severitySummary}
+            riskScore={riskScore}
+            riskFiles={riskFiles.length}
+            scannerLabel={scannerLabel}
+            durationSeconds={audit?.summary.duration_seconds}
           />
-          <ReachabilityEvidenceMatrix model={reachability} />
 
-          <Card className='rounded-md'>
-            <CardHeader>
-              <div className='flex flex-wrap items-start justify-between gap-3'>
-                <div>
-                  <CardTitle className='flex items-center gap-2 text-base'>
-                    <ShieldAlert className='size-4 text-red-600' />
-                    代码扫描佐证
-                  </CardTitle>
+          {findings.length ? (
+            <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]'>
+              <CodeAuditFindingNameList
+                findings={filteredFindings}
+                totalCount={findings.length}
+                selectedFinding={selectedFinding}
+                categories={categories}
+                severityFilter={severityFilter}
+                categoryFilter={categoryFilter}
+                onSeverityFilter={setSeverityFilter}
+                onCategoryFilter={setCategoryFilter}
+                onReset={() => {
+                  setSeverityFilter('all')
+                  setCategoryFilter('all')
+                  setSelectedFindingId(findings[0] ? codeFindingKey(findings[0]) : null)
+                }}
+                onSelect={(finding) => setSelectedFindingId(codeFindingKey(finding))}
+              />
+              <CodeAuditFindingDetailPanel
+                finding={selectedFinding}
+                totalCount={filteredFindings.length}
+                disabled={mutating}
+                onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
+              />
+            </div>
+          ) : (
+            <CodeAuditNoFindingsState
+              scannerLabel={scannerLabel}
+              scanGeneratedAt={scanGeneratedAt}
+              onScan={() => void startScan()}
+              scanning={scanning}
+            />
+          )}
+
+          <section className='flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-3'>
+            <div className='flex min-w-0 flex-wrap items-center gap-2'>
+              <span className='text-label text-muted-foreground'>扫描引擎</span>
+              {scanners.length ? scanners.map((scanner) => (
+                <span key={`${scanner.name}-${scanner.command}`} className={cn('meta-chip-dark', scanner.available ? 'text-emerald-600 dark:text-emerald-200' : 'text-amber-600 dark:text-amber-200')} title={scanner.error || scanner.version || scanner.command}>
+                  {scanner.name} · {scannerStateLabel(scanner.state, scanner.available)}
+                </span>
+              )) : <span className='text-sm text-muted-foreground'>未返回引擎信息</span>}
+              <span className='meta-chip-dark'>已忽略 {audit?.summary.ignored_total ?? audit?.summary.ignored ?? state?.ignored.length ?? 0}</span>
+              <span className='meta-chip-dark'>{state?.baseline || audit?.summary.baseline_exists ? '基线已建立' : '尚无基线'}</span>
+            </div>
+          </section>
+
+          <Collapsible>
+            <CollapsibleTrigger asChild>
+              <Button variant='outline' className='w-full justify-between rounded-md'>
+                <span className='flex items-center gap-2'>
+                  <Route className='size-4 text-cyan-500' />
+                  查看代码风险可达性与扫描趋势
+                </span>
+                <ChevronDown className='size-4' />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className='mt-4 space-y-4'>
+              <ReachabilityVerdictDashboard
+                key={`code-reachability-${audit?.scan_id || 'empty'}`}
+                model={reachability}
+                animationKey={codeAnimationKey}
+              />
+              <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]'>
+                <div className='space-y-4'>
+                  <ReachabilityPathGraph model={reachability} scanning={scanning} onScan={() => void startScan()} />
+                  <ReachabilityEvidenceMatrix model={reachability} />
                 </div>
-                <Badge variant='outline' className='rounded-md'>
-                  {total} 项扫描发现
-                </Badge>
+                <div className='space-y-4'>
+                  <ReachabilityGapPanel model={reachability} scanning={scanning} onScan={() => void startScan()} />
+                  <Card className='rounded-md'>
+                    <CardHeader><CardTitle className='text-base'>扫描引擎贡献</CardTitle></CardHeader>
+                    <CardContent><ScannerContributionPanel scanners={scanners} findings={findings} /></CardContent>
+                  </Card>
+                </div>
               </div>
-            </CardHeader>
-            <CardContent className='space-y-4'>
-              <ScannerContributionPanel scanners={scanners} findings={findings} />
-              <Collapsible>
-                <CollapsibleTrigger asChild>
-                  <Button variant='outline' className='w-full justify-between rounded-md'>
-                    查看原始代码审计趋势和明细
-                    <ChevronDown className='size-4' />
-                  </Button>
-                </CollapsibleTrigger>
-                <CollapsibleContent className='mt-4 space-y-4'>
-                  <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-5'>
-                    <AuditMetric label='风险总数' value={total} tone='cyan' />
-                    <AuditMetric label='严重' value={audit?.summary.critical ?? 0} tone='red' />
-                    <AuditMetric label='高危' value={audit?.summary.high ?? 0} tone='orange' />
-                    <AuditMetric label='新增' value={audit?.summary.new ?? 0} tone='orange' />
-                    <AuditMetric label='已修复' value={audit?.summary.fixed ?? 0} tone='emerald' />
-                  </div>
+              <Card className='rounded-md'>
+                <CardHeader><CardTitle className='text-base'>趋势与原始明细</CardTitle></CardHeader>
+                <CardContent className='space-y-4'>
                   <CompactAuditTrend trend={trend} gradientId='codeAuditTrend' variant='wide' />
-                  <CodeFindingTable findings={findings} mutating={mutating} onIgnore={(fingerprint) => void ignoreFinding(fingerprint)} auditExists={Boolean(audit)} />
-                </CollapsibleContent>
-              </Collapsible>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className='space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100svh-2rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain xl:[scrollbar-gutter:stable]'>
-          <ReachabilityGapPanel
-            model={reachability}
-            scanning={scanning}
-            onScan={() => void startScan()}
-          />
-          <Card className='rounded-md'>
-            <CardHeader>
-              <CardTitle className='flex items-center gap-2 text-base'>
-                <TrendingUp className='size-4 text-cyan-600' />
-                扫描状态
-              </CardTitle>
-            </CardHeader>
-            <CardContent className='space-y-4'>
-            <div className='grid grid-cols-2 gap-3'>
-              <AuditMetric label='已忽略' value={audit?.summary.ignored_total ?? audit?.summary.ignored ?? 0} tone='slate' />
-              <AuditMetric label='基线项' value={audit?.summary.baseline_total ?? 0} tone='cyan' />
-            </div>
-            <div className='space-y-2'>
-              <div className='text-sm font-medium'>扫描引擎</div>
-              <ScannerStatusList scanners={scanners} />
-            </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                  <CodeFindingTable findings={findings} mutating={mutating} onIgnore={(fingerprint) => void ignoreFinding(fingerprint)} auditExists />
+                </CardContent>
+              </Card>
+            </CollapsibleContent>
+          </Collapsible>
+        </>
+      )}
     </div>
   )
+}
+
+type CodeAuditSeveritySummary = {
+  total: number
+  critical: number
+  high: number
+  medium: number
+  low: number
+}
+
+function codeAuditSeveritySummary(
+  audit: CodeAuditResult | null | undefined,
+  findings: CodeAuditFinding[]
+): CodeAuditSeveritySummary {
+  const count = (severity: SecuritySeverity) => findings.filter((finding) => finding.severity === severity).length
+  return {
+    total: audit?.summary.total ?? findings.length,
+    critical: audit?.summary.critical ?? count('critical'),
+    high: audit?.summary.high ?? count('high'),
+    medium: audit?.summary.medium ?? count('medium'),
+    low: audit?.summary.low ?? count('low'),
+  }
+}
+
+function codeAuditRiskScore(findings: CodeAuditFinding[], summary: CodeAuditSeveritySummary) {
+  const findingScore = findings.reduce((highest, finding) => Math.max(highest, Number(finding.score) || 0), 0)
+  if (findingScore > 0) return Math.min(100, Math.round(findingScore))
+  if (summary.critical > 0) return 95
+  if (summary.high > 0) return 82
+  if (summary.medium > 0) return 64
+  if (summary.low > 0) return 35
+  return 0
+}
+
+function codeAuditRiskLevel(
+  findings: CodeAuditFinding[],
+  summary: CodeAuditSeveritySummary
+): SecuritySeverity {
+  if (summary.critical > 0 || findings.some((finding) => finding.severity === 'critical')) return 'critical'
+  if (summary.high > 0 || findings.some((finding) => finding.severity === 'high')) return 'high'
+  if (summary.medium > 0 || findings.some((finding) => finding.severity === 'medium')) return 'medium'
+  return 'low'
+}
+
+function codeFindingKey(finding: CodeAuditFinding) {
+  return finding.fingerprint || `${finding.id}-${finding.risk_file}-${finding.line}`
+}
+
+function CodeAuditEmptyState({
+  workspace,
+  scanning,
+  supplementing,
+  onScan,
+  onSupplement,
+}: {
+  workspace: SecurityWorkspace
+  scanning: boolean
+  supplementing: boolean
+  onScan: () => void
+  onSupplement: () => void
+}) {
+  const fileStats = workspace.import?.summary?.fileStats
+  const languages = workspace.import?.summary?.languages ?? []
+  const languageLabel = languages.slice(0, 3).map((language) => language.name).join('、') || '自动识别'
+  const targetLabel = workspace.import?.sourcePath || workspace.workspace.repository || '当前导入项目'
+
+  return (
+    <section className='overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)]'>
+      <div className='grid xl:grid-cols-[minmax(0,1fr)_340px]'>
+        <div className='flex min-h-[430px] items-center px-6 py-10 sm:px-10 xl:px-14'>
+          <div className='max-w-2xl'>
+            <span className='grid size-12 place-items-center rounded-md border border-cyan-300/30 bg-cyan-400/10 text-cyan-600 dark:text-cyan-200'>
+              <FileSearch className='size-6' />
+            </span>
+            <p className='mt-6 text-xs font-semibold tracking-[0.08em] text-cyan-700 uppercase dark:text-cyan-300'>准备就绪</p>
+            <h3 className='mt-2 text-2xl font-semibold tracking-[0] text-foreground'>尚未执行代码安全扫描</h3>
+            <p className='mt-3 max-w-xl text-sm leading-6 text-muted-foreground'>
+              扫描将检查应用代码、硬编码凭据、Python 安全问题以及 Docker、CI 和 IaC 配置。完成前不会生成风险评分，也不会把“未扫描”误判为“零风险”。
+            </p>
+
+            <dl className='mt-7 grid gap-x-8 gap-y-4 border-y border-border py-5 text-sm sm:grid-cols-2'>
+              <div className='min-w-0'>
+                <dt className='text-xs text-muted-foreground'>扫描目标</dt>
+                <dd className='mt-1 truncate font-medium text-foreground' title={targetLabel}>{targetLabel}</dd>
+              </div>
+              <div>
+                <dt className='text-xs text-muted-foreground'>识别语言</dt>
+                <dd className='mt-1 font-medium text-foreground'>{languageLabel}</dd>
+              </div>
+              <div>
+                <dt className='text-xs text-muted-foreground'>可扫描文件</dt>
+                <dd className='mt-1 font-medium tabular-nums text-foreground'>{fileStats?.scannable ?? fileStats?.total ?? '待统计'}</dd>
+              </div>
+              <div>
+                <dt className='text-xs text-muted-foreground'>扫描范围</dt>
+                <dd className='mt-1 font-medium text-foreground'>{workspace.import?.summary?.scanScope || '项目源码与配置文件'}</dd>
+              </div>
+            </dl>
+
+            <div className='mt-7 flex flex-wrap items-center gap-3'>
+              <Button className={actionButtonClass} onClick={onScan} disabled={scanning}>
+                {scanning ? <Loader2 className='size-4 animate-spin' /> : <FileSearch className='size-4' />}
+                {scanning ? '正在扫描' : '开始扫描'}
+              </Button>
+              <Button variant='outline' onClick={onSupplement} disabled={supplementing}>
+                {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+                补充项目文件
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <aside className='border-t border-border bg-[color:var(--surface-inset)] px-6 py-8 xl:border-t-0 xl:border-l'>
+          <div className='flex items-center gap-2'>
+            <ShieldCheck className='size-4 text-cyan-600 dark:text-cyan-300' />
+            <h4 className='text-sm font-semibold'>本次扫描覆盖</h4>
+          </div>
+          <div className='mt-5 space-y-5'>
+            {[
+              ['应用代码', 'Semgrep 检查危险 API、注入与不安全代码模式'],
+              ['凭据泄漏', 'Gitleaks 与内置规则检查密钥、令牌和密码'],
+              ['Python 安全', 'Bandit 检查危险调用与不安全默认配置'],
+              ['基础设施配置', 'Checkov 检查 Docker、CI 与 IaC 策略'],
+            ].map(([title, description]) => (
+              <div key={title} className='grid grid-cols-[20px_minmax(0,1fr)] gap-3'>
+                <CheckCircle2 className='mt-0.5 size-4 text-emerald-600 dark:text-emerald-300' />
+                <div>
+                  <div className='text-sm font-medium text-foreground'>{title}</div>
+                  <p className='mt-1 text-xs leading-5 text-muted-foreground'>{description}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className='mt-7 border-t border-border pt-5 text-xs leading-5 text-muted-foreground'>
+            扫描完成后将显示风险位置、规则证据、修复建议和可达性分析。
+          </p>
+        </aside>
+      </div>
+    </section>
+  )
+}
+
+function CodeAuditScanSummary({
+  summary,
+  riskScore,
+  riskFiles,
+  scannerLabel,
+  durationSeconds,
+}: {
+  summary: CodeAuditSeveritySummary
+  riskScore: number
+  riskFiles: number
+  scannerLabel: string
+  durationSeconds?: number
+}) {
+  const metrics = [
+    { label: '风险评分', value: riskScore, tone: summary.total ? 'text-red-600 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-300' },
+    { label: '风险总数', value: summary.total, tone: 'text-foreground' },
+    { label: '严重', value: summary.critical, tone: 'text-red-600 dark:text-red-300' },
+    { label: '高危', value: summary.high, tone: 'text-orange-600 dark:text-orange-300' },
+    { label: '中低危', value: summary.medium + summary.low, tone: 'text-amber-600 dark:text-amber-300' },
+    { label: '风险文件', value: riskFiles, tone: 'text-cyan-700 dark:text-cyan-300' },
+  ]
+
+  return (
+    <section className='rounded-md border border-border bg-[color:var(--surface-card)]'>
+      <div className='flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3'>
+        <div>
+          <h3 className='text-sm font-semibold text-foreground'>扫描概览</h3>
+          <p className='mt-0.5 text-xs text-muted-foreground'>{scannerLabel}</p>
+        </div>
+        {durationSeconds !== undefined ? <span className='text-xs text-muted-foreground'>耗时 {durationSeconds.toFixed(2)} 秒</span> : null}
+      </div>
+      <div className='grid grid-cols-2 divide-x divide-y divide-border sm:grid-cols-3 xl:grid-cols-6 xl:divide-y-0'>
+        {metrics.map((metric) => (
+          <div key={metric.label} className='px-5 py-4'>
+            <div className='text-xs text-muted-foreground'>{metric.label}</div>
+            <div className={cn('mt-1 text-2xl font-semibold tabular-nums tracking-[0]', metric.tone)}>{metric.value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function CodeAuditNoFindingsState({
+  scannerLabel,
+  scanGeneratedAt,
+  onScan,
+  scanning,
+}: {
+  scannerLabel: string
+  scanGeneratedAt: string
+  onScan: () => void
+  scanning: boolean
+}) {
+  return (
+    <section className='flex min-h-[360px] items-center justify-center rounded-md border border-border bg-[color:var(--surface-card)] px-6 py-12 text-center'>
+      <div className='max-w-lg'>
+        <span className='mx-auto grid size-12 place-items-center rounded-full border border-emerald-300/45 bg-emerald-500/10 text-emerald-600 dark:text-emerald-200'>
+          <CheckCircle2 className='size-6' />
+        </span>
+        <h3 className='mt-5 text-xl font-semibold tracking-[0] text-foreground'>扫描完成，未发现匹配风险</h3>
+        <p className='mt-3 text-sm leading-6 text-muted-foreground'>
+          {scannerLabel} 已完成本次检查{scanGeneratedAt ? `，结果生成于 ${scanGeneratedAt}` : ''}。该结果表示当前规则未命中，不代表代码不存在任何安全问题。
+        </p>
+        <Button variant='outline' className='mt-6' onClick={onScan} disabled={scanning}>
+          {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+          重新扫描
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+function CodeAuditRiskOverviewCard({
+  summary,
+  riskScore,
+  riskLevel,
+  scanKey,
+}: {
+  summary: CodeAuditSeveritySummary
+  riskScore: number
+  riskLevel: SecuritySeverity
+  scanKey: string
+}) {
+  const radius = 44
+  const circumference = 2 * Math.PI * radius
+  const reducedMotion = useReducedMotion()
+  const { value: displayScore } = useAnimatedNumber(riskScore, {
+    stiffness: 90,
+    damping: 18,
+    delayMs: 120,
+    durationMs: 1500,
+    respectReducedMotion: false,
+    resetKey: scanKey,
+  })
+  const tone = riskGaugeTone(riskLevel)
+  const severityData = [
+    { label: '严重', value: summary.critical, color: 'bg-red-400' },
+    { label: '高危', value: summary.high, color: 'bg-orange-400' },
+    { label: '中危', value: summary.medium, color: 'bg-amber-300' },
+    { label: '低危', value: summary.low, color: 'bg-cyan-300' },
+  ]
+  const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
+  const majorRisks = summary.critical + summary.high
+
+  return (
+    <Card className='group h-[560px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-cyan-300/25'>
+      <CardContent className='relative flex h-full flex-col p-4'>
+        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
+        <div className='relative flex items-center justify-between gap-3'>
+          <div className='text-label text-muted-foreground'>风险评分</div>
+          {summary.total ? (
+            <SeverityPill severity={riskLevel} />
+          ) : (
+            <span className='inline-flex h-[26px] items-center rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 text-[13px] font-bold text-emerald-600 dark:text-emerald-200'>未发现风险</span>
+          )}
+        </div>
+        <div className='relative flex flex-1 items-center justify-center py-4'>
+          <div className='relative size-44'>
+            <motion.div
+              className={cn('absolute inset-3 rounded-full blur-xl', summary.total ? tone.pulse : 'bg-emerald-400/20')}
+              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
+              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
+              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
+              <motion.circle
+                cx='56'
+                cy='56'
+                r={radius}
+                className={cn('fill-none', summary.total ? tone.stroke : 'stroke-emerald-400')}
+                strokeWidth='8'
+                strokeLinecap='round'
+                strokeDasharray={circumference}
+                initial={{ strokeDashoffset: circumference }}
+                animate={{ strokeDashoffset: circumference * (1 - Math.max(0, Math.min(100, riskScore)) / 100) }}
+                transition={{ duration: 1.2, ease: 'easeOut' }}
+              />
+            </svg>
+            <div className='absolute inset-0 grid place-items-center'>
+              <div className='text-center'>
+                <div className={cn('text-metric text-5xl', summary.total ? tone.text : 'text-emerald-500')}>{displayScore}</div>
+                <div className='mt-1 text-label'>风险评分</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className='grid grid-cols-3 gap-2'>
+          {[
+            ['风险总数', summary.total, 'text-cyan-600 dark:text-cyan-100'],
+            ['严重高危', majorRisks, 'text-red-600 dark:text-red-100'],
+            ['中低危', summary.medium + summary.low, 'text-amber-600 dark:text-amber-100'],
+          ].map(([label, value, color]) => (
+            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
+              <div className='text-label'>{label}</div>
+              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
+          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
+            {severityData.map((item) => (
+              <span
+                key={item.label}
+                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
+                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / riskTotal) * 100)}%` }}
+              />
+            ))}
+          </div>
+          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
+            {severityData.map((item) => <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>)}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function CodeAuditFindingNameList({
+  findings,
+  totalCount,
+  selectedFinding,
+  categories,
+  severityFilter,
+  categoryFilter,
+  onSeverityFilter,
+  onCategoryFilter,
+  onReset,
+  onSelect,
+}: {
+  findings: CodeAuditFinding[]
+  totalCount: number
+  selectedFinding?: CodeAuditFinding
+  categories: string[]
+  severityFilter: string
+  categoryFilter: string
+  onSeverityFilter: (value: string) => void
+  onCategoryFilter: (value: string) => void
+  onReset: () => void
+  onSelect: (finding: CodeAuditFinding) => void
+}) {
+  const filtered = severityFilter !== 'all' || categoryFilter !== 'all'
+  return (
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardHeader className='pb-3'>
+        <div className='flex flex-wrap items-start justify-between gap-3'>
+          <div className='min-w-0'>
+            <div className='flex items-center gap-2'>
+              <CardTitle className='text-section-title'>风险明细</CardTitle>
+              <span className='meta-chip'>{findings.length}/{totalCount}</span>
+            </div>
+            <div className='mt-1 truncate text-xs text-muted-foreground'>
+              {selectedFinding?.title || '代码安全扫描结果'}
+            </div>
+          </div>
+          <div className='flex flex-wrap items-center justify-end gap-2'>
+            {filtered ? (
+              <button type='button' className='inline-flex h-7 items-center rounded-full border border-cyan-300/40 bg-cyan-400/10 px-2.5 text-[12px] font-bold text-cyan-600 dark:text-cyan-100' onClick={onReset}>全部</button>
+            ) : null}
+            <Select value={severityFilter} onValueChange={onSeverityFilter}>
+              <SelectTrigger size='sm' className='h-7 min-w-[104px] rounded-md border-border bg-[color:var(--surface-inset)]'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部等级</SelectItem>
+                <SelectItem value='critical'>严重</SelectItem>
+                <SelectItem value='high'>高危</SelectItem>
+                <SelectItem value='medium'>中危</SelectItem>
+                <SelectItem value='low'>低危</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={categoryFilter} onValueChange={onCategoryFilter}>
+              <SelectTrigger size='sm' className='h-7 min-w-[132px] max-w-[180px] rounded-md border-border bg-[color:var(--surface-inset)]'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部类型</SelectItem>
+                {categories.map((category) => <SelectItem key={category} value={category}>{category}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className='min-h-0 flex-1'>
+        {findings.length ? (
+          <div className='h-full overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
+              {findings.map((finding) => {
+                const selected = codeFindingKey(finding) === (selectedFinding ? codeFindingKey(selectedFinding) : '')
+                return (
+                  <motion.button
+                    key={codeFindingKey(finding)}
+                    type='button'
+                    layout
+                    onClick={() => onSelect(finding)}
+                    className={cn(
+                      'grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border px-2.5 py-2 text-left transition-[border-color,background-color]',
+                      selected ? 'border-cyan-300/35 bg-cyan-400/10' : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25'
+                    )}
+                  >
+                    <SeverityPill severity={finding.severity} />
+                    <span className='min-w-0'>
+                      <span className='block truncate text-sm font-semibold' title={finding.title}>{finding.title}</span>
+                      <span className='mt-0.5 block truncate font-mono text-[11px] text-muted-foreground' title={`${finding.risk_file}:${finding.line}`}>
+                        {compactWorkflowPath(finding.risk_file)}:{finding.line} · {finding.scanner}
+                      </span>
+                    </span>
+                  </motion.button>
+                )
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
+            {totalCount ? '当前筛选条件下没有风险。' : '尚未发现代码安全风险。'}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function CodeAuditFindingDetailPanel({
+  finding,
+  totalCount,
+  disabled,
+  onIgnore,
+}: {
+  finding?: CodeAuditFinding
+  totalCount: number
+  disabled: boolean
+  onIgnore: (finding: CodeAuditFinding) => void
+}) {
+  if (!finding) {
+    return (
+      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+        <CardHeader className='pb-3'><CardTitle className='text-base'>风险属性</CardTitle></CardHeader>
+        <CardContent className='flex-1'>
+          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
+            {totalCount ? '选择风险查看规则、证据和修复建议。' : '当前没有可查看的风险。'}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)]'>
+      <CardHeader className='pb-3'>
+        <CardTitle className='min-w-0 truncate text-base' title={finding.title}>{finding.title}</CardTitle>
+      </CardHeader>
+      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+        <div className='flex flex-wrap gap-2'>
+          <SeverityPill severity={finding.severity} />
+          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-600 dark:text-red-200'>风险 {finding.score}</span>
+          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-600 dark:text-cyan-100'>{finding.scanner}</span>
+        </div>
+        <div className='grid gap-2 text-sm'>
+          <DetailRow label='文件' value={compactWorkflowPath(finding.risk_file) || '-'} />
+          <DetailRow label='位置' value={`第 ${finding.line}${finding.end_line && finding.end_line !== finding.line ? `-${finding.end_line}` : ''} 行`} />
+          <DetailRow label='规则' value={finding.rule_id || '-'} />
+          <DetailRow label='类型' value={finding.category || '-'} />
+          {finding.cwe ? <DetailRow label='CWE' value={finding.cwe} /> : null}
+        </div>
+        <CicdInfoBlock title='风险原因' text={codeFindingReasonText(finding)} />
+        <CicdInfoBlock title='关键证据' text={finding.evidence || '-'} mono />
+        <CicdInfoBlock title='修复建议' text={finding.recommendation || '请根据命中规则核查代码并补充针对性修复。'} tone='action' />
+        <Button variant='outline' className='w-full' disabled={disabled || !finding.fingerprint} onClick={() => onIgnore(finding)}>
+          <EyeOff className='size-4' />
+          标记为误报并忽略
+        </Button>
+      </CardContent>
+    </Card>
+  )
+}
+
+function codeFindingReasonText(finding: CodeAuditFinding) {
+  const text = `${finding.category} ${finding.rule_id} ${finding.title}`.toLowerCase()
+  if (/secret|credential|token|password|密钥|凭据/.test(text)) {
+    return '代码或配置中疑似存在硬编码凭据，泄露后可能被用于访问仓库、构建环境或外部服务。'
+  }
+  if (/command|exec|injection|注入|执行/.test(text)) {
+    return '外部输入可能进入命令或代码执行路径，未经过严格校验时可能造成注入或任意执行。'
+  }
+  if (/deserial|pickle|yaml|反序列化/.test(text)) {
+    return '不可信数据进入反序列化流程，可能触发对象构造副作用或任意代码执行。'
+  }
+  if (/checkov|iac|docker|terraform|配置/.test(text)) {
+    return '基础设施或部署配置未满足安全规则，可能扩大服务暴露面或赋予过大权限。'
+  }
+  return finding.title || `${finding.category} 规则命中，需要结合代码上下文确认可利用性。`
 }
 
 function ReachabilityVerdictDashboard({
@@ -6763,6 +7987,7 @@ export function SupplyChainPanel({
   )
   const vexSummary = audit?.summary.vex
   const reachabilitySummary = audit?.summary.reachability
+  const vulnerabilityCoverage = audit?.summary.vulnerability_coverage
   const dependencyStats = useMemo(
     () => dependencyPanelStats(audit, dependencies, supplyFindings),
     [audit, dependencies, supplyFindings]
@@ -6890,6 +8115,15 @@ export function SupplyChainPanel({
                   日志痕迹 {reachabilitySummary?.runtime_trace_dependencies ?? 0}
                 </Badge>
               </div>
+              {vulnerabilityCoverage && !vulnerabilityCoverage.complete ? (
+                <Alert className='rounded-md border-amber-500/40 bg-amber-500/5'>
+                  <AlertTriangle className='size-4 text-amber-500' />
+                  <AlertTitle>漏洞查询覆盖不完整</AlertTitle>
+                  <AlertDescription>
+                    {vulnerabilityCoverage.message} 当前“OSV 命中 {audit?.summary.osv_matches ?? 0}”不代表项目没有已知漏洞。
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               <DependencyGnnSummary dependencies={dependencies} />
             </div>
           ) : (
@@ -7152,7 +8386,7 @@ function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependen
         <InfoPill label='覆盖依赖' value={`${gnnDependencies.length}/${dependencies.length}`} />
         <InfoPill label='高危标签' value={String(highCount)} />
         <InfoPill label='提升风险' value={String(elevatedCount)} />
-        <InfoPill label='平均置信' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
+        <InfoPill label='平均判定确定度' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
       </div>
 
       <div className='mt-3 grid gap-2 md:grid-cols-2'>
@@ -7164,7 +8398,7 @@ function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependen
                 variant='outline'
                 className={cn('shrink-0 rounded-md text-[10px]', severityClasses[dependencyGnnSeverity(dependency)])}
               >
-                {formatPercent(dependency.gnn_score ?? 0)}
+                GNN 风险 {formatPercent(dependency.gnn_score ?? 0)}
               </Badge>
             </div>
             <div className='mt-1 truncate text-[11px] text-muted-foreground'>
@@ -7189,6 +8423,7 @@ function topGnnDependencies(dependencies: SecurityDependency[], limit: number) {
 }
 
 function dependencyGnnSeverity(dependency: SecurityDependency): SecuritySeverity {
+  if (dependency.gnn_evidence_conflict) return 'high'
   if (dependency.gnn_label === 'high') return 'high'
   if (dependency.gnn_label === 'elevated') return 'medium'
   return 'low'
@@ -7200,7 +8435,9 @@ function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) 
   }
   const score = Math.round(dependency.gnn_score * 100)
   const tone =
-    dependency.gnn_label === 'high'
+    dependency.gnn_evidence_conflict
+      ? severityClasses.high
+      : dependency.gnn_label === 'high'
       ? severityClasses.high
       : dependency.gnn_label === 'elevated'
         ? severityClasses.medium
@@ -7209,9 +8446,9 @@ function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) 
     <Badge
       variant='outline'
       className={cn('mt-1 w-fit rounded-md text-[10px]', tone)}
-      title={dependency.gnn_reasons?.join('；') || 'Graph risk model score'}
+      title={dependency.gnn_reasons?.join('；') || 'GNN 风险分：恶意包相似度信号，不是总体风险评分'}
     >
-      GNN {score}%
+      GNN 风险 {score}%
     </Badge>
   )
 }
@@ -7344,10 +8581,26 @@ function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency 
         ) : null}
         {typeof dependency.gnn_confidence === 'number' ? (
           <Badge variant='outline' className='rounded-md bg-background text-[10px]'>
-            置信 {formatPercent(dependency.gnn_confidence)}
+            判定确定度 {formatPercent(dependency.gnn_confidence)}
           </Badge>
         ) : null}
       </div>
+
+      <p className='mt-2 text-[11px] leading-5 text-muted-foreground'>
+        GNN 目标是识别恶意包相似度，不替代漏洞扫描。判定确定度不是准确率；当前结果还会结合漏洞、调用和其他证据。
+      </p>
+
+      {dependency.gnn_inference_mode === 'package_features_only' ? (
+        <div className='mt-2 rounded-md border border-amber-300/50 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200'>
+          当前为单包特征推理，未接入项目实时依赖图，模型信号仅作辅助参考。
+        </div>
+      ) : null}
+
+      {dependency.gnn_evidence_conflict ? (
+        <div className='mt-2 rounded-md border border-red-300/50 bg-red-50 px-2.5 py-2 text-[11px] leading-5 text-red-800 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200'>
+          GNN 低风险输出与漏洞或综合风险证据冲突，已降低该模型信号的可靠性；不能据此降低总体风险。
+        </div>
+      ) : null}
 
       {explanations.length ? (
         <ul className='mt-2 space-y-1 text-xs leading-5 text-muted-foreground'>
@@ -7360,7 +8613,7 @@ function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency 
         </ul>
       ) : null}
 
-      {similarPackages.length ? (
+        {similarPackages.length ? (
         <div className='mt-2 flex flex-wrap gap-1'>
           {similarPackages.slice(0, 4).map((item) => (
             <Badge key={`${item.package}-${item.score}`} variant='outline' className='rounded-md bg-background text-[10px]'>
@@ -7786,10 +9039,15 @@ function PipelinePanel({
   }
 
   const totalBuildChainRisks = displayModel.summary.finding_count
+  const hasScanResult = Boolean(audit?.scan_id || audit?.generated_at)
+  const scanGeneratedAt = audit?.generated_at
+    ? audit.generated_at.slice(0, 16).replace('T', ' ')
+    : ''
 
   return (
     <div className='space-y-4'>
-      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+      <input ref={supplementInputRef} type='file' accept={SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT} className='hidden' onChange={(event) => void handleSupplementFileChange(event)} />
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4'>
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div className='min-w-0'>
             <div className='flex items-center gap-3'>
@@ -7801,52 +9059,139 @@ function PipelinePanel({
             <div className='mt-2 h-px w-56 bg-gradient-to-r from-orange-300/55 via-orange-300/20 to-transparent' />
             <div className='mt-3 flex flex-wrap items-center gap-2'>
               <span className='meta-chip-dark'>GitHub Actions</span>
-              <span className='meta-chip-dark'>{displayModel.summary.workflow_count} workflows</span>
-              <span className='meta-chip-dark'>{displayModel.summary.total_steps} steps</span>
-              <span className='meta-chip-dark'>{totalBuildChainRisks} 风险</span>
+              {displayModel.hasBuildChainEvidence ? (
+                <>
+                  <span className='meta-chip-dark'>{displayModel.summary.workflow_count} workflows</span>
+                  <span className='meta-chip-dark'>{displayModel.summary.total_steps} steps</span>
+                  <span className='meta-chip-dark'>{totalBuildChainRisks} 风险</span>
+                </>
+              ) : (
+                <span className='inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:text-amber-200'>
+                  {hasScanResult ? '未发现工作流' : '等待扫描'}
+                </span>
+              )}
             </div>
           </div>
-          <div className='flex flex-wrap gap-2'>
-            <Button size='sm' className={actionButtonClass} onClick={() => void startCICDScan()} disabled={scanning}>
-              {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
-              重新扫描
-            </Button>
-            <input ref={supplementInputRef} type='file' accept={SUPPLEMENT_PROJECT_ARCHIVE_ACCEPT} className='hidden' onChange={(event) => void handleSupplementFileChange(event)} />
-            <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
-              {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
-              {SUPPLEMENT_FILE_LABEL}
-            </Button>
-            <Button size='sm' variant='outline' onClick={() => downloadReport(audit?.report || artifactTrust?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}>
-              <Download className='size-4' />
-              导出报告
-            </Button>
-          </div>
+          {displayModel.hasBuildChainEvidence ? (
+            <div className='flex flex-wrap gap-2'>
+              <Button size='sm' className={actionButtonClass} onClick={() => void startCICDScan()} disabled={scanning}>
+                {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+                重新扫描
+              </Button>
+              <Button size='sm' variant='outline' onClick={() => supplementInputRef.current?.click()} disabled={supplementing}>
+                {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+                {SUPPLEMENT_FILE_LABEL}
+              </Button>
+              <Button size='sm' variant='outline' onClick={() => downloadReport(audit?.report || artifactTrust?.report || '# CI/CD 构建流程风险报告\n\n尚未执行扫描。')}>
+                <Download className='size-4' />
+                导出报告
+              </Button>
+            </div>
+          ) : null}
         </div>
       </section>
 
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
-        <CicdRiskOverviewCard model={displayModel} />
-        <CicdFindingNameList
-          findings={filteredFindings}
-          totalCount={findings.length}
-          selectedFinding={selectedFinding}
-          workflows={workflows}
-          severityFilter={severityFilter}
-          workflowFilter={workflowFilter}
-          onSeverityFilter={setSeverityFilter}
-          onWorkflowFilter={setWorkflowFilter}
-          onReset={resetCicdView}
-          onSelect={selectFinding}
+      {displayModel.hasBuildChainEvidence ? (
+        <div className='space-y-4'>
+          <CicdRiskOverviewCard model={displayModel} />
+          <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(340px,0.85fr)]'>
+            <CicdFindingNameList
+              findings={filteredFindings}
+              totalCount={findings.length}
+              selectedFinding={selectedFinding}
+              workflows={workflows}
+              severityFilter={severityFilter}
+              workflowFilter={workflowFilter}
+              onSeverityFilter={setSeverityFilter}
+              onWorkflowFilter={setWorkflowFilter}
+              onReset={resetCicdView}
+              onSelect={selectFinding}
+            />
+            <CicdFindingDetailPanel
+              finding={selectedFinding}
+              totalCount={filteredFindings.length}
+              disabled={mutating}
+              onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
+            />
+          </div>
+        </div>
+      ) : (
+        <CicdEmptyState
+          hasScanResult={hasScanResult}
+          scanGeneratedAt={scanGeneratedAt}
+          scanning={scanning}
+          supplementing={supplementing}
+          onScan={() => void startCICDScan()}
+          onSupplement={() => supplementInputRef.current?.click()}
         />
-        <CicdFindingDetailPanel
-          finding={selectedFinding}
-          totalCount={filteredFindings.length}
-          disabled={mutating}
-          onIgnore={(finding) => void ignoreFinding(finding.fingerprint)}
-        />
-      </div>
+      )}
 
     </div>
+  )
+}
+
+function CicdEmptyState({
+  hasScanResult,
+  scanGeneratedAt,
+  scanning,
+  supplementing,
+  onScan,
+  onSupplement,
+}: {
+  hasScanResult: boolean
+  scanGeneratedAt: string
+  scanning: boolean
+  supplementing: boolean
+  onScan: () => void
+  onSupplement: () => void
+}) {
+  return (
+    <section className='overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)]'>
+      <div className='mx-auto flex min-h-[390px] max-w-3xl flex-col items-center justify-center px-6 py-14 text-center'>
+        <span className='grid size-14 place-items-center rounded-md border border-cyan-400/25 bg-cyan-400/10 text-cyan-700 dark:text-cyan-200'>
+          <FileSearch className='size-7' />
+        </span>
+        <h3 className='mt-5 text-xl font-bold text-foreground'>
+          {hasScanResult ? '未发现 GitHub Actions 工作流' : '尚未检测 CI/CD 工作流'}
+        </h3>
+        <p className='mt-2 max-w-xl text-sm leading-6 text-muted-foreground'>
+          {hasScanResult
+            ? '当前项目中没有可研判的 workflow 配置，因此暂不生成风险评分和风险详情。'
+            : '扫描项目中的 workflow 配置后，才能分析权限、Action 引用、Runner 和构建步骤风险。'}
+        </p>
+        <div className='mt-6 flex flex-wrap items-center justify-center gap-2'>
+          <Button className={actionButtonClass} onClick={onSupplement} disabled={supplementing}>
+            {supplementing ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+            上传项目压缩包
+          </Button>
+          <Button variant='outline' onClick={onScan} disabled={scanning}>
+            {scanning ? <Loader2 className='size-4 animate-spin' /> : <RefreshCw className='size-4' />}
+            重新扫描
+          </Button>
+        </div>
+      </div>
+
+      <div className='grid border-t border-border bg-[color:var(--surface-inset)] md:grid-cols-2'>
+        <div className='flex min-w-0 items-start gap-3 border-b border-border px-5 py-4 md:border-r md:border-b-0'>
+          <FolderOpen className='mt-0.5 size-4 shrink-0 text-cyan-700 dark:text-cyan-300' />
+          <div className='min-w-0'>
+            <div className='text-xs font-semibold text-foreground'>检测位置</div>
+            <div className='mt-1 truncate font-mono text-xs text-muted-foreground' title='.github/workflows/*.yml、*.yaml'>
+              .github/workflows/*.yml、*.yaml
+            </div>
+          </div>
+        </div>
+        <div className='flex min-w-0 items-start gap-3 px-5 py-4'>
+          <CheckCircle2 className='mt-0.5 size-4 shrink-0 text-emerald-700 dark:text-emerald-300' />
+          <div className='min-w-0'>
+            <div className='text-xs font-semibold text-foreground'>检测状态</div>
+            <div className='mt-1 text-xs text-muted-foreground'>
+              {hasScanResult ? `扫描已完成${scanGeneratedAt ? ` · ${scanGeneratedAt}` : ''}` : '等待首次扫描'}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -7951,12 +9296,8 @@ function CicdRiskOverviewCard({
 }: {
   model: CicdDisplayModel
 }) {
-  const total = model.summary.finding_count
   const riskScore = model.summary.risk_score
   const riskLevel = model.summary.risk_level
-  const radius = 44
-  const circumference = 2 * Math.PI * radius
-  const reducedMotion = useReducedMotion()
   const { value: displayScore } = useAnimatedNumber(riskScore, {
     stiffness: 90,
     damping: 18,
@@ -7965,7 +9306,6 @@ function CicdRiskOverviewCard({
     respectReducedMotion: false,
     resetKey: model.scanKey,
   })
-  const tone = riskGaugeTone(riskLevel)
   const severityData = [
     { label: '严重', value: model.summary.critical, color: 'bg-red-400' },
     { label: '高危', value: model.summary.high, color: 'bg-orange-400' },
@@ -7973,71 +9313,67 @@ function CicdRiskOverviewCard({
     { label: '低危', value: model.summary.low, color: 'bg-cyan-300' },
   ]
   const riskTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
-  const majorRisks = model.summary.critical + model.summary.high
+  const scoreTone = {
+    critical: 'text-red-600 dark:text-red-300',
+    high: 'text-orange-600 dark:text-orange-300',
+    medium: 'text-amber-600 dark:text-amber-300',
+    low: 'text-emerald-600 dark:text-emerald-300',
+  }[riskLevel]
+  const metrics = [
+    { label: 'Workflows', value: model.summary.workflow_count },
+    { label: 'Jobs', value: model.summary.job_count },
+    { label: 'Steps', value: model.summary.total_steps },
+    { label: '风险发现', value: model.summary.finding_count },
+  ]
+
   return (
-    <Card className='group h-[560px] overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-orange-300/25 xl:h-[560px]'>
-      <CardContent className='relative flex h-full flex-col p-4'>
-        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
-        <div className='relative flex items-center justify-between gap-3'>
-          <div className='text-label text-muted-foreground'>风险评分</div>
-          <SeverityPill severity={riskLevel} />
-        </div>
-        <div className='relative flex flex-1 items-center justify-center py-4'>
-          <div className='relative size-44'>
-            <motion.div
-              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
-              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
-              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
-              <motion.circle
-                cx='56'
-                cy='56'
-                r={radius}
-                className={cn('fill-none', tone.stroke)}
-                strokeWidth='8'
-                strokeLinecap='round'
-                strokeDasharray={circumference}
-                initial={{ strokeDashoffset: circumference }}
-                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - Math.max(0, Math.min(100, riskScore)) / 100) }}
-                transition={{ duration: 1.2, ease: 'easeOut' }}
-              />
-            </svg>
-            <div className='absolute inset-0 grid place-items-center'>
-              <div className='text-center'>
-                <div className={cn('text-metric text-5xl', tone.text)}>{displayScore}</div>
-                <div className='mt-1 text-label'>风险评分</div>
+    <Card className='overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardContent className='p-0'>
+        <div className='grid lg:grid-cols-[230px_minmax(0,1fr)]'>
+          <div className='flex items-center gap-4 border-b border-border px-5 py-5 lg:border-r lg:border-b-0'>
+            <span className='grid size-10 shrink-0 place-items-center rounded-md border border-orange-400/25 bg-orange-500/10 text-orange-700 dark:text-orange-200'>
+              <ShieldAlert className='size-5' />
+            </span>
+            <div className='min-w-0'>
+              <div className='flex items-end gap-2'>
+                <span className={cn('text-4xl font-bold leading-none tabular-nums', scoreTone)}>{displayScore}</span>
+                <span className='pb-0.5 text-xs font-medium text-muted-foreground'>/ 100</span>
+              </div>
+              <div className='mt-2 flex items-center gap-2'>
+                <span className='text-xs font-semibold text-foreground'>综合风险评分</span>
+                <SeverityPill severity={riskLevel} />
               </div>
             </div>
           </div>
-        </div>
-        <div className='grid grid-cols-3 gap-2'>
-          {[
-            ['风险总数', total, 'text-orange-100'],
-            ['严重高危', majorRisks, 'text-red-100'],
-            ['中低危', model.summary.medium + model.summary.low, 'text-amber-100'],
-          ].map(([label, value, color]) => (
-            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
-              <div className='text-label'>{label}</div>
-              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+
+          <div className='min-w-0 px-5 py-4'>
+            <div className='grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-border'>
+              {metrics.map((metric) => (
+                <div key={metric.label} className='min-w-0 px-4 first:pl-0 last:pr-0'>
+                  <div className='text-xs font-medium text-muted-foreground'>{metric.label}</div>
+                  <div className='mt-1 text-2xl font-bold tabular-nums text-foreground'>{metric.value}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
-          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
-            {severityData.map((item) => (
-              <span
-                key={item.label}
-                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
-                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / riskTotal) * 100)}%` }}
-              />
-            ))}
-          </div>
-          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
-            {severityData.map((item) => (
-              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
-            ))}
+            <div className='mt-4 border-t border-border pt-3'>
+              <div className='flex h-1.5 overflow-hidden rounded-full bg-[color:var(--muted)]'>
+                {severityData.filter((item) => item.value > 0).map((item) => (
+                  <span
+                    key={item.label}
+                    className={item.color}
+                    style={{ width: `${(item.value / riskTotal) * 100}%` }}
+                  />
+                ))}
+              </div>
+              <div className='mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground'>
+                {severityData.map((item) => (
+                  <span key={item.label} className='inline-flex items-center gap-1.5 tabular-nums'>
+                    <span className={cn('size-2 rounded-sm', item.color)} />
+                    {item.label} {item.value}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </CardContent>
@@ -8299,23 +9635,21 @@ function CicdFindingNameList({
   const filtered = severityFilter !== 'all' || workflowFilter !== 'all'
 
   return (
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
+    <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardHeader className='border-b border-border pb-3'>
         <div className='flex flex-wrap items-start justify-between gap-3'>
           <div className='min-w-0'>
             <div className='flex items-center gap-2'>
               <CardTitle className='text-section-title'>风险明细</CardTitle>
               <span className='meta-chip'>{findings.length}/{totalCount}</span>
             </div>
-            <div className='mt-1 truncate text-xs text-muted-foreground'>
-              {selectedFinding ? cicdFindingTitle(selectedFinding) : 'CI/CD 构建链'}
-            </div>
+            <div className='mt-1 text-xs text-muted-foreground'>按风险优先级检查 Workflow、Job 与 Step</div>
           </div>
           <div className='flex flex-wrap items-center justify-end gap-2'>
             {filtered ? (
               <button
                 type='button'
-                className='inline-flex h-7 items-center whitespace-nowrap rounded-full border border-cyan-300/40 bg-cyan-400/10 px-2.5 text-[12px] font-bold text-cyan-100 transition-colors'
+                className='inline-flex h-7 items-center whitespace-nowrap rounded-full border border-cyan-400/35 bg-cyan-500/10 px-2.5 text-[12px] font-bold text-cyan-700 transition-colors dark:text-cyan-200'
                 onClick={onReset}
               >
                 全部
@@ -8347,34 +9681,56 @@ function CicdFindingNameList({
           </div>
         </div>
       </CardHeader>
-      <CardContent className='min-h-0 flex-1'>
+      <CardContent className='min-h-0 flex-1 p-0'>
         {findings.length ? (
-          <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
-            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
-            {findings.map((finding) => {
-              const selected = finding.fingerprint === selectedFinding?.fingerprint
-              return (
-                <motion.button
-                  key={finding.fingerprint}
-                  type='button'
-                  layout
-                  onClick={() => onSelect(finding)}
-                  className={cn(
-                    'grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]',
-                    selected
-                      ? 'border-cyan-300/35 bg-cyan-400/10'
-                      : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
-                  )}
-                >
-                  <SeverityPill severity={finding.severity} />
-                  <span className='min-w-0 truncate text-sm font-semibold text-foreground' title={cicdFindingTitle(finding)}>{cicdFindingTitle(finding)}</span>
-                </motion.button>
-              )
-            })}
+          <div className='flex h-full min-h-0 flex-col'>
+            <div className='hidden grid-cols-[minmax(0,1.35fr)_minmax(150px,0.75fr)_64px] gap-4 border-b border-border bg-[color:var(--surface-inset)] px-5 py-2 text-[11px] font-semibold text-muted-foreground md:grid'>
+              <span>风险项</span>
+              <span>位置</span>
+              <span className='text-right'>评分</span>
+            </div>
+            <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+              {findings.map((finding) => {
+                const selected = finding.fingerprint === selectedFinding?.fingerprint
+                const location = finding.step_name || finding.job_name || finding.job_id || `第 ${finding.line || 0} 行`
+                return (
+                  <motion.button
+                    key={finding.fingerprint}
+                    type='button'
+                    layout
+                    onClick={() => onSelect(finding)}
+                    className={cn(
+                      'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border/70 px-5 py-3.5 text-left transition-colors md:grid-cols-[minmax(0,1.35fr)_minmax(150px,0.75fr)_64px]',
+                      selected
+                        ? 'bg-cyan-500/10 shadow-[inset_3px_0_0_rgb(6,182,212)]'
+                        : 'hover:bg-[color:var(--surface-inset)]',
+                    )}
+                  >
+                    <span className='flex min-w-0 items-center gap-3'>
+                      <SeverityPill severity={finding.severity} />
+                      <span className='min-w-0'>
+                        <span className='block truncate text-sm font-semibold text-foreground' title={cicdFindingTitle(finding)}>
+                          {cicdFindingTitle(finding)}
+                        </span>
+                        <span className='mt-1 block truncate text-xs text-muted-foreground md:hidden'>
+                          {compactWorkflowPath(finding.workflow)} · {location}
+                        </span>
+                      </span>
+                    </span>
+                    <span className='hidden min-w-0 md:block'>
+                      <span className='block truncate text-xs font-medium text-foreground' title={finding.workflow}>
+                        {compactWorkflowPath(finding.workflow) || 'Workflow'}
+                      </span>
+                      <span className='mt-1 block truncate text-xs text-muted-foreground' title={location}>{location}</span>
+                    </span>
+                    <span className='text-right text-sm font-bold tabular-nums text-foreground'>{finding.score ?? 0}</span>
+                  </motion.button>
+                )
+              })}
             </div>
           </div>
         ) : (
-          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>无匹配风险</div>
+          <div className='grid h-full place-items-center p-6 text-center text-sm text-muted-foreground'>无匹配风险</div>
         )}
       </CardContent>
     </Card>
@@ -8394,8 +9750,8 @@ function CicdFindingDetailPanel({
 }) {
   if (!finding) {
     return (
-      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-        <CardHeader className='pb-3'>
+      <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+        <CardHeader className='border-b border-border pb-3'>
           <CardTitle className='min-w-0 truncate text-base text-foreground'>风险属性</CardTitle>
         </CardHeader>
         <CardContent className='min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
@@ -8408,19 +9764,22 @@ function CicdFindingDetailPanel({
   }
 
   return (
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
-        <CardTitle className='min-w-0 truncate text-base text-foreground' title={cicdFindingTitle(finding)}>
+    <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardHeader className='border-b border-border pb-3'>
+        <CardTitle className='min-w-0 text-base leading-6 text-foreground' title={cicdFindingTitle(finding)}>
           {cicdFindingTitle(finding)}
         </CardTitle>
+        <div className='mt-1 truncate text-xs text-muted-foreground' title={finding.workflow}>
+          {compactWorkflowPath(finding.workflow) || 'Workflow'}{finding.line ? ` · 第 ${finding.line} 行` : ''}
+        </div>
       </CardHeader>
       <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
         <div className='flex flex-wrap gap-2'>
           <SeverityPill severity={finding.severity} />
-          <span className='rounded-full border border-red-400/25 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-200'>
+          <span className='rounded-full border border-red-400/30 bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-200'>
             风险 {finding.score ?? 0}
           </span>
-          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
+          <span className='rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:text-cyan-200'>
             {finding.scanner || 'CI/CD'}
           </span>
         </div>
@@ -8532,14 +9891,14 @@ function CicdInfoBlock({
     <div className={cn(
       'min-w-0 overflow-hidden rounded-md border p-3',
       isAction
-        ? 'border-cyan-300/30 bg-cyan-400/10 text-cyan-50'
-        : 'border-border bg-[color:var(--surface-inset)]'
+        ? 'border-cyan-300/60 bg-cyan-50/90 text-slate-900 shadow-sm dark:border-cyan-300/30 dark:bg-cyan-400/10 dark:text-cyan-50'
+        : 'border-border bg-[color:var(--surface-inset)] text-[color:var(--type-body)]'
     )}>
-      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', isAction ? 'text-cyan-100' : 'text-[color:var(--type-body)]')}>
+      <div className={cn('mb-2 flex items-center gap-1.5 text-sm font-bold', isAction ? 'text-cyan-800 dark:text-cyan-100' : 'text-[color:var(--type-body)]')}>
         {isAction ? <ShieldCheck className='size-4' /> : null}
         {title}
       </div>
-      <div className={cn('break-words text-body [overflow-wrap:anywhere]', mono && 'code-evidence', isAction && 'font-semibold text-cyan-50')}>
+      <div className={cn('break-words text-body [overflow-wrap:anywhere]', mono && 'code-evidence', isAction && 'font-semibold text-slate-800 dark:text-cyan-50')}>
         {text}
       </div>
     </div>
@@ -8948,16 +10307,22 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   const [activeIssueId, setActiveIssueId] = useState<string | null>(null)
   const [lastUploadedScanId, setLastUploadedScanId] = useState<string | null>(null)
   const [lastUploadedMaterialKey, setLastUploadedMaterialKey] = useState('')
-  const activeResult = result ?? (import.meta.env.DEV ? artifactTrustPreviewResult : undefined)
-  const isPreview = !result && Boolean(activeResult)
+  const activeResult = result ?? undefined
   const score = activeResult ? artifactTrustScore(activeResult) : 0
   const { value: displayedScore } = useAnimatedNumber(score, { durationMs: 900, delayMs: 80, resetKey: activeResult?.scan_id ?? activeResult?.artifact ?? 'empty' })
   const checks = activeResult?.checks ?? []
-  const issueChecks = checks.filter((check) => ['fail', 'missing', 'warn'].includes(check.status))
   const failCount = checks.filter((check) => check.status === 'fail').length
   const missingCount = checks.filter((check) => check.status === 'missing').length
   const warnCount = checks.filter((check) => check.status === 'warn').length
-  const activeIssue = issueChecks.find((check) => check.name === activeIssueId) ?? issueChecks[0]
+  const activeIssue = checks.find((check) => check.name === activeIssueId) ?? checks[0]
+  const hasVerificationResult = Boolean(
+    activeResult && (
+      activeResult.scan_id ||
+      activeResult.artifact ||
+      activeResult.digest ||
+      checks.length > 0
+    )
+  )
   const requiredFilesReady = artifactTrustRequiredFilesReady({
     artifactSelected: Boolean(artifactFile),
     attestationSelected: Boolean(attestationFile),
@@ -9001,27 +10366,34 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
   }
 
   return <div className='min-w-0 space-y-4'>
-    <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+    <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4'>
       <div className='flex flex-wrap items-start justify-between gap-4'>
         <div className='min-w-0'>
           <div className='flex items-center gap-3'>
-            <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+            <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-700 dark:text-cyan-100'>
               <Fingerprint className='size-5' />
             </span>
             <h2 className='text-page-title text-page-title-on-dark'>产物可信门禁</h2>
           </div>
           <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
           <div className='mt-3 flex flex-wrap items-center gap-2'>
-            <span className='meta-chip-dark' title={activeResult?.artifact}>{artifactFile?.name ?? activeResult?.artifact ?? '待上传产物'}</span>
-            <span className='meta-chip-dark' title={activeResult?.digest}>{activeResult?.digest ? shortDigest(activeResult.digest) : 'Digest 待计算'}</span>
-            <span className='meta-chip-dark'>{activeResult?.provenance.workflow ? compactWorkflowPath(activeResult.provenance.workflow) : 'Workflow 未解析'}</span>
-            {isPreview ? <span className='meta-chip-dark'>预览数据</span> : null}
+            {hasVerificationResult ? (
+              <>
+                <span className='meta-chip-dark' title={activeResult?.artifact}>{artifactFile?.name ?? activeResult?.artifact}</span>
+                <span className='meta-chip-dark' title={activeResult?.digest}>{activeResult?.digest ? shortDigest(activeResult.digest) : 'Digest 未提供'}</span>
+                <span className='meta-chip-dark'>{activeResult?.provenance.workflow ? compactWorkflowPath(activeResult.provenance.workflow) : '来源待确认'}</span>
+              </>
+            ) : (
+              <span className='inline-flex items-center rounded-full border border-amber-400/30 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:text-amber-200'>等待验证材料</span>
+            )}
           </div>
         </div>
-        <div className='flex flex-wrap gap-2'>
-          <Button className={actionButtonClass} size='sm' onClick={() => setSupplementOpen(true)}><Plus className='size-4' />补充文件</Button>
-          <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download className='size-4' />导出报告</Button>
-        </div>
+        {hasVerificationResult ? (
+          <div className='flex flex-wrap gap-2'>
+            <Button className={actionButtonClass} size='sm' onClick={() => setSupplementOpen(true)}><Plus className='size-4' />补充文件</Button>
+            <Button variant='outline' size='sm' onClick={() => activeResult?.report ? downloadReport(activeResult.report) : toast.error('暂无可导出的验证报告')}><Download className='size-4' />导出报告</Button>
+          </div>
+        ) : null}
       </div>
     </section>
 
@@ -9047,28 +10419,84 @@ function ArtifactTrustPanel({ result, workspaceId, onScanned }: {
       </DialogContent>
     </Dialog>
 
-    <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
-      <ArtifactGateOverviewCard
-        score={score}
-        displayedScore={displayedScore}
-        result={activeResult}
-        failCount={failCount}
-        missingCount={missingCount}
-        warnCount={warnCount}
+    {hasVerificationResult ? (
+      <div className='space-y-4'>
+        <ArtifactGateOverviewCard
+          score={score}
+          displayedScore={displayedScore}
+          result={activeResult}
+          failCount={failCount}
+          missingCount={missingCount}
+          warnCount={warnCount}
+        />
+        <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(340px,0.9fr)]'>
+          <ArtifactIssueList
+            checks={checks}
+            totalCount={checks.length}
+            selectedCheck={activeIssue}
+            onSelect={handleIssueClick}
+          />
+          <ArtifactIssueDetailPanel
+            check={activeIssue}
+            totalCount={checks.length}
+          />
+        </div>
+      </div>
+    ) : (
+      <ArtifactTrustEmptyState
+        scanning={scanning}
+        onUpload={() => setSupplementOpen(true)}
       />
-      <ArtifactIssueList
-        checks={issueChecks}
-        totalCount={checks.length}
-        selectedCheck={activeIssue}
-        onSelect={handleIssueClick}
-      />
-      <ArtifactIssueDetailPanel
-        check={activeIssue}
-        totalCount={issueChecks.length}
-      />
-    </div>
+    )}
 
   </div>
+}
+
+function ArtifactTrustEmptyState({
+  scanning,
+  onUpload,
+}: {
+  scanning: boolean
+  onUpload: () => void
+}) {
+  const materials = [
+    { label: '构建产物', detail: '必填', icon: PackageCheck },
+    { label: 'Provenance', detail: '必填', icon: FileText },
+    { label: '签名信息', detail: '按策略验证', icon: Fingerprint },
+    { label: '可信策略', detail: '可选配置', icon: ShieldCheck },
+  ]
+
+  return (
+    <section className='overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)]'>
+      <div className='mx-auto flex min-h-[390px] max-w-3xl flex-col items-center justify-center px-6 py-14 text-center'>
+        <span className='grid size-14 place-items-center rounded-md border border-cyan-400/25 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200'>
+          <PackageCheck className='size-7' />
+        </span>
+        <h3 className='mt-5 text-xl font-bold text-foreground'>尚未上传待验证产物</h3>
+        <p className='mt-2 max-w-xl text-sm leading-6 text-muted-foreground'>
+          上传构建产物及对应的 Attestation 或 Provenance，系统将在材料齐全后生成门禁结论。
+        </p>
+        <Button className={cn(actionButtonClass, 'mt-6')} onClick={onUpload} disabled={scanning}>
+          {scanning ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+          上传验证材料
+        </Button>
+      </div>
+      <div className='grid border-t border-border bg-[color:var(--surface-inset)] sm:grid-cols-2 xl:grid-cols-4'>
+        {materials.map((material) => {
+          const Icon = material.icon
+          return (
+            <div key={material.label} className='flex items-center gap-3 border-b border-border px-5 py-4 last:border-b-0 sm:border-r xl:border-b-0'>
+              <Icon className='size-4 shrink-0 text-cyan-700 dark:text-cyan-300' />
+              <div className='min-w-0'>
+                <div className='text-xs font-semibold text-foreground'>{material.label}</div>
+                <div className='mt-1 text-xs text-muted-foreground'>{material.detail}</div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
 }
 
 type ArtifactTrustScoreSource = 'fresh' | 'pending' | 'previous' | 'preview' | 'empty'
@@ -9117,7 +10545,7 @@ function ArtifactSupplementDialogContent({
           <div className='rounded-md border border-cyan-300/20 bg-cyan-400/5 p-3'>
             <div className='flex flex-wrap items-center justify-between gap-2'>
               <Label htmlFor='artifact-required-file' className='text-sm font-bold text-foreground'>Artifact 产物文件</Label>
-              <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-100'>必填</span>
+              <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-700 dark:text-red-100'>必填</span>
             </div>
             <Input
               id='artifact-required-file'
@@ -9130,7 +10558,7 @@ function ArtifactSupplementDialogContent({
           <div className='rounded-md border border-amber-300/20 bg-amber-400/5 p-3'>
             <div className='flex flex-wrap items-center justify-between gap-2'>
               <Label htmlFor='attestation-required-file' className='text-sm font-bold text-foreground'>Attestation / Provenance 来源证明</Label>
-              <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-100'>必填</span>
+              <span className='rounded-md border border-red-300/30 bg-red-400/10 px-2 py-1 text-xs font-bold text-red-700 dark:text-red-100'>必填</span>
             </div>
             <Input
               id='attestation-required-file'
@@ -9175,86 +10603,72 @@ function ArtifactGateOverviewCard({
   missingCount: number
   warnCount: number
 }) {
-  const radius = 44
-  const circumference = 2 * Math.PI * radius
-  const reducedMotion = useReducedMotion()
-  const clampedScore = Math.max(0, Math.min(100, score))
-  const gateSeverity: SecuritySeverity =
-    score >= 90 ? 'low' : score >= 75 ? 'medium' : score >= 55 ? 'high' : 'critical'
-  const tone = riskGaugeTone(gateSeverity)
   const passCount = result?.summary?.passed ?? result?.checks.filter((check) => check.status === 'pass').length ?? 0
   const statusData = [
-    { label: '失败', value: failCount, color: 'bg-red-400' },
-    { label: '缺失', value: missingCount, color: 'bg-orange-400' },
-    { label: '警告', value: warnCount, color: 'bg-amber-300' },
-    { label: '通过', value: passCount, color: 'bg-emerald-300' },
+    { label: '失败', value: failCount, color: 'bg-red-500' },
+    { label: '缺失', value: missingCount, color: 'bg-orange-500' },
+    { label: '警告', value: warnCount, color: 'bg-amber-400' },
+    { label: '通过', value: passCount, color: 'bg-emerald-500' },
   ]
   const statusTotal = Math.max(1, statusData.reduce((sum, item) => sum + item.value, 0))
+  const scoreTone = score >= 90
+    ? 'text-emerald-600 dark:text-emerald-300'
+    : score >= 75
+      ? 'text-amber-600 dark:text-amber-300'
+      : score >= 55
+        ? 'text-orange-600 dark:text-orange-300'
+        : 'text-red-600 dark:text-red-300'
+  const metrics = [
+    { label: '验证项', value: result?.summary?.check_count ?? result?.checks.length ?? 0 },
+    { label: '通过', value: passCount },
+    { label: '失败/缺失', value: failCount + missingCount },
+    { label: '警告', value: warnCount },
+  ]
 
   return (
-    <Card className='group h-[560px] min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-cyan-300/25 xl:h-[560px]'>
-      <CardContent className='relative flex h-full flex-col p-4'>
-        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
-        <div className='relative flex items-center justify-between gap-3'>
-          <div className='text-label text-muted-foreground'>门禁评分</div>
-          <ArtifactGateBadge score={score} />
-        </div>
-        <div className='relative flex flex-1 items-center justify-center py-4'>
-          <div className='relative size-44'>
-            <motion.div
-              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
-              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
-              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
-              <motion.circle
-                cx='56'
-                cy='56'
-                r={radius}
-                className={cn('fill-none', tone.stroke)}
-                strokeWidth='8'
-                strokeLinecap='round'
-                strokeDasharray={circumference}
-                initial={{ strokeDashoffset: circumference }}
-                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - clampedScore / 100) }}
-                transition={{ duration: 1.2, ease: 'easeOut' }}
-              />
-            </svg>
-            <div className='absolute inset-0 grid place-items-center'>
-              <div className='text-center'>
-                <div className={cn('text-metric text-5xl', tone.text)}>{displayedScore}</div>
-                <div className='mt-1 text-label'>门禁评分</div>
+    <Card className='overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardContent className='p-0'>
+        <div className='grid lg:grid-cols-[250px_minmax(0,1fr)]'>
+          <div className='flex items-center gap-4 border-b border-border px-5 py-5 lg:border-r lg:border-b-0'>
+            <span className='grid size-10 shrink-0 place-items-center rounded-md border border-cyan-400/25 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200'>
+              <Fingerprint className='size-5' />
+            </span>
+            <div className='min-w-0'>
+              <div className='flex items-end gap-2'>
+                <span className={cn('text-4xl font-bold leading-none tabular-nums', scoreTone)}>{displayedScore}</span>
+                <span className='pb-0.5 text-xs font-medium text-muted-foreground'>/ 100</span>
+              </div>
+              <div className='mt-2 flex items-center gap-2'>
+                <span className='text-xs font-semibold text-foreground'>可信评分</span>
+                <ArtifactGateBadge score={score} />
               </div>
             </div>
           </div>
-        </div>
-        <div className='grid grid-cols-3 gap-2 text-center'>
-          {[
-            ['失败', failCount, 'text-red-100'],
-            ['缺失', missingCount, 'text-orange-100'],
-            ['警告', warnCount, 'text-amber-100'],
-          ].map(([label, value, color]) => (
-            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
-              <div className='text-label'>{label}</div>
-              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+
+          <div className='min-w-0 px-5 py-4'>
+            <div className='grid grid-cols-2 sm:grid-cols-4 sm:divide-x sm:divide-border'>
+              {metrics.map((metric) => (
+                <div key={metric.label} className='min-w-0 px-4 first:pl-0 last:pr-0'>
+                  <div className='text-xs font-medium text-muted-foreground'>{metric.label}</div>
+                  <div className='mt-1 text-2xl font-bold tabular-nums text-foreground'>{metric.value}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
-          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
-            {statusData.map((item) => (
-              <span
-                key={item.label}
-                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
-                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / statusTotal) * 100)}%` }}
-              />
-            ))}
-          </div>
-          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
-            {statusData.map((item) => (
-              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
-            ))}
+            <div className='mt-4 border-t border-border pt-3'>
+              <div className='flex h-1.5 overflow-hidden rounded-full bg-[color:var(--muted)]'>
+                {statusData.filter((item) => item.value > 0).map((item) => (
+                  <span key={item.label} className={item.color} style={{ width: `${(item.value / statusTotal) * 100}%` }} />
+                ))}
+              </div>
+              <div className='mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground'>
+                {statusData.map((item) => (
+                  <span key={item.label} className='inline-flex items-center gap-1.5 tabular-nums'>
+                    <span className={cn('size-2 rounded-sm', item.color)} />
+                    {item.label} {item.value}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </CardContent>
@@ -9274,50 +10688,59 @@ function ArtifactIssueList({
   onSelect: (name: string) => void
 }) {
   return (
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
+    <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardHeader className='border-b border-border pb-3'>
         <div className='flex flex-wrap items-start justify-between gap-3'>
           <div className='min-w-0'>
             <div className='flex items-center gap-2'>
-              <CardTitle className='text-section-title'>门禁项</CardTitle>
+              <CardTitle className='text-section-title'>验证项目</CardTitle>
               <span className='meta-chip'>{checks.length}/{totalCount}</span>
             </div>
-            <div className='mt-1 truncate text-xs text-muted-foreground'>
-              {selectedCheck ? artifactCheckTitle(selectedCheck.name) : '产物可信门禁'}
-            </div>
+            <div className='mt-1 text-xs text-muted-foreground'>查看每项校验状态与关键证据</div>
           </div>
         </div>
       </CardHeader>
-      <CardContent className='min-h-0 flex-1'>
+      <CardContent className='min-h-0 flex-1 p-0'>
         {checks.length ? (
-          <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
-            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
-            {checks.map((check) => {
-              const selected = check.name === selectedCheck?.name
-              const severity = check.severity ? normalizeSeverity(check.severity) : undefined
-              return (
-                <motion.button
-                  key={check.name}
-                  type='button'
-                  layout
-                  onClick={() => onSelect(check.name)}
-                  className={cn(
-                    'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]',
-                    selected
-                      ? 'border-cyan-300/35 bg-cyan-400/10'
-                      : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
-                  )}
-                >
-                  {severity ? <SeverityPill severity={severity} /> : <span className='inline-flex h-[26px] min-w-[44px] items-center justify-center rounded-full border border-slate-300/20 px-2.5 text-[13px] font-bold text-muted-foreground'>信息</span>}
-                  <span className='min-w-0 truncate text-sm font-semibold text-foreground' title={artifactCheckTitle(check.name)}>{artifactCheckTitle(check.name)}</span>
-                  <span className={cn('shrink-0 inline-flex h-6 items-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span>
-                </motion.button>
-              )
-            })}
+          <div className='flex h-full min-h-0 flex-col'>
+            <div className='hidden grid-cols-[minmax(0,1.15fr)_minmax(160px,0.85fr)_72px] gap-4 border-b border-border bg-[color:var(--surface-inset)] px-5 py-2 text-[11px] font-semibold text-muted-foreground md:grid'>
+              <span>检查项</span>
+              <span>关键证据</span>
+              <span className='text-right'>状态</span>
+            </div>
+            <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+              {checks.map((check) => {
+                const selected = check.name === selectedCheck?.name
+                const severity = check.severity ? normalizeSeverity(check.severity) : undefined
+                return (
+                  <motion.button
+                    key={check.name}
+                    type='button'
+                    layout
+                    onClick={() => onSelect(check.name)}
+                    className={cn(
+                      'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border/70 px-5 py-3.5 text-left transition-colors md:grid-cols-[minmax(0,1.15fr)_minmax(160px,0.85fr)_72px]',
+                      selected
+                        ? 'bg-cyan-500/10 shadow-[inset_3px_0_0_rgb(6,182,212)]'
+                        : 'hover:bg-[color:var(--surface-inset)]',
+                    )}
+                  >
+                    <span className='flex min-w-0 items-center gap-3'>
+                      {severity ? <SeverityPill severity={severity} /> : <span className='inline-flex h-[26px] min-w-[44px] items-center justify-center rounded-full border border-slate-300/30 px-2.5 text-[13px] font-bold text-muted-foreground'>信息</span>}
+                      <span className='min-w-0'>
+                        <span className='block truncate text-sm font-semibold text-foreground' title={artifactCheckTitle(check.name)}>{artifactCheckTitle(check.name)}</span>
+                        <span className='mt-1 block truncate text-xs text-muted-foreground md:hidden'>{check.evidence || '暂无证据摘要'}</span>
+                      </span>
+                    </span>
+                    <span className='hidden truncate text-xs text-muted-foreground md:block' title={check.evidence || ''}>{check.evidence || '暂无证据摘要'}</span>
+                    <span className={cn('inline-flex h-6 items-center justify-center rounded-full border px-2 text-xs font-bold', artifactCheckClass(check.status))}>{artifactCheckLabel(check.status)}</span>
+                  </motion.button>
+                )
+              })}
             </div>
           </div>
         ) : (
-          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>未发现失败、缺失或警告项</div>
+          <div className='grid h-full place-items-center p-6 text-center text-sm text-muted-foreground'>暂无验证项目</div>
         )}
       </CardContent>
     </Card>
@@ -9333,13 +10756,13 @@ function ArtifactIssueDetailPanel({
 }) {
   if (!check) {
     return (
-      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-        <CardHeader className='pb-3'>
-          <CardTitle className='min-w-0 truncate text-base text-foreground'>风险属性</CardTitle>
+      <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+        <CardHeader className='border-b border-border pb-3'>
+          <CardTitle className='min-w-0 truncate text-base text-foreground'>验证详情</CardTitle>
         </CardHeader>
         <CardContent className='min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
           <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>
-            {totalCount ? '选择左侧条目查看属性。' : '当前没有需要处理的门禁项。'}
+            {totalCount ? '选择左侧验证项目查看证据。' : '当前没有可查看的验证项目。'}
           </div>
         </CardContent>
       </Card>
@@ -9349,11 +10772,12 @@ function ArtifactIssueDetailPanel({
   const severity = check.severity ? normalizeSeverity(check.severity) : undefined
 
   return (
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
-        <CardTitle className='min-w-0 truncate text-base text-foreground' title={artifactCheckTitle(check.name)}>
+    <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardHeader className='border-b border-border pb-3'>
+        <CardTitle className='min-w-0 text-base leading-6 text-foreground' title={artifactCheckTitle(check.name)}>
           {artifactCheckTitle(check.name)}
         </CardTitle>
+        <div className='mt-1 truncate font-mono text-xs text-muted-foreground' title={check.name}>{check.name}</div>
       </CardHeader>
       <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
         <div className='flex flex-wrap gap-2'>
@@ -9361,7 +10785,7 @@ function ArtifactIssueDetailPanel({
             {artifactCheckLabel(check.status)}
           </span>
           {severity ? <SeverityPill severity={severity} /> : null}
-          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
+          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:text-cyan-100'>
             Artifact Gate
           </span>
         </div>
@@ -9446,8 +10870,6 @@ function formatArtifactTrustGeneratedAt(value?: string | null) {
   if (Number.isNaN(parsed.getTime())) return text.slice(0, 19).replace('T', ' ')
   return parsed.toLocaleString('zh-CN', { hour12: false })
 }
-
-const artifactTrustPreviewResult: ArtifactTrustResult = { scan_id: 'preview', artifact: 'preview-release.tar.gz', digest: 'sha256:preview-digest-not-a-real-value', trust_score: 72, level: 'block', checks: [{ name: 'signature_verified', status: 'fail', severity: 'high', evidence: '签名材料未提供' }, { name: 'attestation_max_age', status: 'warn', severity: 'medium', evidence: 'attestation 超出策略时效' }, { name: 'provenance_predicate_type_slsa', status: 'pass', evidence: 'SLSA provenance 已解析' }], findings: [], provenance: {}, policy: {}, tools: [], summary: { check_count: 3, finding_count: 2, trust_score: 72, level: 'block', risk_score: 72, risk_level: 'high', passed: 1, failed: 1, warnings: 1, missing: 0, skipped: 0 }, report: '', warnings: [] }
 
 type EvidenceKey = 'artifact' | 'digest' | 'signature' | 'attestation' | 'provenance' | 'policy'
 type ArtifactDetail = { title: string; rows: Array<[string, string]>; evidence?: string; advice?: string; severity?: SecuritySeverity }
@@ -9864,7 +11286,15 @@ function applyMultimodalAuditToWorkspace(workspace: SecurityWorkspace, result: M
 
 type DisplayedLogEvent = SecurityLogEvent & {
   id?: string
+  rule_id?: string
+  title?: string
+  score?: number
   evidence?: string
+  src_ip?: string | null
+  dst_ip?: string | null
+  user?: string | null
+  path?: string | null
+  count?: number | null
   fingerprint?: string
   dedupe_key?: string
   occurrences?: number
@@ -9901,6 +11331,58 @@ function logRecommendationText(log: DisplayedLogEvent) {
   return '复核日志上下文、请求来源和关联资产，确认是否需要阻断会话、隔离实例或补充运行期证据。'
 }
 
+function logSourceEndpoint(log: DisplayedLogEvent) {
+  return log.src_ip || log.user || log.source || '-'
+}
+
+function logTargetEndpoint(log: DisplayedLogEvent) {
+  return log.dst_ip || log.path || log.signal || '-'
+}
+
+function logTimeRange(logs: DisplayedLogEvent[]) {
+  const values = logs.map((log) => log.time).filter(Boolean).sort()
+  if (!values.length) return '-'
+  if (values.length === 1 || values[0] === values[values.length - 1]) return values[0]
+  return `${values[0]} - ${values[values.length - 1]}`
+}
+
+function formatLogEvidence(text: string) {
+  const value = text.trim()
+  if (!value) return '未提供证据片段'
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+function logStructuredRecord(log: DisplayedLogEvent) {
+  const evidence = log.evidence?.trim()
+  if (evidence) {
+    try {
+      return JSON.stringify(JSON.parse(evidence), null, 2)
+    } catch {
+      // 非 JSON 证据会保留在结构化记录中。
+    }
+  }
+  return JSON.stringify({
+    id: log.id,
+    rule_id: log.rule_id,
+    time: log.time,
+    source: log.source,
+    event: log.event,
+    signal: log.signal,
+    severity: log.severity,
+    confidence: log.confidence,
+    src_ip: log.src_ip,
+    dst_ip: log.dst_ip,
+    user: log.user,
+    path: log.path,
+    count: log.count,
+    evidence: log.evidence,
+  }, null, 2)
+}
+
 function LogsPanel({
   logs,
   audit,
@@ -9924,33 +11406,15 @@ function LogsPanel({
   const [baselineBusy, setBaselineBusy] = useState(false)
   const [activeLogEventId, setActiveLogEventId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SecuritySeverity | 'all'>('all')
+  const [logQuery, setLogQuery] = useState('')
   const fileFindings = audit?.findings ?? []
   const realtimeFindings = realtime?.findings ?? []
   const auditFiles = audit?.files ?? []
   const displayedLogs: DisplayedLogEvent[] = fileFindings.length
-      ? fileFindings.map((finding) => ({
-        id: finding.id,
-        time: finding.time,
-        source: finding.source,
-        event: finding.event,
-        severity: finding.severity,
-        signal: finding.signal,
-        confidence: finding.confidence,
-        evidence: finding.evidence,
-      }))
+      ? fileFindings.map((finding) => ({ ...finding }))
     : realtimeFindings.length
       ? realtimeFindings.map((finding) => ({
-          id: finding.id,
-          time: finding.time,
-          source: finding.source,
-          event: finding.event,
-          severity: finding.severity,
-          signal: finding.signal,
-          confidence: finding.confidence,
-          evidence: finding.evidence,
-          fingerprint: finding.fingerprint,
-          dedupe_key: finding.dedupe_key,
-          occurrences: finding.occurrences,
+          ...finding,
           realtime: true,
         }))
     : logs
@@ -9963,7 +11427,22 @@ function LogsPanel({
     const confidence = (log.confidence ?? 0) * (log.confidence && log.confidence <= 1 ? 100 : 1)
     return confidence >= 90 ? 'high' : confidence >= 70 ? 'medium' : 'low'
   }
-  const filteredLogs = displayedLogs.filter((log) => severityFilter === 'all' || runtimeSeverity(log) === severityFilter)
+  const normalizedLogQuery = logQuery.trim().toLowerCase()
+  const filteredLogs = displayedLogs.filter((log) => {
+    if (severityFilter !== 'all' && runtimeSeverity(log) !== severityFilter) return false
+    if (!normalizedLogQuery) return true
+    return [
+      log.event,
+      log.signal,
+      log.source,
+      log.rule_id,
+      log.src_ip,
+      log.dst_ip,
+      log.user,
+      log.path,
+      log.evidence,
+    ].some((value) => String(value ?? '').toLowerCase().includes(normalizedLogQuery))
+  })
   const activeLog = filteredLogs.find((log) => (log.id ?? `${log.time}-${log.event}`) === activeLogEventId) ?? filteredLogs[0]
   useEffect(() => {
     void refreshRealtimeLogs(false)
@@ -10074,15 +11553,13 @@ function LogsPanel({
     }
   }
 
-  void ignoreFinding
-
   return (
     <div className='space-y-4'>
-      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-[0_14px_34px_rgba(2,6,23,0.24)] backdrop-blur'>
+      <section className='rounded-md border border-border bg-[color:var(--surface-card)] p-4 shadow-none' style={{ boxShadow: 'none' }}>
         <div className='flex flex-wrap items-start justify-between gap-4'>
           <div className='min-w-0'>
             <div className='flex items-center gap-3'>
-              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-100'>
+              <span className='grid size-9 place-items-center rounded-md border border-cyan-300/25 bg-cyan-400/10 text-cyan-700 dark:text-cyan-100'>
                 <Search className='size-5' />
               </span>
               <h2 className='text-page-title text-page-title-on-dark'>日志运行期印证</h2>
@@ -10090,10 +11567,7 @@ function LogsPanel({
             <div className='mt-2 h-px w-56 bg-gradient-to-r from-cyan-300/55 via-cyan-300/20 to-transparent' />
             <div className='mt-3 flex flex-wrap items-center gap-2'>
               <span className='meta-chip-dark'>{sourceName}</span>
-              <span className='meta-chip-dark'>{selectedLogFileCount} 日志文件</span>
-              <span className='meta-chip-dark'>{parsedEventCount} 解析事件</span>
-              <span className='meta-chip-dark'>{findingCount} 风险事件</span>
-              {realtime?.state.baseline ? <span className='meta-chip-dark'>基线 {realtime.state.baseline.finding_count ?? 0} 项</span> : null}
+              {realtime?.state.baseline ? <span className='meta-chip-dark'>已建立基线</span> : <span className='meta-chip-dark'>尚未建立基线</span>}
             </div>
           </div>
           <div className='flex flex-wrap items-center justify-end gap-2'>
@@ -10132,23 +11606,25 @@ function LogsPanel({
         </div>
       </section>
 
-      <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,28fr)_minmax(0,47fr)_minmax(0,25fr)]'>
-        <LogRiskOverviewCard
-          score={runtimeRiskScore}
-          files={selectedLogFileCount}
-          parsedEvents={parsedEventCount}
-          findingCount={findingCount}
-          logs={displayedLogs}
-          conclusionText={conclusionText}
-          conclusionTags={conclusionTags}
-          runtimeSeverity={runtimeSeverity}
-        />
+      <LogRiskOverviewCard
+        score={runtimeRiskScore}
+        files={selectedLogFileCount}
+        parsedEvents={parsedEventCount}
+        findingCount={findingCount}
+        logs={displayedLogs}
+        conclusionText={conclusionText}
+        conclusionTags={conclusionTags}
+        runtimeSeverity={runtimeSeverity}
+      />
+      <div className='grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(360px,0.9fr)]'>
         <LogEventListCard
           logs={filteredLogs}
           totalCount={displayedLogs.length}
           activeLog={activeLog}
           severityFilter={severityFilter}
           onSeverityFilter={setSeverityFilter}
+          query={logQuery}
+          onQuery={setLogQuery}
           onSelect={(log) => setActiveLogEventId(log.id ?? `${log.time}-${log.event}`)}
           runtimeSeverity={runtimeSeverity}
         />
@@ -10156,6 +11632,8 @@ function LogsPanel({
           log={activeLog}
           totalCount={filteredLogs.length}
           runtimeSeverity={runtimeSeverity}
+          ignoreBusy={realtimeBusy}
+          onIgnore={(log) => void ignoreFinding(log)}
         />
       </div>
     </div>
@@ -10181,97 +11659,84 @@ function LogRiskOverviewCard({
   conclusionTags: string[]
   runtimeSeverity: (log: DisplayedLogEvent) => SecuritySeverity
 }) {
-  const radius = 44
-  const circumference = 2 * Math.PI * radius
-  const clampedScore = Math.max(0, Math.min(100, score))
   const riskLevel = runtimeRiskLevel(score)
-  const tone = riskGaugeTone(riskLevel)
-  const reducedMotion = useReducedMotion()
   const { value: displayScore } = useAnimatedNumber(score, {
     stiffness: 90,
     damping: 18,
-    delayMs: 120,
-    durationMs: 1500,
-    respectReducedMotion: false,
+    delayMs: 80,
+    durationMs: 900,
     resetKey: `${score}-${findingCount}-${parsedEvents}`,
   })
   const severityData = [
-    { label: '高危', value: logs.filter((log) => runtimeSeverity(log) === 'high').length, color: 'bg-red-400' },
-    { label: '中危', value: logs.filter((log) => runtimeSeverity(log) === 'medium').length, color: 'bg-amber-300' },
-    { label: '低危', value: logs.filter((log) => runtimeSeverity(log) === 'low').length, color: 'bg-cyan-300' },
+    { label: '高危', value: logs.filter((log) => runtimeSeverity(log) === 'high').length, color: 'bg-red-500' },
+    { label: '中危', value: logs.filter((log) => runtimeSeverity(log) === 'medium').length, color: 'bg-amber-400' },
+    { label: '低危', value: logs.filter((log) => runtimeSeverity(log) === 'low').length, color: 'bg-cyan-400' },
   ]
   const severityTotal = Math.max(1, severityData.reduce((sum, item) => sum + item.value, 0))
+  const scoreTone = score >= 90
+    ? 'text-red-600 dark:text-red-300'
+    : score >= 75
+      ? 'text-orange-600 dark:text-orange-300'
+      : score >= 55
+        ? 'text-amber-600 dark:text-amber-300'
+        : 'text-emerald-600 dark:text-emerald-300'
+  const metrics = [
+    { label: '日志文件', value: files },
+    { label: '解析事件', value: parsedEvents },
+    { label: '风险事件', value: findingCount },
+    { label: '事件窗口', value: logTimeRange(logs), wide: true },
+  ]
 
   return (
-    <Card className='group h-[560px] min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-cyan-300/25 xl:h-[560px]'>
-      <CardContent className='relative flex h-full flex-col p-4'>
-        <div className={cn('absolute -right-10 -top-12 size-32 rounded-full blur-3xl', tone.glow)} />
-        <div className='relative flex items-center justify-between gap-3'>
-          <div className='text-label text-muted-foreground'>风险评分</div>
-          <SeverityPill severity={riskLevel} />
-        </div>
-        <div className='relative flex flex-1 items-center justify-center py-4'>
-          <div className='relative size-44'>
-            <motion.div
-              className={cn('absolute inset-3 rounded-full blur-xl', tone.pulse)}
-              animate={reducedMotion ? undefined : { opacity: [0.12, 0.25, 0.12], scale: [0.96, 1.04, 0.96] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            <svg viewBox='0 0 112 112' className='relative size-full -rotate-90'>
-              <circle cx='56' cy='56' r={radius} className='fill-none stroke-[color:var(--muted)]' strokeWidth='8' />
-              <motion.circle
-                cx='56'
-                cy='56'
-                r={radius}
-                className={cn('fill-none', tone.stroke)}
-                strokeWidth='8'
-                strokeLinecap='round'
-                strokeDasharray={circumference}
-                initial={{ strokeDashoffset: circumference }}
-                animate={{ strokeDashoffset: reducedMotion ? 0 : circumference * (1 - clampedScore / 100) }}
-                transition={{ duration: 1.2, ease: 'easeOut' }}
-              />
-            </svg>
-            <div className='absolute inset-0 grid place-items-center'>
-              <div className='text-center'>
-                <div className={cn('text-metric text-5xl', tone.text)}>{displayScore}</div>
-                <div className='mt-1 text-label'>风险评分</div>
+    <Card className='min-w-0 overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardContent className='p-0'>
+        <div className='grid lg:grid-cols-[250px_minmax(0,1fr)]'>
+          <div className='flex items-center gap-4 border-b border-border px-5 py-5 lg:border-r lg:border-b-0'>
+            <span className='grid size-10 shrink-0 place-items-center rounded-md border border-red-400/25 bg-red-500/10 text-red-600 dark:text-red-300'>
+              <ShieldAlert className='size-5' />
+            </span>
+            <div className='min-w-0'>
+              <div className='flex items-end gap-2'>
+                <span className={cn('text-4xl font-bold leading-none tabular-nums', scoreTone)}>{displayScore}</span>
+                <span className='pb-0.5 text-xs font-medium text-muted-foreground'>/ 100</span>
+              </div>
+              <div className='mt-2 flex items-center gap-2'>
+                <span className='text-xs font-semibold text-foreground'>最高事件风险</span>
+                <SeverityPill severity={riskLevel} />
               </div>
             </div>
           </div>
-        </div>
-        <div className='mb-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] px-3 py-2'>
-          <div className='line-clamp-2 text-xs leading-5 text-muted-foreground' title={conclusionText}>{conclusionText}</div>
-          <div className='mt-2 flex flex-wrap gap-1.5'>
-            {conclusionTags.slice(0, 2).map((tag) => <span key={tag} className='meta-chip'>{tag}</span>)}
-          </div>
-        </div>
-        <div className='grid grid-cols-3 gap-2'>
-          {[
-            ['日志文件', files, 'text-cyan-100'],
-            ['解析事件', parsedEvents, 'text-slate-100'],
-            ['风险事件', findingCount, 'text-orange-100'],
-          ].map(([label, value, color]) => (
-            <div key={label} className='rounded-md border border-border bg-[color:var(--surface-inset)] px-2 py-2 text-center'>
-              <div className='text-label'>{label}</div>
-              <div className={cn('mt-1 text-xl font-bold tabular-nums', color)}>{value}</div>
+          <div className='min-w-0 px-5 py-4'>
+            <div className='grid grid-cols-2 gap-y-4 sm:grid-cols-[0.65fr_0.65fr_0.65fr_1.55fr] sm:divide-x sm:divide-border'>
+              {metrics.map((metric) => (
+                <div key={metric.label} className='min-w-0 px-3 first:pl-0 last:pr-0'>
+                  <div className='text-xs font-medium text-muted-foreground'>{metric.label}</div>
+                  <div className={cn('mt-1 font-bold text-foreground', metric.wide ? 'truncate text-sm' : 'text-2xl tabular-nums')} title={String(metric.value)}>
+                    {metric.value}
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className='mt-3 rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-2'>
-          <div className='flex h-1.5 overflow-hidden rounded-full bg-slate-800'>
-            {severityData.map((item) => (
-              <span
-                key={item.label}
-                className={cn('transition-all duration-300', item.value > 0 ? item.color : 'bg-slate-700/70')}
-                style={{ width: `${Math.max(item.value > 0 ? 10 : 6, (item.value / severityTotal) * 100)}%` }}
-              />
-            ))}
-          </div>
-          <div className='mt-2 flex flex-wrap items-center justify-between gap-2 text-label'>
-            {severityData.map((item) => (
-              <span key={item.label} className='tabular-nums'>{item.label} {item.value}</span>
-            ))}
+            <div className='mt-4 grid gap-3 border-t border-border pt-3 lg:grid-cols-[minmax(0,1fr)_auto]'>
+              <div className='flex min-w-0 items-start gap-2'>
+                <ShieldCheck className='mt-0.5 size-4 shrink-0 text-cyan-700 dark:text-cyan-300' />
+                <span className='line-clamp-2 text-xs leading-5 text-muted-foreground' title={conclusionText}>{conclusionText}</span>
+              </div>
+              <div className='flex flex-wrap items-center gap-3 text-xs text-muted-foreground'>
+                {severityData.map((item) => (
+                  <span key={item.label} className='inline-flex items-center gap-1.5 tabular-nums'>
+                    <span className={cn('size-2 rounded-sm', item.color)} />
+                    {item.label} {item.value}
+                  </span>
+                ))}
+                {conclusionTags.slice(0, 2).map((tag) => <span key={tag} className='meta-chip'>{tag}</span>)}
+              </div>
+            </div>
+            <div className='mt-3 flex h-1.5 overflow-hidden rounded-full bg-[color:var(--muted)]'>
+              {severityData.filter((item) => item.value > 0).map((item) => (
+                <span key={item.label} className={item.color} style={{ width: `${(item.value / severityTotal) * 100}%` }} />
+              ))}
+            </div>
           </div>
         </div>
       </CardContent>
@@ -10285,6 +11750,8 @@ function LogEventListCard({
   activeLog,
   severityFilter,
   onSeverityFilter,
+  query,
+  onQuery,
   onSelect,
   runtimeSeverity,
 }: {
@@ -10293,39 +11760,58 @@ function LogEventListCard({
   activeLog?: DisplayedLogEvent
   severityFilter: SecuritySeverity | 'all'
   onSeverityFilter: (value: SecuritySeverity | 'all') => void
+  query: string
+  onQuery: (value: string) => void
   onSelect: (log: DisplayedLogEvent) => void
   runtimeSeverity: (log: DisplayedLogEvent) => SecuritySeverity
 }) {
   return (
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
+    <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardHeader className='border-b border-border pb-3'>
         <div className='flex flex-wrap items-start justify-between gap-3'>
           <div className='min-w-0'>
             <div className='flex items-center gap-2'>
               <CardTitle className='text-section-title'>运行期风险事件</CardTitle>
               <span className='meta-chip'>{logs.length}/{totalCount}</span>
             </div>
-            <div className='mt-1 truncate text-xs text-muted-foreground'>
-              {activeLog ? activeLog.event : '日志印证'}
-            </div>
+            <div className='mt-1 text-xs text-muted-foreground'>按风险等级、来源和时间复核运行期异常</div>
           </div>
-          <Select value={severityFilter} onValueChange={(value) => onSeverityFilter(value as SecuritySeverity | 'all')}>
-            <SelectTrigger size='sm' className='h-7 min-w-[104px] rounded-md border-border bg-[color:var(--surface-inset)] text-foreground'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='all'>全部等级</SelectItem>
-              <SelectItem value='high'>高危</SelectItem>
-              <SelectItem value='medium'>中危</SelectItem>
-              <SelectItem value='low'>低危</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className='flex flex-wrap items-center gap-2'>
+            <div className='relative w-[220px] max-w-full'>
+              <Search className='pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground' />
+              <Input
+                value={query}
+                onChange={(event) => onQuery(event.target.value)}
+                placeholder='搜索事件、IP、规则或路径'
+                className='h-8 bg-[color:var(--surface-inset)] pl-9 text-xs'
+              />
+            </div>
+            <Select value={severityFilter} onValueChange={(value) => onSeverityFilter(value as SecuritySeverity | 'all')}>
+              <SelectTrigger size='sm' className='h-8 min-w-[104px] rounded-md border-border bg-[color:var(--surface-inset)] text-foreground'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部等级</SelectItem>
+                <SelectItem value='high'>高危</SelectItem>
+                <SelectItem value='medium'>中危</SelectItem>
+                <SelectItem value='low'>低危</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
-      <CardContent className='min-h-0 flex-1'>
+      <CardContent className='min-h-0 flex-1 p-0'>
         {logs.length ? (
-          <div className='h-full min-h-0 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
-            <div className='space-y-1.5 rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
+          <div className='flex h-full min-h-0 flex-col'>
+            <div className='hidden grid-cols-[88px_minmax(200px,1.25fr)_minmax(100px,0.7fr)_minmax(110px,0.75fr)_150px_72px] gap-3 border-b border-border bg-[color:var(--surface-inset)] px-5 py-2 text-[11px] font-semibold text-muted-foreground lg:grid'>
+              <span>等级</span>
+              <span>事件</span>
+              <span>来源</span>
+              <span>目标</span>
+              <span>发生时间</span>
+              <span className='text-right'>置信度</span>
+            </div>
+            <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] [scrollbar-width:thin]'>
               {logs.map((log) => {
                 const selected = (log.id ?? `${log.time}-${log.event}`) === (activeLog?.id ?? `${activeLog?.time}-${activeLog?.event}`)
                 return (
@@ -10335,42 +11821,62 @@ function LogEventListCard({
                     layout
                     onClick={() => onSelect(log)}
                     className={cn(
-                      'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2.5 py-2 text-left text-xs transition-[border-color,background-color]',
+                      'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 px-5 py-3.5 text-left text-xs transition-colors lg:grid-cols-[88px_minmax(200px,1.25fr)_minmax(100px,0.7fr)_minmax(110px,0.75fr)_150px_72px]',
                       selected
-                        ? 'border-cyan-300/35 bg-cyan-400/10'
-                        : 'border-slate-400/10 bg-[color:var(--surface-inset)] hover:border-slate-300/25 hover:bg-[color:var(--surface-inset)]',
+                        ? 'bg-cyan-500/10 shadow-[inset_3px_0_0_rgb(6,182,212)]'
+                        : 'hover:bg-[color:var(--surface-inset)]',
                     )}
                   >
                     <SeverityPill severity={runtimeSeverity(log)} />
                     <div className='min-w-0'>
                       <div className='truncate text-sm font-semibold text-foreground' title={log.event}>{log.event}</div>
-                      <div className='mt-0.5 truncate text-[11px] text-muted-foreground' title={`${log.source} · ${log.time}`}>
-                        {log.source} · {log.time}
+                      <div className='mt-1 truncate font-mono text-[11px] text-muted-foreground' title={log.rule_id || log.signal}>
+                        {log.rule_id || log.signal}
                       </div>
                     </div>
-                    <span className='meta-chip tabular-nums'>{logConfidencePercent(log)}%</span>
+                    <span className='hidden truncate text-xs text-muted-foreground lg:block' title={logSourceEndpoint(log)}>{logSourceEndpoint(log)}</span>
+                    <span className='hidden truncate text-xs text-muted-foreground lg:block' title={logTargetEndpoint(log)}>{logTargetEndpoint(log)}</span>
+                    <span className='hidden truncate text-xs tabular-nums text-muted-foreground lg:block' title={log.time}>{log.time}</span>
+                    <span className='meta-chip justify-self-end tabular-nums'>{logConfidencePercent(log)}%</span>
                   </motion.button>
                 )
               })}
             </div>
           </div>
         ) : (
-          <div className='rounded-md border border-slate-400/10 bg-[color:var(--surface-inset)] p-6 text-center text-sm text-muted-foreground'>暂无符合条件的运行期风险事件</div>
+          <div className='grid h-full place-items-center p-6 text-center text-sm text-muted-foreground'>暂无符合条件的运行期风险事件</div>
         )}
       </CardContent>
     </Card>
   )
 }
 
-function LogEvidenceBlock({ text }: { text: string }) {
+function LogEvidenceBlock({ text, title = '关键证据' }: { text: string; title?: string }) {
+  const formattedText = formatLogEvidence(text)
+
+  async function copyEvidence() {
+    try {
+      await navigator.clipboard.writeText(formattedText)
+      toast.success('日志内容已复制')
+    } catch {
+      toast.error('复制失败，请手动选择内容')
+    }
+  }
+
   return (
-    <div className='min-w-0 overflow-hidden rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
-      <div className='mb-2 text-sm font-bold text-[color:var(--type-body)]'>关键证据</div>
+    <div className='min-w-0 overflow-hidden rounded-md border border-slate-800 bg-slate-950'>
+      <div className='flex items-center justify-between gap-3 border-b border-slate-800 px-3 py-2'>
+        <div className='text-xs font-semibold text-slate-200'>{title}</div>
+        <Button type='button' variant='ghost' size='sm' className='h-7 px-2 text-slate-300 hover:bg-slate-800 hover:text-white' onClick={() => void copyEvidence()}>
+          <Copy className='size-3.5' />
+          复制
+        </Button>
+      </div>
       <pre
-        className='max-h-[220px] min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-md border border-cyan-300/25 bg-[color:var(--surface-panel)] px-3 py-2 font-mono text-xs font-semibold leading-5 text-cyan-50 [overflow-wrap:anywhere] [scrollbar-width:thin]'
-        title={text}
+        className='max-h-[330px] min-w-0 overflow-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs font-medium leading-6 text-slate-100 [overflow-wrap:anywhere] [scrollbar-width:thin]'
+        title={formattedText}
       >
-        {text}
+        {formattedText}
       </pre>
     </div>
   )
@@ -10380,15 +11886,19 @@ function LogEventDetailWorkbench({
   log,
   totalCount,
   runtimeSeverity,
+  ignoreBusy,
+  onIgnore,
 }: {
   log?: DisplayedLogEvent
   totalCount: number
   runtimeSeverity: (log: DisplayedLogEvent) => SecuritySeverity
+  ignoreBusy: boolean
+  onIgnore: (log: DisplayedLogEvent) => void
 }) {
   if (!log) {
     return (
-      <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-        <CardHeader className='pb-3'>
+      <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+        <CardHeader className='border-b border-border pb-3'>
           <CardTitle className='min-w-0 truncate text-base text-foreground'>当前事件详情</CardTitle>
         </CardHeader>
         <CardContent className='min-w-0 flex-1 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
@@ -10402,30 +11912,68 @@ function LogEventDetailWorkbench({
 
   const severity = runtimeSeverity(log)
   return (
-    <Card className='flex h-[560px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-[0_14px_34px_rgba(2,6,23,0.24)] xl:h-[560px]'>
-      <CardHeader className='pb-3'>
+    <Card className='flex h-[620px] min-w-0 flex-col overflow-hidden rounded-md border-border bg-[color:var(--surface-card)] shadow-none' style={{ boxShadow: 'none' }}>
+      <CardHeader className='border-b border-border pb-3'>
         <CardTitle className='min-w-0 truncate text-base text-foreground' title={log.event}>
           {log.event}
         </CardTitle>
+        <div className='mt-1 truncate font-mono text-xs text-muted-foreground' title={log.rule_id || log.id}>
+          {log.rule_id || log.id || '规则待确认'}
+        </div>
       </CardHeader>
-      <CardContent className='min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
-        <div className='flex flex-wrap gap-2'>
-          <SeverityPill severity={severity} />
-          <span className='rounded-full border border-orange-300/25 bg-orange-400/10 px-2 py-0.5 text-xs font-medium text-orange-100'>
-            {log.signal}
-          </span>
-          <span className='rounded-full border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-100'>
-            {logConfidencePercent(log)}%
-          </span>
+      <Tabs defaultValue='overview' className='flex min-h-0 flex-1 flex-col'>
+        <TabsList className='mx-4 mt-3 grid h-9 grid-cols-4 rounded-md'>
+          <TabsTrigger value='overview'>概览</TabsTrigger>
+          <TabsTrigger value='evidence'>证据</TabsTrigger>
+          <TabsTrigger value='raw'>原始记录</TabsTrigger>
+          <TabsTrigger value='action'>处置</TabsTrigger>
+        </TabsList>
+        <div className='min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 [scrollbar-gutter:stable] [scrollbar-width:thin]'>
+          <TabsContent value='overview' className='mt-3 space-y-3'>
+            <div className='flex flex-wrap gap-2'>
+              <SeverityPill severity={severity} />
+              <span className='rounded-full border border-orange-300/30 bg-orange-400/10 px-2 py-0.5 text-xs font-medium text-orange-700 dark:text-orange-200'>
+                {log.signal}
+              </span>
+              <span className='rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2 py-0.5 text-xs font-medium text-cyan-700 dark:text-cyan-200'>
+                置信度 {logConfidencePercent(log)}%
+              </span>
+            </div>
+            <div className='grid gap-2 text-sm'>
+              <DetailRow label='日志来源' value={log.source || '-'} />
+              <DetailRow label='异常时间' value={log.time || '-'} />
+              <DetailRow label='源端' value={logSourceEndpoint(log)} />
+              <DetailRow label='目标端' value={logTargetEndpoint(log)} />
+              <DetailRow label='命中次数' value={String(log.count ?? log.occurrences ?? 1)} />
+              <DetailRow label='事件评分' value={log.score != null ? `${log.score}/100` : '-'} />
+            </div>
+          </TabsContent>
+          <TabsContent value='evidence' className='mt-3 space-y-3'>
+            <LogEvidenceBlock text={log.evidence || '未提供证据片段'} />
+          </TabsContent>
+          <TabsContent value='raw' className='mt-3 space-y-3'>
+            <div className='text-xs leading-5 text-muted-foreground'>优先展示检测结果携带的原始 JSON；缺失时展示规范化事件记录。</div>
+            <LogEvidenceBlock title='原始或结构化记录' text={logStructuredRecord(log)} />
+          </TabsContent>
+          <TabsContent value='action' className='mt-3 space-y-3'>
+            <CicdInfoBlock title='建议处理' text={logRecommendationText(log)} tone='action' />
+            <div className='rounded-md border border-border bg-[color:var(--surface-inset)] p-3'>
+              <div className='text-sm font-semibold text-foreground'>复核顺序</div>
+              <ol className='mt-2 space-y-2 text-xs leading-5 text-muted-foreground'>
+                <li>1. 核对来源、账号和异常时间窗口。</li>
+                <li>2. 关联部署记录、依赖风险与目标资产。</li>
+                <li>3. 确认误报后再加入基线或忽略规则。</li>
+              </ol>
+            </div>
+            {log.fingerprint || log.dedupe_key ? (
+              <Button type='button' variant='outline' className='w-full' disabled={ignoreBusy} onClick={() => onIgnore(log)}>
+                {ignoreBusy ? <Loader2 className='size-4 animate-spin' /> : <EyeOff className='size-4' />}
+                标记为误报
+              </Button>
+            ) : null}
+          </TabsContent>
         </div>
-        <div className='grid gap-2 text-sm'>
-          <DetailRow label='日志来源' value={log.source || '-'} />
-          <DetailRow label='异常时间' value={log.time || '-'} />
-          <DetailRow label='攻击节点' value={log.signal || '-'} />
-        </div>
-        <LogEvidenceBlock text={log.evidence || '未提供证据片段'} />
-        <CicdInfoBlock title='建议处理' text={logRecommendationText(log)} tone='action' />
-      </CardContent>
+      </Tabs>
     </Card>
   )
 }
@@ -14701,126 +16249,156 @@ function CopilotPanel({
   const modelName = latestMessage?.model || 'demo-rag-security-analyst'
   const graphRag = latestMessage?.graph_rag ?? assistant.graph_rag ?? null
   const hasDeepseek = modelName.toLowerCase().includes('deepseek')
+  const promptSuggestions = [
+    '这个项目是否存在供应链风险？',
+    '最需要优先修复的风险是什么？',
+    '说明当前攻击链和关键证据',
+    '这些发现是否可能是误报？',
+  ]
 
   return (
-    <div className='space-y-4'>
-      <AgentCommandCenter workspace={workspace} onWorkspaceUpdated={onWorkspaceUpdated} />
-
-      <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
-      <Card className='overflow-hidden rounded-md'>
-        <CardHeader className='border-b bg-muted/30'>
-          <div className='flex flex-wrap items-center justify-between gap-3'>
-            <div className='flex items-center gap-3'>
-              <div className='grid size-10 place-items-center rounded-md border bg-background shadow-sm'>
-                <SecurityAiIcon className='size-8 text-cyan-500' />
-              </div>
-              <div>
-                <CardTitle className='flex items-center gap-2 text-base'>
-                  智能研判
-                  <Badge variant='outline' className={cn('rounded-md', hasDeepseek ? statusClasses.active : statusClasses.observed)}>
-                    {hasDeepseek ? 'DeepSeek 在线' : '离线 RAG'}
-                  </Badge>
-                </CardTitle>
-              </div>
+    <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-6xl flex-col'>
+      <div className='border-b border-border/70 px-1 pb-4'>
+        <div className='flex flex-wrap items-center justify-between gap-3'>
+          <div className='flex min-w-0 items-center gap-3'>
+            <div className='grid size-10 shrink-0 place-items-center rounded-lg border border-cyan-400/25 bg-cyan-400/10 text-cyan-400'>
+              <SecurityAiIcon className='size-8' />
+            </div>
+            <div className='min-w-0'>
+              <h2 className='truncate text-base font-semibold text-foreground'>智能研判</h2>
+              <p className='mt-0.5 text-xs text-muted-foreground'>基于当前项目证据</p>
             </div>
           </div>
-        </CardHeader>
-        <CardContent className='p-0'>
-          <ScrollArea className='h-[560px] min-h-[420px] max-h-[58svh]'>
-            <div className='mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-5 sm:px-6'>
-              {messages.length ? (
-                messages.map((message, index) => (
-                  <Fragment key={`${message.question}-${index}`}>
-                  <CopilotMessage
-                    role='user'
-                    title='你'
-                    icon={<User className='size-4' />}
-                  >
-                    <p>{message.question}</p>
-                  </CopilotMessage>
-                  <CopilotMessage
-                    role='assistant'
-                    title={assistantMessageTitle(message)}
-                    icon={<SecurityAiIcon className='size-7' />}
-                    action={<CopyAnswerButton text={message.answer} />}
-                  >
-                    <CopilotMarkdown text={message.answer} />
-                  </CopilotMessage>
-                  </Fragment>
-                ))
-              ) : (
-                <div className='rounded-md border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground'>
-                  暂无对话记录。发送问题后，这里会保留本项目的问答历史。
-                </div>
-              )}
+          <Badge variant='outline' className={cn('rounded-md', hasDeepseek ? statusClasses.active : statusClasses.observed)}>
+            {hasDeepseek ? 'DeepSeek 在线' : '离线 RAG'}
+          </Badge>
+        </div>
+      </div>
 
-              {busy ? (
-                <div className='flex items-center gap-3 rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground'>
-                  <Loader2 className='size-4 animate-spin text-cyan-600' />
-                  正在检索证据链并生成处置建议...
-                </div>
-              ) : null}
+      <div className='flex-1 py-6'>
+        <div className='mx-auto flex w-full max-w-5xl flex-col gap-8 px-1 sm:px-4'>
+          {messages.length ? (
+            messages.map((message, index) => (
+              <Fragment key={`${message.question}-${index}`}>
+                <CopilotMessage role='user' title='你' icon={<User className='size-4' />}>
+                  <p>{message.question}</p>
+                </CopilotMessage>
+                <CopilotMessage
+                  role='assistant'
+                  title={assistantMessageTitle(message)}
+                  icon={<SecurityAiIcon className='size-7' />}
+                  action={<CopyAnswerButton text={message.answer} />}
+                >
+                  <CopilotMarkdown text={message.answer} />
+                </CopilotMessage>
+              </Fragment>
+            ))
+          ) : (
+            <div className='mx-auto flex w-full max-w-3xl flex-col items-center py-10 text-center'>
+              <div className='grid size-12 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-400'>
+                <SecurityAiIcon className='size-9' />
+              </div>
+              <h3 className='mt-4 text-lg font-semibold'>从当前项目开始研判</h3>
+              <div className='mt-6 grid w-full gap-2 sm:grid-cols-2'>
+                {promptSuggestions.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type='button'
+                    className='min-h-12 rounded-lg border border-border/80 bg-background px-4 py-3 text-left text-sm leading-6 text-foreground transition-colors hover:border-cyan-400/50 hover:bg-muted/35'
+                    onClick={() => setQuestion(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
             </div>
-          </ScrollArea>
+          )}
 
-          <div className='border-t bg-background px-4 py-3'>
-            <AssistantComposer
-              value={question}
-              onChange={setQuestion}
-              mode={assistantMode}
-              onModeChange={onAssistantModeChange}
-              onSubmit={onSubmit}
-              busy={busy}
-              placeholder='继续追问证据链、攻击路径、修复顺序或误报可能性'
-              compact
-            />
-          </div>
-        </CardContent>
-      </Card>
+          {busy ? <AssistantThinkingState label='正在检索证据链并生成处置建议' /> : null}
 
-      <div className='space-y-4 xl:sticky xl:top-4 xl:max-h-[calc(100svh-2rem)] xl:self-start xl:overflow-y-auto xl:overscroll-contain xl:[scrollbar-gutter:stable]'>
-        <GraphRagEvidenceCard graphRag={graphRag} />
+          {messages.length ? (
+            <CopilotEvidenceDetails retrieval={retrieval} nextActions={nextActions} graphRag={graphRag} />
+          ) : null}
+        </div>
+      </div>
 
-        <Card className='rounded-md'>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <Search className='size-4 text-cyan-600' />
-              检索命中
-            </CardTitle>
-          </CardHeader>
-          <CardContent className='space-y-2'>
-            {retrieval.map((item) => (
-              <EvidenceItem key={item} value={item} />
-            ))}
-            {!retrieval.length ? (
-              <div className='rounded-md border border-dashed p-3 text-sm text-muted-foreground'>
-                暂无检索命中；完成扫描后会展示关联证据。
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
+      <Collapsible className='border-t border-border/70 pt-3'>
+        <CollapsibleTrigger asChild>
+          <Button variant='ghost' className='group h-10 w-full justify-between rounded-md px-2 text-sm text-muted-foreground hover:text-foreground'>
+            <span className='flex items-center gap-2'><Bot className='size-4' />Agent 调查任务</span>
+            <ChevronDown className='size-4 transition-transform group-data-[state=open]:rotate-180' />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className='pt-3'>
+          <AgentCommandCenter workspace={workspace} onWorkspaceUpdated={onWorkspaceUpdated} />
+        </CollapsibleContent>
+      </Collapsible>
 
-        <Card className='rounded-md'>
-          <CardHeader>
-            <CardTitle className='flex items-center gap-2 text-base'>
-              <ClipboardList className='size-4 text-emerald-600' />
-              建议动作
-            </CardTitle>
-          </CardHeader>
-          <CardContent className='space-y-3'>
-            {nextActions.map((action, index) => (
-              <div key={action} className='flex gap-3 rounded-md border p-3 text-sm leading-6'>
-                <div className='grid size-6 shrink-0 place-items-center rounded-md bg-emerald-50 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'>
-                  {index + 1}
-                </div>
-                <span>{action}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
+      <div className='sticky -bottom-4 z-40 mt-4 border-t border-border/60 bg-[color:var(--surface-shell)]/95 px-1 pb-3 pt-4 backdrop-blur sm:px-4'>
+        <AssistantComposer
+          value={question}
+          onChange={setQuestion}
+          mode={assistantMode}
+          onModeChange={onAssistantModeChange}
+          onSubmit={onSubmit}
+          busy={busy}
+          placeholder='继续追问证据链、攻击路径、修复顺序或误报可能性'
+          compact
+        />
       </div>
     </div>
+  )
+}
+
+function AssistantThinkingState({ label }: { label: string }) {
+  return (
+    <div className='flex items-center gap-4 py-2 text-sm text-muted-foreground'>
+      <div className='grid size-9 shrink-0 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-400'>
+        <Loader2 className='size-4 animate-spin' />
+      </div>
+      <span>{label}</span>
     </div>
+  )
+}
+
+function CopilotEvidenceDetails({
+  retrieval,
+  nextActions,
+  graphRag,
+}: {
+  retrieval: string[]
+  nextActions: string[]
+  graphRag?: SecurityGraphRagResult | null
+}) {
+  return (
+    <Collapsible className='border-y border-border/70 py-2'>
+      <CollapsibleTrigger asChild>
+        <Button variant='ghost' className='group h-11 w-full justify-between rounded-md px-2 text-sm text-muted-foreground hover:text-foreground'>
+          <span className='flex items-center gap-2'>
+            <Search className='size-4' />
+            本次调用详情
+            <Badge variant='secondary' className='rounded-md text-[10px]'>{retrieval.length} 条证据</Badge>
+          </span>
+          <ChevronDown className='size-4 transition-transform group-data-[state=open]:rotate-180' />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className='grid gap-6 px-2 pb-3 pt-4 lg:grid-cols-2'>
+        <section className='min-w-0 space-y-3'>
+          <h3 className='flex items-center gap-2 text-sm font-semibold'><Search className='size-4 text-cyan-500' />检索命中</h3>
+          {retrieval.length ? retrieval.map((item) => <EvidenceItem key={item} value={item} />) : <p className='text-sm text-muted-foreground'>暂无检索命中</p>}
+        </section>
+        <section className='min-w-0 space-y-3'>
+          <h3 className='flex items-center gap-2 text-sm font-semibold'><ClipboardList className='size-4 text-emerald-500' />建议动作</h3>
+          {nextActions.length ? nextActions.map((action, index) => (
+            <div key={action} className='flex gap-3 text-sm leading-6'>
+              <span className='grid size-6 shrink-0 place-items-center rounded-md bg-emerald-500/10 text-xs font-semibold text-emerald-500'>{index + 1}</span>
+              <span>{action}</span>
+            </div>
+          )) : <p className='text-sm text-muted-foreground'>暂无建议动作</p>}
+        </section>
+        {graphRag ? <div className='lg:col-span-2'><GraphRagEvidenceCard graphRag={graphRag} /></div> : null}
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -14840,35 +16418,35 @@ function CopilotMessage({
   children: ReactNode
 }) {
   return (
-    <div className={cn('flex gap-3', role === 'user' && 'justify-end')}>
+    <article className={cn('flex w-full gap-3 sm:gap-4', role === 'user' && 'justify-end')}>
       {role === 'assistant' ? (
-        <div className='grid size-12 shrink-0 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-sky-400 shadow-[inset_0_0_18px_rgba(34,211,238,0.12),0_10px_28px_rgba(2,6,23,0.22)]'>
+        <div className='mt-0.5 grid size-9 shrink-0 place-items-center rounded-xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-400'>
           {icon}
         </div>
       ) : null}
-      <div className={cn('min-w-0 max-w-[860px] flex-1', role === 'user' && 'flex max-w-[640px] flex-col items-end')}>
-        <div className={cn('mb-2 flex items-center gap-2 text-xs text-muted-foreground', role === 'user' && 'justify-end')}>
-          <span className='font-medium text-foreground'>{title}</span>
+      <div className={cn('min-w-0 max-w-[880px] flex-1', role === 'user' && 'ml-auto flex w-fit max-w-[88%] flex-none flex-col items-end sm:max-w-[680px]')}>
+        <div className={cn('mb-2 flex min-h-7 items-center gap-2 text-xs text-muted-foreground', role === 'user' && 'justify-end')}>
+          <span className='font-semibold text-foreground'>{title}</span>
           {meta ? <span>{meta}</span> : null}
-          {action}
+          {role === 'assistant' ? action : null}
         </div>
         <div
           className={cn(
-            'rounded-md border p-4 text-sm leading-7 shadow-sm',
+            'min-w-0 text-[15px] leading-7',
             role === 'assistant'
-              ? 'bg-background'
-              : 'bg-primary px-4 py-3 text-primary-foreground'
+              ? 'w-full text-foreground'
+              : 'rounded-2xl rounded-tr-md bg-muted px-4 py-3 text-foreground shadow-sm'
           )}
         >
           {children}
         </div>
       </div>
       {role === 'user' ? (
-        <div className='grid size-9 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-sm'>
+        <div className='mt-0.5 hidden size-9 shrink-0 place-items-center rounded-xl bg-cyan-400 text-slate-950 sm:grid'>
           {icon}
         </div>
       ) : null}
-    </div>
+    </article>
   )
 }
 
@@ -14934,7 +16512,7 @@ function GraphRagEvidenceCard({ graphRag }: { graphRag?: SecurityGraphRagResult 
                       </Badge>
                       {gnnScore !== null ? (
                         <Badge variant='outline' className='rounded-md bg-cyan-50 text-[10px] text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
-                          GNN {gnnScore}%
+                          GNN 风险 {gnnScore}%
                         </Badge>
                       ) : null}
                     </div>
@@ -15104,51 +16682,70 @@ function CopilotMarkdown({ text }: { text: string }) {
   const blocks = normalizeAssistantMarkdown(text)
 
   return (
-    <div className='space-y-3'>
+    <div className='min-w-0 space-y-4 break-words [overflow-wrap:anywhere]'>
       {blocks.map((block, index) => {
         if (block.type === 'heading') {
           const semanticKind = getAssistantSemanticKind(block.text)
+          const HeadingTag = block.level <= 2 ? 'h2' : 'h3'
           return (
-            <div key={`${index}-${block.text}`} className='space-y-1'>
-              <h3 className='flex items-center gap-2 text-sm font-semibold text-foreground'>
+            <div key={`${index}-${block.text}`} className={cn('space-y-2', index > 0 && 'pt-3')}>
+              <HeadingTag className={cn('flex items-center gap-2 font-semibold text-foreground', block.level <= 2 ? 'text-lg' : 'text-base')}>
                 {semanticKind ? <AssistantSemanticIcon kind={semanticKind} /> : null}
                 <span className='min-w-0'>{renderInlineMarkdown(block.text)}</span>
-              </h3>
-              <div className='h-px bg-border' />
+              </HeadingTag>
+              {block.level <= 2 ? <div className='h-px bg-border/70' /> : null}
             </div>
           )
         }
         if (block.type === 'list') {
+          const ListTag = block.ordered ? 'ol' : 'ul'
           return (
-            <div key={`${index}-${block.items.join('|')}`} className='space-y-2'>
-              {block.items.map((item) => {
-                const semanticKind = getAssistantSemanticKind(item)
-                return (
-                  <div key={item} className='rounded-md bg-muted/45 px-3 py-2 text-sm leading-6'>
-                    <div className='flex gap-2'>
-                      {semanticKind ? <AssistantSemanticIcon kind={semanticKind} /> : null}
-                      <span className='min-w-0'>{renderInlineMarkdown(item)}</span>
-                    </div>
-                  </div>
-                )
-              })}
+            <ListTag
+              key={`${index}-${block.items.join('|')}`}
+              className={cn('space-y-2 pl-6 leading-7 marker:text-muted-foreground', block.ordered ? 'list-decimal' : 'list-disc')}
+            >
+              {block.items.map((item, itemIndex) => <li key={`${itemIndex}-${item}`}>{renderInlineMarkdown(item)}</li>)}
+            </ListTag>
+          )
+        }
+        if (block.type === 'table') {
+          return (
+            <div key={`${index}-table`} className='max-w-full overflow-x-auto rounded-lg border border-border/80'>
+              <table className='w-full min-w-[560px] border-collapse text-left text-sm'>
+                <thead className='bg-muted/55'>
+                  <tr>{block.headers.map((cell, cellIndex) => <th key={`${cellIndex}-${cell}`} className='border-b border-border px-3 py-2.5 font-semibold text-foreground'>{renderInlineMarkdown(cell)}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={`${rowIndex}-${row.join('|')}`} className='border-b border-border/60 last:border-b-0 hover:bg-muted/20'>
+                      {block.headers.map((_, cellIndex) => <td key={cellIndex} className='px-3 py-2.5 align-top text-foreground/85'>{renderInlineMarkdown(row[cellIndex] || '-')}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )
         }
+        if (block.type === 'quote') {
+          return <blockquote key={`${index}-${block.text}`} className='border-l-2 border-cyan-400/70 pl-4 text-foreground/75'>{renderInlineMarkdown(block.text)}</blockquote>
+        }
+        if (block.type === 'code') {
+          return <pre key={`${index}-code`} className='max-w-full overflow-x-auto rounded-lg border bg-muted/35 p-4 font-mono text-xs leading-6 text-foreground'><code>{block.text}</code></pre>
+        }
         if (block.type === 'rule') {
-          return <div key={`${index}-rule`} className='h-px bg-border' />
+          return <div key={`${index}-rule`} className='h-px bg-border/70' />
         }
         const semanticKind = getAssistantSemanticKind(block.text)
         if (semanticKind) {
           return (
-            <div key={`${index}-${block.text}`} className='flex gap-2 text-sm leading-7 text-foreground/90'>
+            <div key={`${index}-${block.text}`} className='flex gap-2 leading-7 text-foreground/90'>
               <AssistantSemanticIcon kind={semanticKind} />
               <p className='min-w-0'>{renderInlineMarkdown(block.text)}</p>
             </div>
           )
         }
         return (
-          <p key={`${index}-${block.text}`} className='text-sm leading-7 text-foreground/90'>
+          <p key={`${index}-${block.text}`} className='leading-7 text-foreground/90'>
             {renderInlineMarkdown(block.text)}
           </p>
         )
@@ -15192,9 +16789,12 @@ function getAssistantSemanticKind(text: string): AssistantSemanticKind | null {
 }
 
 type AssistantMarkdownBlock =
-  | { type: 'heading'; text: string }
+  | { type: 'heading'; text: string; level: number }
   | { type: 'paragraph'; text: string }
-  | { type: 'list'; items: string[] }
+  | { type: 'list'; items: string[]; ordered: boolean }
+  | { type: 'table'; headers: string[]; rows: string[][] }
+  | { type: 'quote'; text: string }
+  | { type: 'code'; text: string }
   | { type: 'rule' }
 
 function normalizeAssistantMarkdown(text: string): AssistantMarkdownBlock[] {
@@ -15203,46 +16803,115 @@ function normalizeAssistantMarkdown(text: string): AssistantMarkdownBlock[] {
     .replace(/\s(#{2,4})\s+/g, '\n$1 ')
     .replace(/\s(-\s+\*\*)/g, '\n$1')
     .replace(/\s(\d+\.\s+\*\*)/g, '\n$1')
-  const lines = prepared
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
+  const lines = prepared.split(/\r?\n/)
   const blocks: AssistantMarkdownBlock[] = []
   let listItems: string[] = []
+  let listOrdered = false
+  let paragraphLines: string[] = []
+  let codeLines: string[] = []
+  let inCode = false
 
   const flushList = () => {
     if (listItems.length) {
-      blocks.push({ type: 'list', items: listItems })
+      blocks.push({ type: 'list', items: listItems, ordered: listOrdered })
       listItems = []
     }
   }
+  const flushParagraph = () => {
+    if (paragraphLines.length) {
+      blocks.push({ type: 'paragraph', text: cleanMarkdownText(paragraphLines.join(' ')) })
+      paragraphLines = []
+    }
+  }
+  const flushText = () => {
+    flushList()
+    flushParagraph()
+  }
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex].trim()
+    if (line.startsWith('```')) {
+      flushText()
+      if (inCode) {
+        blocks.push({ type: 'code', text: codeLines.join('\n') })
+        codeLines = []
+      }
+      inCode = !inCode
+      continue
+    }
+    if (inCode) {
+      codeLines.push(lines[lineIndex])
+      continue
+    }
+    if (!line) {
+      flushText()
+      continue
+    }
     if (/^-{3,}$/.test(line)) {
-      flushList()
+      flushText()
       blocks.push({ type: 'rule' })
       continue
     }
 
-    const heading = line.match(/^#{1,4}\s+(.*)$/)
+    const heading = line.match(/^(#{1,4})\s+(.*)$/)
     if (heading) {
-      flushList()
-      blocks.push({ type: 'heading', text: cleanMarkdownText(heading[1]) })
+      flushText()
+      blocks.push({ type: 'heading', text: cleanMarkdownText(heading[2]), level: heading[1].length })
       continue
     }
 
-    const list = line.match(/^(?:[-*]|\d+\.)\s+(.*)$/)
+    if (isAssistantTableRow(line) && lineIndex + 1 < lines.length && isAssistantTableDivider(lines[lineIndex + 1].trim())) {
+      flushText()
+      const headers = parseAssistantTableRow(line)
+      const rows: string[][] = []
+      lineIndex += 2
+      while (lineIndex < lines.length && isAssistantTableRow(lines[lineIndex].trim())) {
+        rows.push(parseAssistantTableRow(lines[lineIndex].trim()))
+        lineIndex += 1
+      }
+      lineIndex -= 1
+      blocks.push({ type: 'table', headers, rows })
+      continue
+    }
+
+    const quote = line.match(/^>\s?(.*)$/)
+    if (quote) {
+      flushText()
+      blocks.push({ type: 'quote', text: cleanMarkdownText(quote[1]) })
+      continue
+    }
+
+    const list = line.match(/^([-*]|\d+[.)])\s+(.*)$/)
     if (list) {
-      listItems.push(cleanMarkdownText(list[1]))
+      flushParagraph()
+      const ordered = /^\d/.test(list[1])
+      if (listItems.length && ordered !== listOrdered) flushList()
+      listOrdered = ordered
+      listItems.push(cleanMarkdownText(list[2]))
       continue
     }
 
     flushList()
-    blocks.push({ type: 'paragraph', text: cleanMarkdownText(line) })
+    paragraphLines.push(line)
   }
 
-  flushList()
+  if (codeLines.length) blocks.push({ type: 'code', text: codeLines.join('\n') })
+  flushText()
   return blocks.length ? blocks : [{ type: 'paragraph', text }]
+}
+
+function isAssistantTableRow(line: string) {
+  return line.includes('|') && /^\|?.+\|$/.test(line)
+}
+
+function isAssistantTableDivider(line: string) {
+  if (!isAssistantTableRow(line)) return false
+  const cells = parseAssistantTableRow(line)
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s/g, '')))
+}
+
+function parseAssistantTableRow(line: string) {
+  return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cleanMarkdownText(cell))
 }
 
 function cleanMarkdownText(text: string) {

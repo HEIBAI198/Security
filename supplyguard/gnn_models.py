@@ -36,17 +36,20 @@ class PackageRiskModelRegistry:
                 "model_available": self.model_available,
                 "model_type": self.model_type,
                 "confidence": 0.0,
+                "raw_confidence": 0.0,
+                "inference_mode": "rule_fallback",
                 "explanations": [],
                 "model_error": self.load_error,
             }
 
         try:
+            inference_mode = "package_features_only"
             if self._pyg_model is not None:
                 raw_score = self._predict_pyg_score(feature_values)
                 score, calibration_note = self._calibrate_pyg_online_score(raw_score, feature_values)
             elif self._npz_model is not None:
                 score = self._predict_graphsage_score(feature_values)
-                calibration_note = None
+                calibration_note = "当前为单包特征推理，未使用项目实时依赖图"
             else:
                 score = self._predict_sklearn_score(feature_values)
                 calibration_note = None
@@ -54,11 +57,16 @@ class PackageRiskModelRegistry:
             explanations = self._explanations(score, feature_values)
             if calibration_note:
                 explanations.append(calibration_note)
+            raw_confidence = self._confidence(score)
+            # 在线接口目前只提供单包特征，没有运行时依赖图邻居；不把距离分界线的数值冒充成校准后的准确率。
+            confidence = min(raw_confidence, 0.6) if inference_mode == "package_features_only" else raw_confidence
             return {
                 "score": score,
                 "model_available": True,
                 "model_type": self.model_type,
-                "confidence": self._confidence(score),
+                "confidence": confidence,
+                "raw_confidence": raw_confidence,
+                "inference_mode": inference_mode,
                 "explanations": explanations,
                 "model_error": self.load_error,
             }
@@ -69,6 +77,8 @@ class PackageRiskModelRegistry:
                 "model_available": False,
                 "model_type": "rule_fallback",
                 "confidence": 0.0,
+                "raw_confidence": 0.0,
+                "inference_mode": "rule_fallback",
                 "explanations": [],
                 "model_error": self.load_error,
             }
@@ -376,7 +386,10 @@ class PackageRiskModelRegistry:
             raise RuntimeError("GraphSAGE model is not loaded")
         raw_feature_names = self.feature_names[: self._raw_feature_dim]
         raw = np.asarray([float(values.get(name, 0.0)) for name in raw_feature_names], dtype=np.float32)
-        sage_row = np.concatenate([raw, raw]).reshape(1, -1)
+        # 在线扫描没有训练图中的邻居节点，使用训练集邻居均值作为中性上下文。
+        # 复制当前节点会把同一风险信号计算两次，并制造过度自信的极端分数。
+        neutral_neighbor = self._npz_model["mean"][self._raw_feature_dim :]
+        sage_row = np.concatenate([raw, neutral_neighbor]).reshape(1, -1)
         normalized = (sage_row - self._npz_model["mean"]) / self._npz_model["scale"]
         hidden = np.maximum(normalized @ self._npz_model["w1"] + self._npz_model["b1"], 0.0)
         logits = hidden @ self._npz_model["w2"] + self._npz_model["b2"]
@@ -389,15 +402,15 @@ class PackageRiskModelRegistry:
 
     def _explanations(self, score: float, values: dict[str, float]) -> list[str]:
         explanations = [
-            f"{self.model_type} model produced score {score:.2f}",
-            f"confidence {self._confidence(score):.2f} from distance to decision threshold",
+            f"{self.model_type} 模型输出恶意包相似度风险分 {score:.2f}",
+            f"判定确定度 {self._confidence(score):.2f}，由风险分距 0.5 分界线计算，不是模型准确率",
         ]
         risk_keywords = float(values.get("risk_keyword_count", 0.0) or 0.0)
         if risk_keywords > 0:
-            explanations.append(f"risk_keyword_count={risk_keywords:g}")
+            explanations.append(f"风险关键词数量={risk_keywords:g}")
         graph_degree = float(values.get("graph_degree", 0.0) or 0.0)
         if graph_degree > 0:
-            explanations.append(f"graph_degree={graph_degree:g}")
+            explanations.append(f"图连接度={graph_degree:g}")
         return explanations
 
     def _record_load_error(self, source: str, message: str) -> None:
