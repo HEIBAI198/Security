@@ -196,6 +196,14 @@ export type SecurityDependency = {
   gnn_model_available?: boolean
   gnn_model_type?: string
   gnn_confidence?: number
+  gnn_decision_margin?: number
+  gnn_inference_mode?: string
+  gnn_reliability?: 'model' | 'limited' | 'fallback' | string
+  gnn_decision_threshold?: number
+  gnn_calibration_temperature?: number
+  gnn_ood_distance?: number
+  gnn_evidence_conflict?: boolean
+  gnn_target?: string
   gnn_explanations?: string[]
   similar_malicious_packages?: Array<{
     package?: string
@@ -287,6 +295,15 @@ export type DependencyAuditResult = {
     unknown_licenses: number
     vulnerable_dependencies: number
     osv_matches?: number
+    vulnerability_coverage?: {
+      state: 'complete' | 'incomplete' | 'no_supported_target' | 'not_requested' | 'not_scanned' | string
+      complete: boolean
+      requested: boolean
+      target_count: number
+      completed_targets: number
+      failed_targets: number
+      message: string
+    }
     suspicious_names: number
     exact_versions?: number
     transitive_dependencies?: number
@@ -1143,6 +1160,7 @@ export type SecurityWorkspace = {
   normalized_findings?: Array<Record<string, unknown>>
   report_html?: string | null
   report?: string | null
+  agentRun?: AgentRunResult | null
   scanSuite?: {
     status?: 'completed' | 'partial' | 'failed' | 'running' | 'idle' | string
     completed?: string[]
@@ -1161,7 +1179,17 @@ export type SecurityAssistantResponse = {
 }
 
 export type AgentRunStepStatus = 'pending' | 'running' | 'success' | 'skipped' | 'failed'
-export type AgentJobStatus = 'idle' | 'queued' | 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | string
+export type AgentJobStatus =
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'partial'
+  | 'needs_input'
+  | 'completed_with_risk'
+  | 'failed'
+  | 'cancelled'
+  | string
 export type AgentActionKind =
   | 'open_evidence_gap'
   | 'open_module'
@@ -1223,9 +1251,54 @@ export type AgentNextAction = {
   payload?: Record<string, unknown>
 }
 
+export type AgentRunVerdict = {
+  level: 'confirmed_attack' | 'suspected_risk' | 'insufficient_evidence' | 'clean' | string
+  label: string
+  riskScore: number
+  riskLevel: SecuritySeverity
+  riskScoreBasis?: 'max_module' | string
+  riskScoreSource?: {
+    moduleId?: string
+    moduleName?: string
+    score?: number
+  }
+  confidence: number
+  confidenceType?: 'graph_path' | 'evidence_completeness' | string
+  conclusion: string
+  supportedClaims: string[]
+  unsupportedClaims: string[]
+  evidenceGaps: string[]
+  nextActions: string[]
+  chainEvidence?: {
+    status: 'confirmed' | 'plausible' | 'missing' | string
+    pathId?: string
+    title?: string
+    verdict?: string
+    confidence?: number
+    evidenceIds?: string[]
+  }
+}
+
+export type AgentRunPlan = {
+  plannerType: string
+  objective: string
+  reason: string
+  selectedModules: Array<{ id: string; name: string; reason?: string }>
+  skippedModules: Array<{ id: string; name: string; reason?: string }>
+  observations?: Array<Record<string, unknown>>
+  replans?: Array<{
+    afterStep?: string
+    reason?: string
+    enabledModules?: Array<{ id: string; name: string }>
+    blockedModules?: Array<{ id: string; name: string }>
+    createdAt?: string
+  }>
+}
+
 export type AgentRunRequest = {
   workspaceId?: string
   importId?: string
+  question?: string
   targetPath?: string
   artifactPath?: string
   attestationPath?: string
@@ -1260,7 +1333,15 @@ export type AgentRunResult = {
     evidenceGapCount: number
     riskScore: number
     riskLevel: SecuritySeverity
+    riskScoreBasis?: 'max_module' | string
+    riskScoreSource?: {
+      moduleId?: string
+      moduleName?: string
+      score?: number
+    }
   }
+  verdict?: AgentRunVerdict
+  plan?: AgentRunPlan
   evidenceGaps: AgentEvidenceGap[]
   nextActions: AgentNextAction[]
   narrative?: {
@@ -1356,12 +1437,20 @@ export async function askSecurityAssistant(question: string, workspaceId?: strin
   })
 }
 
+export async function askSecurityAgentChat(question: string, workspaceId?: string) {
+  return api<SecurityAssistantResponse>('/api/security/agent/chat', {
+    method: 'POST',
+    body: JSON.stringify({ question, ...(workspaceId ? { workspaceId } : {}) }),
+  })
+}
+
 export async function runSecurityAgent(options: AgentRunRequest) {
   const timeoutSeconds = options.timeoutSeconds ?? 180
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), (timeoutSeconds + 90) * 1000)
+  const workspaceQuery = options.workspaceId ? `?workspaceId=${encodeURIComponent(options.workspaceId)}` : ''
   try {
-    return await api<AgentRunResult>('/api/security/agent/run', {
+    return await api<AgentRunResult>(`/api/security/agent/run${workspaceQuery}`, {
       method: 'POST',
       signal: controller.signal,
       body: JSON.stringify(options),
@@ -1381,7 +1470,8 @@ export async function loadLatestSecurityAgentRun() {
 }
 
 export async function createSecurityAgentJob(options: AgentRunRequest) {
-  return api<AgentRunResult>('/api/security/agent/jobs', {
+  const workspaceQuery = options.workspaceId ? `?workspaceId=${encodeURIComponent(options.workspaceId)}` : ''
+  return api<AgentRunResult>(`/api/security/agent/jobs${workspaceQuery}`, {
     method: 'POST',
     body: JSON.stringify(options),
   })

@@ -50,7 +50,7 @@ STORAGE_SBOM_DIR = ROOT / "storage" / "sbom"
 MAX_MANIFESTS = 300
 COMMAND_TIMEOUT_SECONDS = 45
 CDXGEN_TIMEOUT_SECONDS = 120
-OSV_TIMEOUT_SECONDS = 60
+OSV_TIMEOUT_SECONDS = max(5, int(os.environ.get("SUPPLYGUARD_OSV_TIMEOUT_SECONDS", "30")))
 SUPPORTED_MANIFESTS = {"gemfile", "package.json", "requirements.txt"}
 SUPPORTED_LOCKFILES = {"gemfile.lock", "package-lock.json", "requirements.lock.txt"}
 INSTALL_SCRIPT_NAMES = {"preinstall", "install", "postinstall", "prepare"}
@@ -479,9 +479,6 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
     tools: list[ToolStatus] = []
     manifests = discover_files(target, SUPPORTED_MANIFESTS, max_files=payload.max_manifests)
     lockfiles = discover_files(target, SUPPORTED_LOCKFILES, max_files=payload.max_manifests)
-    external_requirements_lock = STORAGE_SBOM_DIR / "requirements.lock.txt"
-    if external_requirements_lock.exists() and external_requirements_lock not in lockfiles:
-        lockfiles.append(external_requirements_lock)
     requirements_locks = [path for path in lockfiles if path.name.lower() == "requirements.lock.txt"]
     package_locks = [path for path in lockfiles if path.name.lower() == "package-lock.json"]
     gem_locks = [path for path in lockfiles if path.name.lower() == "gemfile.lock"]
@@ -491,10 +488,6 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
         dependencies.extend(parse_manifest_records(manifests, target, payload.include_dev, warnings))
         dependencies.extend(parse_lockfile_records(lockfiles, target, payload.include_dev, warnings))
         dependencies.extend(parse_environment_records(target, warnings))
-        generated_lock = STORAGE_SBOM_DIR / "requirements.lock.txt"
-        if generated_lock.exists() and generated_lock not in requirements_locks:
-            requirements_locks.append(generated_lock)
-            lockfiles.append(generated_lock)
 
     external_sboms: list[dict[str, Any]] = []
     if payload.mode in {"auto", "lockfile", "sbom"}:
@@ -520,8 +513,9 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
 
     dependencies = merge_dependency_records(dependencies)
 
+    osv_targets: list[Path] = []
+    osv_statuses: list[ToolStatus] = []
     if payload.include_osv and payload.mode != "manifest":
-        osv_targets: list[Path] = []
         osv_targets.extend(package_locks)
         osv_targets.extend(requirements_locks)
         osv_targets.extend(gem_locks)
@@ -534,6 +528,7 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
             warnings.extend(result.warnings)
             if result.status:
                 tools.append(result.status)
+                osv_statuses.append(result.status)
 
     for dependency in dependencies:
         enrich_dependency(dependency)
@@ -553,6 +548,11 @@ def run_dependency_audit(request: DependencyAuditRequest | None = None) -> Depen
     )
     findings = build_dependency_findings(dependencies)
     summary = build_dependency_summary(dependencies, findings, manifests, lockfiles, tools)
+    summary["vulnerability_coverage"] = build_vulnerability_coverage(
+        requested=payload.include_osv and payload.mode != "manifest",
+        targets=osv_targets,
+        statuses=osv_statuses,
+    )
     summary["vex"] = build_vex_summary(dependencies)
     summary["reachability"] = build_reachability_summary(dependencies, vex_context)
     summary["duration_seconds"] = round(time.monotonic() - started_at, 2)
@@ -647,6 +647,14 @@ def normalize_runtime_log_paths(paths: Iterable[str] | None, *, allow_external: 
 def is_within_root(path: Path) -> bool:
     try:
         path.resolve().relative_to(ROOT.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def is_within_directory(path: Path, directory: Path) -> bool:
+    try:
+        path.resolve().relative_to(directory.resolve())
         return True
     except ValueError:
         return False
@@ -1272,10 +1280,10 @@ def parse_environment_records(root: Path, warnings: list[str]) -> list[Dependenc
         if process.returncode != 0:
             warnings.append(f"pip freeze failed for {relative_posix(python_exe, root)}: {process.stderr.strip()}")
             continue
-        lock_path = STORAGE_SBOM_DIR / "requirements.lock.txt"
-        lock_path.write_text(process.stdout, encoding="utf-8")
+        environment_root = python_exe.parent.parent
+        source_path = environment_root / "pip-freeze.txt"
         for line in process.stdout.splitlines():
-            dependency = parse_frozen_requirement_line(line, root, lock_path)
+            dependency = parse_frozen_requirement_line(line, root, source_path)
             if dependency:
                 records.append(dependency)
         break
@@ -1291,7 +1299,7 @@ def discover_python_envs(root: Path) -> list[Path]:
             candidates.append(scripts_python)
         if bin_python.exists():
             candidates.append(bin_python)
-    if Path(sys.executable).exists() and is_within_root(Path(sys.executable)):
+    if Path(sys.executable).exists() and is_within_directory(Path(sys.executable), root):
         candidates.append(Path(sys.executable))
     return candidates
 
@@ -3095,6 +3103,42 @@ def build_dependency_summary(
     }
 
 
+def build_vulnerability_coverage(
+    *,
+    requested: bool,
+    targets: list[Path],
+    statuses: list[ToolStatus],
+) -> dict[str, Any]:
+    target_count = len(unique_paths(targets))
+    completed = sum(1 for status in statuses if status.state == "ok")
+    failed = sum(1 for status in statuses if status.state != "ok")
+    if not requested:
+        state = "not_requested"
+        complete = False
+        message = "本次未启用 OSV 漏洞查询。"
+    elif target_count == 0:
+        state = "no_supported_target"
+        complete = False
+        message = "未找到 OSV 支持的项目锁文件，无法完成漏洞覆盖。"
+    elif completed == target_count and failed == 0:
+        state = "complete"
+        complete = True
+        message = f"OSV 已完成 {completed}/{target_count} 个项目锁文件的漏洞查询。"
+    else:
+        state = "incomplete"
+        complete = False
+        message = f"OSV 仅完成 {completed}/{target_count} 个项目锁文件；0 条命中不能解释为没有漏洞。"
+    return {
+        "state": state,
+        "complete": complete,
+        "requested": requested,
+        "target_count": target_count,
+        "completed_targets": completed,
+        "failed_targets": max(failed, target_count - completed),
+        "message": message,
+    }
+
+
 def build_vex_summary(dependencies: list[DependencyRecord]) -> dict[str, Any]:
     counts = {"affected": 0, "not_affected": 0, "under_investigation": 0, "fixed": 0}
     statement_count = 0
@@ -3380,6 +3424,11 @@ def build_dependency_report(
     warning_rows = "\n".join(f"- {warning}" for warning in warnings)
     vex_summary = summary.get("vex") if isinstance(summary.get("vex"), dict) else {}
     reachability_summary = summary.get("reachability") if isinstance(summary.get("reachability"), dict) else {}
+    vulnerability_coverage = (
+        summary.get("vulnerability_coverage")
+        if isinstance(summary.get("vulnerability_coverage"), dict)
+        else {}
+    )
 
     return f"""# Supply Chain Dependency Audit Report
 
@@ -3396,6 +3445,7 @@ Scan target: {target}
 - Overall risk score: {summary['risk_score']} / 100
 - Vulnerable dependencies: {summary['vulnerable_dependencies']}
 - OSV matches: {summary['osv_matches']}
+- Vulnerability coverage: {vulnerability_coverage.get('state', 'unknown')} ({vulnerability_coverage.get('message', '-')})
 - Suspicious package names: {summary['suspicious_names']}
 - Unknown licenses: {summary['unknown_licenses']}
 - VEX statements: {vex_summary.get('statement_count', 0)}
@@ -3525,6 +3575,14 @@ def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
             "gnn_model_available": gnn_risk["model_available"],
             "gnn_model_type": gnn_risk["model_type"],
             "gnn_confidence": gnn_risk.get("gnn_confidence", 0.0),
+            "gnn_decision_margin": gnn_risk.get("gnn_decision_margin", 0.0),
+            "gnn_inference_mode": gnn_risk.get("gnn_inference_mode", ""),
+            "gnn_reliability": gnn_risk.get("gnn_reliability", ""),
+            "gnn_evidence_conflict": gnn_risk.get("gnn_evidence_conflict", False),
+            "gnn_target": gnn_risk.get("gnn_target", "malicious_package_similarity"),
+            "gnn_decision_threshold": gnn_risk.get("gnn_decision_threshold"),
+            "gnn_calibration_temperature": gnn_risk.get("gnn_calibration_temperature"),
+            "gnn_ood_distance": gnn_risk.get("gnn_ood_distance"),
             "gnn_explanations": gnn_risk.get("gnn_explanations", []),
             "similar_malicious_packages": gnn_risk.get("similar_malicious_packages", []),
         }
@@ -3549,7 +3607,7 @@ def dedupe_tool_statuses(statuses: list[ToolStatus]) -> list[ToolStatus]:
     for status in statuses:
         key = (status.name, status.command)
         existing = result.get(key)
-        if existing is None or state_rank.get(status.state, 9) < state_rank.get(existing.state, 9):
+        if existing is None or state_rank.get(status.state, 9) > state_rank.get(existing.state, 9):
             result[key] = status
     return list(result.values())
 
@@ -3573,6 +3631,15 @@ def empty_dependency_audit_payload() -> dict[str, Any]:
             "unknown_licenses": 0,
             "vulnerable_dependencies": 0,
             "osv_matches": 0,
+            "vulnerability_coverage": {
+                "state": "not_scanned",
+                "complete": False,
+                "requested": False,
+                "target_count": 0,
+                "completed_targets": 0,
+                "failed_targets": 0,
+                "message": "尚未执行漏洞查询。",
+            },
             "suspicious_names": 0,
             "exact_versions": 0,
             "transitive_dependencies": 0,

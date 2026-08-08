@@ -1,466 +1,1686 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import dagre from 'dagre'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dagre from "dagre";
 import {
-  Background, Controls, MiniMap, ReactFlow,
-  type Node, type Edge, type ReactFlowInstance,
-  Handle, Position, BaseEdge, getBezierPath,
-} from '@xyflow/react'
+  Background,
+  BaseEdge,
+  EdgeLabelRenderer,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  ReactFlow,
+  getSmoothStepPath,
+  type Edge,
+  type Node,
+  type ReactFlowInstance,
+} from "@xyflow/react";
 import {
-  AlertTriangle, ArrowRight, Box, Code2, Container, Cpu, Eye, EyeOff,
-  FileText, Fingerprint, Globe, Layers, Maximize2, Minimize2,
-  Network, Package, Radio, Route, Server, Shield, ShieldAlert,
-  Siren, Terminal, Upload, X,
-} from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { SecurityWorkspace } from '@/lib/security-api'
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Box,
+  Code2,
+  Container,
+  Cpu,
+  Eye,
+  FileText,
+  Fingerprint,
+  Globe,
+  Layers,
+  Maximize2,
+  Minimize2,
+  Network,
+  Package,
+  Radio,
+  Route,
+  Server,
+  Shield,
+  ShieldAlert,
+  Siren,
+  Terminal,
+  Upload,
+  X,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { SecurityWorkspace } from "@/lib/security-api";
+import { cn } from "@/lib/utils";
+import {
+  buildAttackPathFocusNodeIds,
+  buildGraphOverview,
+  graphRelationLabel,
+  type GraphOverviewGroup,
+  type GraphOverviewGroupKey,
+} from "./attack-chain-graph-model";
 
-type GNode = NonNullable<NonNullable<SecurityWorkspace['graph']>['nodes']>[number]
-type GEdge = NonNullable<NonNullable<SecurityWorkspace['graph']>['edges']>[number]
-type GPath = NonNullable<NonNullable<SecurityWorkspace['graph']>['attack_paths']>[number]
+type GNode = NonNullable<
+  NonNullable<SecurityWorkspace["graph"]>["nodes"]
+>[number];
+type GEdge = NonNullable<
+  NonNullable<SecurityWorkspace["graph"]>["edges"]
+>[number];
+type GPath = NonNullable<
+  NonNullable<SecurityWorkspace["graph"]>["attack_paths"]
+>[number];
+type GraphViewMode = "focus" | "all";
 
-/* ══ Node type config ══ */
-interface NC { label: string; color: string; Icon: typeof Shield }
-
-const NODE_MAP: Record<string, NC> = {
-  MultimodalEvidence: { label:'外部告警', color:'#06b6d4', Icon: Upload },
-  AudioEvidence:      { label:'音频证据', color:'#06b6d4', Icon: Radio },
-  VisualEvidence:     { label:'图像证据', color:'#06b6d4', Icon: Eye },
-  MultimodalFinding:  { label:'告警命中', color:'#ef4444', Icon: Siren },
-  DependencyPackage:  { label:'依赖包',   color:'#f59e0b', Icon: Package },
-  Vulnerability:      { label:'漏洞',     color:'#ef4444', Icon: ShieldAlert },
-  RecognizedEntity:   { label:'提取实体', color:'#a78bfa', Icon: Fingerprint },
-  CIStep:             { label:'CI 步骤',  color:'#fb923c', Icon: Terminal },
-  CIWorkflow:         { label:'CI 流程',  color:'#fb923c', Icon: Route },
-  Workflow:           { label:'Workflow', color:'#fb923c', Icon: Route },
-  BuildArtifact:      { label:'构建产物', color:'#22d3ee', Icon: Box },
-  Attestation:        { label:'签名证明', color:'#4ade80', Icon: Shield },
-  TrustedBuilder:     { label:'可信构建', color:'#4ade80', Icon: Cpu },
-  TrustFinding:       { label:'可信发现', color:'#4ade80', Icon: Shield },
-  RuntimeService:     { label:'运行服务', color:'#38bdf8', Icon: Globe },
-  LogEvent:           { label:'日志事件', color:'#818cf8', Icon: FileText },
-  Finding:            { label:'安全发现', color:'#ef4444', Icon: AlertTriangle },
-  AttackStage:        { label:'攻击阶段', color:'#ef4444', Icon: ShieldAlert },
-  EvidenceChain:      { label:'证据链',   color:'#4ade80', Icon: Route },
-  Asset:              { label:'目标资产', color:'#818cf8', Icon: Server },
-  SourceCommit:       { label:'源码提交', color:'#a78bfa', Icon: Code2 },
-  CodeFile:           { label:'代码文件', color:'#818cf8', Icon: Code2 },
+interface NodeConfig {
+  label: string;
+  color: string;
+  Icon: typeof Shield;
 }
-const DEFAULT_NC: NC = { label:'节点', color:'#6b7280', Icon: Container }
-function nc(n: GNode): NC { return NODE_MAP[n.type] || DEFAULT_NC }
 
-/* ══ Main node ══ */
+interface OverviewGroupConfig extends NodeConfig {
+  description: string;
+}
+
+const NODE_MAP: Record<string, NodeConfig> = {
+  MultimodalEvidence: { label: "外部告警", color: "#0891b2", Icon: Upload },
+  AudioEvidence: { label: "音频证据", color: "#0891b2", Icon: Radio },
+  VisualEvidence: { label: "图像证据", color: "#0891b2", Icon: Eye },
+  MultimodalFinding: { label: "告警命中", color: "#dc2626", Icon: Siren },
+  DependencyPackage: { label: "依赖包", color: "#d97706", Icon: Package },
+  Vulnerability: { label: "漏洞", color: "#dc2626", Icon: ShieldAlert },
+  RecognizedEntity: { label: "提取实体", color: "#7c3aed", Icon: Fingerprint },
+  CIStep: { label: "CI 步骤", color: "#ea580c", Icon: Terminal },
+  CIWorkflow: { label: "CI 流程", color: "#ea580c", Icon: Route },
+  Workflow: { label: "Workflow", color: "#ea580c", Icon: Route },
+  BuildArtifact: { label: "构建产物", color: "#0891b2", Icon: Box },
+  Attestation: { label: "签名证明", color: "#16a34a", Icon: Shield },
+  TrustedBuilder: { label: "可信构建", color: "#16a34a", Icon: Cpu },
+  TrustFinding: { label: "可信发现", color: "#16a34a", Icon: Shield },
+  RuntimeService: { label: "运行服务", color: "#0284c7", Icon: Globe },
+  LogEvent: { label: "日志事件", color: "#4f46e5", Icon: FileText },
+  Finding: { label: "安全发现", color: "#dc2626", Icon: AlertTriangle },
+  AttackStage: { label: "攻击阶段", color: "#dc2626", Icon: ShieldAlert },
+  EvidenceChain: { label: "证据链", color: "#16a34a", Icon: Route },
+  Asset: { label: "目标资产", color: "#4f46e5", Icon: Server },
+  SourceCommit: { label: "源码提交", color: "#7c3aed", Icon: Code2 },
+  CodeFile: { label: "代码文件", color: "#4f46e5", Icon: Code2 },
+};
+
+const DEFAULT_NODE_CONFIG: NodeConfig = {
+  label: "节点",
+  color: "#64748b",
+  Icon: Container,
+};
+const ATTACK_STAGES = ["依赖", "代码", "构建", "产物", "运行"];
+
+const OVERVIEW_GROUP_MAP: Record<GraphOverviewGroupKey, OverviewGroupConfig> = {
+  dependency: {
+    label: "依赖与漏洞",
+    description: "组件、漏洞与安全发现",
+    color: "#d97706",
+    Icon: Package,
+  },
+  code: {
+    label: "源码与提交",
+    description: "代码文件与版本提交",
+    color: "#4f46e5",
+    Icon: Code2,
+  },
+  build: {
+    label: "构建流程",
+    description: "Workflow、Job 与构建环境",
+    color: "#ea580c",
+    Icon: Terminal,
+  },
+  artifact: {
+    label: "产物可信",
+    description: "产物、签名与来源证明",
+    color: "#0891b2",
+    Icon: Box,
+  },
+  runtime: {
+    label: "运行印证",
+    description: "服务、资产与日志事件",
+    color: "#0284c7",
+    Icon: Globe,
+  },
+  evidence: {
+    label: "外部证据",
+    description: "告警、实体与证据链",
+    color: "#7c3aed",
+    Icon: Fingerprint,
+  },
+};
+
+function nodeConfig(node: GNode): NodeConfig {
+  return NODE_MAP[node.type] || DEFAULT_NODE_CONFIG;
+}
+
+function severityLabel(severity?: string) {
+  if (severity === "critical") return "严重";
+  if (severity === "high") return "高危";
+  if (severity === "medium") return "中危";
+  return "低危";
+}
+
+function severityColor(severity?: string) {
+  if (severity === "critical") return "#dc2626";
+  if (severity === "high") return "#ea580c";
+  if (severity === "medium") return "#d97706";
+  return "#0891b2";
+}
+
+function confidencePercent(value?: number) {
+  const normalized = value ?? 0;
+  return Math.round(normalized <= 1 ? normalized * 100 : normalized);
+}
+
+function nodeLabelById(nodes: GNode[], id?: string) {
+  if (!id) return "待确认";
+  return nodes.find((node) => node.id === id)?.label || id;
+}
+
+const HANDLE_POSITIONS = [
+  ["left", Position.Left],
+  ["right", Position.Right],
+  ["top", Position.Top],
+  ["bottom", Position.Bottom],
+] as const;
+
+function GraphHandles({ color }: { color: string }) {
+  return (
+    <>
+      {HANDLE_POSITIONS.map(([id, position]) => (
+        <span key={id}>
+          <Handle
+            id={`target-${id}`}
+            type="target"
+            position={position}
+            style={{
+              width: 7,
+              height: 7,
+              background: color,
+              border: "2px solid var(--background)",
+              opacity: 0.72,
+            }}
+          />
+          <Handle
+            id={`source-${id}`}
+            type="source"
+            position={position}
+            style={{
+              width: 7,
+              height: 7,
+              background: color,
+              border: "2px solid var(--background)",
+              opacity: 0.72,
+            }}
+          />
+        </span>
+      ))}
+    </>
+  );
+}
+
 function GraphNode({ data }: any) {
-  const c = nc(data.raw); const hl = data.highlighted; const semi = data.semi
-  const Icon = c.Icon
+  const config = nodeConfig(data.raw);
+  const highlighted = data.highlighted;
+  const context = data.context;
+  const Icon = config.Icon;
+
   return (
-    <div className="relative cursor-pointer rounded-xl border transition-all duration-500 overflow-hidden select-none"
+    <div
+      className="relative cursor-pointer select-none overflow-hidden rounded-md border transition-[border-color,background-color,opacity] duration-200"
       style={{
-        width: data._w || 175, opacity: data.dimmed ? 0.45 : 1,
-        background: hl ? `color-mix(in oklch, var(--card) 70%, ${c.color})` : semi ? `color-mix(in oklch, var(--card) 85%, ${c.color})` : 'var(--card)',
-        borderColor: hl ? c.color : semi ? `${c.color}50` : 'var(--border)',
-        boxShadow: hl ? `0 0 20px ${c.color}30, 0 2px 8px rgba(0,0,0,0.3)` : semi ? `0 0 8px ${c.color}10` : '0 1px 3px rgba(0,0,0,0.15)',
-      }}>
-      <Handle type="target" position={Position.Left} style={{ background: c.color, width: 8, height: 8, border: '2px solid var(--background)', opacity: hl ? 1 : 0.5 }} />
-      <Handle type="source" position={Position.Right} style={{ background: c.color, width: 8, height: 8, border: '2px solid var(--background)', opacity: hl ? 1 : 0.5 }} />
-      <div className="absolute left-0 top-0 bottom-0 w-1" style={{ background: c.color, opacity: hl ? 1 : semi ? 0.6 : 0.3 }} />
+        width: data.width || 188,
+        opacity: data.dimmed ? 0.42 : 1,
+        background: highlighted
+          ? `color-mix(in oklch, var(--card) 78%, ${config.color})`
+          : context
+            ? `color-mix(in oklch, var(--card) 90%, ${config.color})`
+            : "var(--card)",
+        borderColor: highlighted
+          ? config.color
+          : context
+            ? `${config.color}55`
+            : "var(--border)",
+        boxShadow: highlighted ? `inset 3px 0 0 ${config.color}` : "none",
+      }}
+    >
+      <GraphHandles color={config.color} />
       <div className="flex items-center gap-2 px-3 py-2.5">
-        <div className="flex size-7 items-center justify-center rounded-lg shrink-0" style={{ background: `${c.color}18`, color: hl ? c.color : `${c.color}99` }}>
-          <Icon className="size-3.5" /></div>
-        <div className="min-w-0">
-          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: hl ? c.color : 'var(--muted-foreground)' }}>{c.label}</div>
-          <div className="text-[12px] font-bold leading-snug truncate mt-0.5" style={{ color: hl ? 'var(--foreground)' : 'var(--muted-foreground)' }}>{data.label}</div>
+        <div
+          className="flex size-7 shrink-0 items-center justify-center rounded-md"
+          style={{ background: `${config.color}18`, color: config.color }}
+        >
+          <Icon className="size-3.5" />
         </div>
-        {data.riskLevel && data.riskLevel !== 'low' && (
-          <span className="ml-auto size-2 rounded-full shrink-0" style={{ background: data.riskLevel === 'critical' ? '#ef4444' : data.riskLevel === 'high' ? '#f97316' : '#f59e0b' }} />)}
+        <div className="min-w-0 flex-1">
+          <div
+            className="text-[10px] font-semibold uppercase"
+            style={{
+              color: highlighted ? config.color : "var(--muted-foreground)",
+            }}
+          >
+            {config.label}
+          </div>
+          <div
+            className="mt-0.5 truncate text-xs font-bold text-foreground"
+            title={data.label}
+          >
+            {data.label}
+          </div>
+        </div>
+        {data.riskLevel && data.riskLevel !== "low" ? (
+          <span
+            className="size-2 shrink-0 rounded-full"
+            style={{ background: severityColor(data.riskLevel) }}
+          />
+        ) : null}
       </div>
     </div>
-  )
+  );
 }
 
-/* ══ Cluster bubble ══ */
 function ClusterBubble({ data }: any) {
+  const config = OVERVIEW_GROUP_MAP[data.group.key as GraphOverviewGroupKey];
+  const Icon = config.Icon;
   return (
-    <div className="relative cursor-pointer rounded-2xl border border-dashed transition-all duration-300 hover:border-cyan-400/40 hover:shadow-[0_0_16px_rgba(6,182,212,0.08)] select-none"
-      style={{ width: data._w || 160, height: 80, opacity: 0.55,
-        background: 'color-mix(in oklch, var(--card) 50%, transparent)',
-        borderColor: 'var(--border)' }}>
-      <Handle type="target" position={Position.Left} style={{ visibility: 'hidden' }} />
-      <Handle type="source" position={Position.Right} style={{ visibility: 'hidden' }} />
-      <div className="flex flex-col items-center justify-center h-full gap-1 px-3">
-        <div className="flex items-center gap-1.5">
-          <Layers className="size-3.5 text-muted-foreground" />
-          <span className="text-[11px] font-semibold text-muted-foreground">{data.label}</span>
+    <div
+      className="group relative w-[224px] cursor-pointer select-none overflow-hidden rounded-md border bg-[color:var(--surface-card)] transition-[border-color,background-color] duration-200"
+      style={{
+        borderColor: `${config.color}66`,
+        boxShadow: `inset 3px 0 0 ${config.color}`,
+      }}
+    >
+      <GraphHandles color={config.color} />
+      <div className="p-4">
+        <div className="flex items-start gap-3">
+          <div
+            className="flex size-9 shrink-0 items-center justify-center rounded-md"
+            style={{ background: `${config.color}14`, color: config.color }}
+          >
+            <Icon className="size-4.5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-foreground">
+              {config.label}
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {config.description}
+            </div>
+          </div>
+          <ArrowRight className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
         </div>
-        <span className="text-[10px] text-muted-foreground/60">{data.count} 节点 · 点击展开</span>
+        <div className="mt-4 grid grid-cols-3 divide-x divide-border rounded-md border border-border bg-[color:var(--surface-inset)] py-2">
+          <div className="text-center">
+            <div className="text-sm font-bold tabular-nums text-foreground">
+              {data.group.nodeCount}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">节点</div>
+          </div>
+          <div className="text-center">
+            <div
+              className="text-sm font-bold tabular-nums"
+              style={{
+                color: data.group.riskCount
+                  ? "#dc2626"
+                  : "var(--muted-foreground)",
+              }}
+            >
+              {data.group.riskCount}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">风险</div>
+          </div>
+          <div className="text-center">
+            <div className="text-sm font-bold tabular-nums text-foreground">
+              {data.group.internalRelationCount}
+            </div>
+            <div className="mt-0.5 text-[10px] text-muted-foreground">
+              内部关系
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  )
+  );
 }
 
-const nodeTypes = { graphNode: GraphNode, clusterBubble: ClusterBubble }
+const nodeTypes = { graphNode: GraphNode, clusterBubble: ClusterBubble };
 
-/* ══ Bezier edge — layered opacity ══ */
-function BezierEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, style }: any) {
-  const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, curvature: 0.25 })
-  const isPath = data?.isPath; const isSemi = data?.isSemi; const trust = data?.isTrust
-  const opacity = style?.opacity ?? 1
-  const c = trust ? '#4ade80' : isPath ? '#ef4444' : isSemi ? '#06b6d4' : 'var(--border)'
-  const sw = isPath ? 3 : isSemi ? 1.8 : 0.8
+function AttackEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+  style,
+  interactionWidth,
+  markerEnd,
+}: any) {
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 10,
+    offset: 24,
+  });
+  const isPath = data?.isPath;
+  const isContext = data?.isContext;
+  const isTrust = data?.isTrust;
+  const label = data?.label || "关联";
+  const confidence = data?.confidence;
+  const selected = data?.selected;
+  const opacity = style?.opacity ?? 1;
+  const color =
+    data?.color ||
+    (isTrust
+      ? "#16a34a"
+      : isPath
+        ? "#dc2626"
+        : isContext
+          ? "#0891b2"
+          : "#64748b");
 
-  if (!isPath && !isSemi) {
-    return <BaseEdge id={id} path={path} style={{ stroke: 'var(--border)', strokeWidth: 0.6, opacity: 0.15 * opacity }} />
+  if (!isPath && !isContext) {
+    return (
+      <g>
+        <BaseEdge
+          id={id}
+          path={path}
+          interactionWidth={interactionWidth ?? 18}
+          markerEnd={markerEnd}
+          style={{ stroke: color, strokeWidth: selected ? 2 : 1.2, opacity }}
+        />
+        <EdgeLabelRenderer>
+          <div
+            className={cn(
+              "nodrag nopan pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-4",
+              selected
+                ? "border-cyan-500/60 bg-cyan-500/10 text-cyan-700"
+                : "border-border bg-[color:var(--surface-card)] text-muted-foreground",
+            )}
+            style={{ left: labelX, top: labelY }}
+          >
+            {label}
+            {confidence != null ? ` · ${confidence}%` : ""}
+          </div>
+        </EdgeLabelRenderer>
+      </g>
+    );
   }
 
   return (
     <g>
-      {isPath && <path d={path} fill="none" stroke={c} strokeWidth={8} strokeLinecap="round" opacity={0.08 * opacity} style={{ filter: 'blur(4px)' }} />}
-      <path d={path} fill="none" stroke={c} strokeWidth={sw} strokeDasharray={isSemi ? '3 3' : undefined} strokeLinecap="round" opacity={isPath ? 1 : isSemi ? 0.3 : 0.15} />
-      {isPath && (
-        <path d={path} fill="none" stroke={trust ? '#86efac' : '#fca5a5'} strokeWidth={1.2} strokeLinecap="round" strokeDasharray="6 36" opacity={0.7}>
-          <animate attributeName="stroke-dashoffset" from="42" to="0" dur="1.8s" repeatCount="indefinite" />
+      <path
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeWidth={isPath ? 2.8 : 1.5}
+        strokeDasharray={isContext ? "4 4" : undefined}
+        strokeLinecap="round"
+        opacity={isPath ? 1 : 0.72}
+        markerEnd={markerEnd}
+      />
+      <path
+        d={path}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={interactionWidth ?? 22}
+        pointerEvents="stroke"
+      />
+      <EdgeLabelRenderer>
+        <div
+          className={cn(
+            "nodrag nopan pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-4",
+            selected
+              ? "border-red-500/60 bg-red-500/10 text-red-700"
+              : "border-border bg-[color:var(--surface-card)] text-muted-foreground",
+          )}
+          style={{ left: labelX, top: labelY }}
+        >
+          {label}
+          {confidence != null ? ` · ${confidence}%` : ""}
+        </div>
+      </EdgeLabelRenderer>
+      {isPath ? (
+        <path
+          d={path}
+          fill="none"
+          stroke={isTrust ? "#86efac" : "#fecaca"}
+          strokeWidth={1}
+          strokeLinecap="round"
+          strokeDasharray="6 32"
+          opacity={0.8}
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            from="38"
+            to="0"
+            dur="1.8s"
+            repeatCount="indefinite"
+          />
         </path>
-      )}
-      {data?.bundleCount > 1 && (
-        <text x={(sourceX + targetX) / 2} y={(sourceY + targetY) / 2 - 10} textAnchor="middle" fill="#06b6d4" fontSize="9" fontWeight="700" opacity={0.5}>
-          ×{data.bundleCount}
-        </text>
-      )}
+      ) : null}
     </g>
-  )
+  );
 }
 
-const edgeTypes = { bezier: BezierEdge }
+const edgeTypes = { attackEdge: AttackEdge };
 
-/* ══ Dagre layout — only for visible nodes ══ */
-function layoutNodes(visibleNodes: GNode[], allEdges: GEdge[], totalN: number) {
-  const g = new dagre.graphlib.Graph()
-  g.setDefaultEdgeLabel(() => ({}))
-  const ns = totalN <= 8 ? 90 : totalN <= 15 ? 70 : 55
-  const rs = totalN <= 8 ? 200 : totalN <= 15 ? 160 : 130
-  g.setGraph({ rankdir: 'LR', nodesep: ns, ranksep: rs, marginx: 60, marginy: 60 })
+function layoutNodes(visibleNodes: GNode[], visibleEdges: GEdge[]) {
+  const graph = new dagre.graphlib.Graph();
+  graph.setDefaultEdgeLabel(() => ({}));
+  const nodeCount = visibleNodes.length;
+  const nodeWidth = nodeCount <= 8 ? 210 : nodeCount <= 15 ? 188 : 170;
+  const nodeHeight = 66;
+  graph.setGraph({
+    rankdir: "LR",
+    nodesep: nodeCount <= 10 ? 72 : 54,
+    ranksep: nodeCount <= 10 ? 190 : 150,
+    marginx: 64,
+    marginy: 76,
+  });
 
-  const nw = totalN <= 8 ? 200 : totalN <= 15 ? 175 : 155
-  const nh = 66
-  const idSet = new Set(visibleNodes.map(n => n.id))
-
-  for (const n of visibleNodes) g.setNode(n.id, { width: nw, height: nh })
-  for (const e of allEdges) {
-    if (idSet.has(e.source) && idSet.has(e.target)) g.setEdge(e.source, e.target, {})
-  }
-  dagre.layout(g)
+  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  visibleNodes.forEach((node) =>
+    graph.setNode(node.id, { width: nodeWidth, height: nodeHeight }),
+  );
+  visibleEdges.forEach((edge) => {
+    if (visibleIds.has(edge.source) && visibleIds.has(edge.target))
+      graph.setEdge(edge.source, edge.target, {});
+  });
+  dagre.layout(graph);
 
   return {
-    nodes: visibleNodes.map(n => {
-      const pos = g.node(n.id)
-      return pos ? { ...n, _x: pos.x - nw / 2, _y: pos.y - nh / 2 } : { ...n, _x: 0, _y: 0 }
+    nodeWidth,
+    nodes: visibleNodes.map((node) => {
+      const position = graph.node(node.id);
+      return {
+        ...node,
+        x: position ? position.x - nodeWidth / 2 : 0,
+        y: position ? position.y - nodeHeight / 2 : 0,
+      };
     }),
-    nodeW: nw, nodeH: nh,
-  }
+  };
 }
 
-/* ════════════════════════════════════════════════════
-   MAIN
-   ════════════════════════════════════════════════════ */
-export function AttackChainGraph({ workspace }: { workspace: SecurityWorkspace }) {
-  const graph = workspace.graph
-  const rawNodes: GNode[] = graph?.nodes ?? []
-  const rawEdges: GEdge[] = graph?.edges ?? []
-  const attackPaths: GPath[] = graph?.attack_paths ?? []
-  const graphSummary = graph?.summary
+function layoutOverviewGroups(groups: GraphOverviewGroup[]) {
+  const positions: Record<
+    GraphOverviewGroupKey,
+    { x: number; y: number; target: Position; source: Position }
+  > = {
+    dependency: { x: 0, y: 0, target: Position.Left, source: Position.Right },
+    code: { x: 288, y: 0, target: Position.Left, source: Position.Right },
+    build: { x: 576, y: 0, target: Position.Left, source: Position.Bottom },
+    artifact: { x: 576, y: 220, target: Position.Top, source: Position.Left },
+    runtime: { x: 288, y: 220, target: Position.Right, source: Position.Left },
+    evidence: { x: 0, y: 220, target: Position.Right, source: Position.Left },
+  };
 
-  const [selectedPathId, setSelectedPathId] = useState<string | null>(attackPaths[0]?.id ?? null)
-  const [detailNode, setDetailNode] = useState<GNode | null>(null)
-  const [fullscreen, setFullscreen] = useState(false)
-  const [pathOnlyMode, setPathOnlyMode] = useState(false)
-  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  return groups.map((group) => ({ group, ...positions[group.key] }));
+}
 
-  // ResizeObserver: recalculate layout on container resize + evidence change
+function riskPriority(risk?: string) {
+  if (risk === "critical") return 4;
+  if (risk === "high") return 3;
+  if (risk === "medium") return 2;
+  return 1;
+}
+
+function edgeHandleIds(
+  source: { x: number; y: number } | undefined,
+  target: { x: number; y: number } | undefined,
+) {
+  if (!source || !target)
+    return { sourceHandle: "source-right", targetHandle: "target-left" };
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0
+      ? { sourceHandle: "source-right", targetHandle: "target-left" }
+      : { sourceHandle: "source-left", targetHandle: "target-right" };
+  }
+  return dy >= 0
+    ? { sourceHandle: "source-bottom", targetHandle: "target-top" }
+    : { sourceHandle: "source-top", targetHandle: "target-bottom" };
+}
+
+function relationColor(edge: GEdge, isPath: boolean) {
+  if (isPath) return "#dc2626";
+  const type = `${edge.type ?? ""} ${edge.label ?? ""}`.toUpperCase();
+  if (/TRUST|ATTEST|PROVENANCE|SIGN/.test(type)) return "#16a34a";
+  if (/BUILD|WORKFLOW|PRODUC|GENERAT/.test(type)) return "#ea580c";
+  if (/DEPLOY|RUN|LOG|RUNTIME/.test(type)) return "#0284c7";
+  if (/IMPORT|DEPEND|CALL|REFERENCE/.test(type)) return "#7c3aed";
+  return "#64748b";
+}
+
+function AttackPathQueue({
+  paths,
+  nodes,
+  selectedPathId,
+  onSelect,
+}: {
+  paths: GPath[];
+  nodes: GNode[];
+  selectedPathId: string | null;
+  onSelect: (path: GPath) => void;
+}) {
+  return (
+    <aside className="flex min-h-[220px] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] xl:min-h-0">
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-bold text-foreground">攻击路径</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              按综合风险排序
+            </div>
+          </div>
+          <span className="meta-chip tabular-nums">{paths.length}</span>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [scrollbar-width:thin]">
+        {paths.length ? (
+          paths.map((path, index) => {
+            const selected = path.id === selectedPathId;
+            const color = severityColor(path.severity);
+            return (
+              <button
+                key={path.id}
+                type="button"
+                onClick={() => onSelect(path)}
+                className={cn(
+                  "w-full border-b border-border/70 px-4 py-3.5 text-left transition-colors",
+                  selected
+                    ? "bg-cyan-500/10 shadow-[inset_3px_0_0_rgb(6,182,212)]"
+                    : "hover:bg-[color:var(--surface-inset)]",
+                )}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-muted-foreground">
+                    路径 {index + 1}
+                  </span>
+                  <span
+                    className="rounded-full border px-2 py-0.5 text-[11px] font-bold"
+                    style={{
+                      borderColor: `${color}55`,
+                      background: `${color}12`,
+                      color,
+                    }}
+                  >
+                    {severityLabel(path.severity)} {path.score}
+                  </span>
+                </div>
+                <div
+                  className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-foreground"
+                  title={path.title}
+                >
+                  {path.title}
+                </div>
+                <div className="mt-3 flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <span
+                    className="truncate"
+                    title={nodeLabelById(nodes, path.entry_node_id)}
+                  >
+                    {nodeLabelById(nodes, path.entry_node_id)}
+                  </span>
+                  <ArrowRight className="size-3 shrink-0" />
+                  <span
+                    className="truncate"
+                    title={nodeLabelById(nodes, path.target_node_id)}
+                  >
+                    {nodeLabelById(nodes, path.target_node_id)}
+                  </span>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>置信度 {confidencePercent(path.confidence)}%</span>
+                  <span>{path.edge_ids?.length ?? 0} 个关系</span>
+                </div>
+              </button>
+            );
+          })
+        ) : (
+          <div className="grid h-full min-h-40 place-items-center px-6 text-center text-sm text-muted-foreground">
+            暂无可研判的攻击路径
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function GraphInspector({
+  node,
+  edge,
+  path,
+  nodes,
+  edges,
+  viewMode,
+  onClearNode,
+  onClearEdge,
+  onExpandNode,
+}: {
+  node: GNode | null;
+  edge: GEdge | null;
+  path: GPath | null;
+  nodes: GNode[];
+  edges: GEdge[];
+  viewMode: GraphViewMode;
+  onClearNode: () => void;
+  onClearEdge: () => void;
+  onExpandNode: (nodeId: string) => void;
+}) {
+  if (!node && edge) {
+    const sourceNode = nodes.find((candidate) => candidate.id === edge.source);
+    const targetNode = nodes.find((candidate) => candidate.id === edge.target);
+    const edgeLabel = graphRelationLabel(edge.type, edge.label);
+    return (
+      <aside className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-md border border-cyan-500/35 bg-[color:var(--surface-card)] xl:min-h-0">
+        <div className="border-b border-border px-4 py-3">
+          <div className="flex items-start gap-3">
+            <span className="grid size-9 shrink-0 place-items-center rounded-md border border-cyan-500/35 bg-cyan-500/10 text-cyan-700">
+              <ArrowRight className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-bold text-foreground">关系详情</div>
+              <div
+                className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                title={edge.id}
+              >
+                {edge.id}
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label="关闭关系详情"
+              title="关闭关系详情"
+              onClick={onClearEdge}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-4 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+          <div className="rounded-md border border-cyan-500/25 bg-cyan-500/5 p-3">
+            <div className="text-xs font-semibold text-muted-foreground">
+              关系类型
+            </div>
+            <div className="mt-1 text-base font-bold text-cyan-700">
+              {edgeLabel}
+            </div>
+            {edge.type && edge.type !== edgeLabel ? (
+              <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                {edge.type}
+              </div>
+            ) : null}
+          </div>
+          <div className="grid gap-2">
+            <div className="rounded-md border border-border bg-[color:var(--surface-inset)] p-3">
+              <div className="text-[11px] font-semibold text-muted-foreground">
+                来源节点
+              </div>
+              <div
+                className="mt-1 truncate text-sm font-bold text-foreground"
+                title={sourceNode?.label || edge.source}
+              >
+                {sourceNode?.label || edge.source}
+              </div>
+              <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+                {edge.source}
+              </div>
+            </div>
+            <div className="flex justify-center text-cyan-700">
+              <ArrowRight className="size-4" />
+            </div>
+            <div className="rounded-md border border-border bg-[color:var(--surface-inset)] p-3">
+              <div className="text-[11px] font-semibold text-muted-foreground">
+                目标节点
+              </div>
+              <div
+                className="mt-1 truncate text-sm font-bold text-foreground"
+                title={targetNode?.label || edge.target}
+              >
+                {targetNode?.label || edge.target}
+              </div>
+              <div className="mt-1 truncate font-mono text-[10px] text-muted-foreground">
+                {edge.target}
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-md border border-border px-3 py-2">
+              <div className="text-xs text-muted-foreground">置信度</div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-foreground">
+                {edge.confidence != null
+                  ? `${confidencePercent(edge.confidence)}%`
+                  : "-"}
+              </div>
+            </div>
+            <div className="rounded-md border border-border px-3 py-2">
+              <div className="text-xs text-muted-foreground">证据数量</div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-foreground">
+                {edge.evidence_ids?.length ?? 0}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-muted-foreground">
+              关系原因
+            </div>
+            <p className="mt-2 text-sm leading-6 text-foreground">
+              {edge.reason || "该关系由图谱实体和证据关联推导。"}
+            </p>
+          </div>
+          {edge.evidence_ids?.length ? (
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground">
+                关联证据
+              </div>
+              <div className="mt-2 space-y-2">
+                {edge.evidence_ids.map((id) => (
+                  <div
+                    key={id}
+                    className="truncate rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2 font-mono text-xs text-foreground"
+                    title={id}
+                  >
+                    {id}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    );
+  }
+
+  if (!node) {
+    return (
+      <aside className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] xl:min-h-0">
+        <div className="border-b border-border px-4 py-3">
+          <div className="text-sm font-bold text-foreground">路径研判</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            风险结论与处置依据
+          </div>
+        </div>
+        {path ? (
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">{severityLabel(path.severity)}</Badge>
+              <span
+                className="text-2xl font-bold tabular-nums"
+                style={{ color: severityColor(path.severity) }}
+              >
+                {path.score}
+              </span>
+              <span className="text-xs text-muted-foreground">/ 100</span>
+              <span className="ml-auto meta-chip">
+                置信度 {confidencePercent(path.confidence)}%
+              </span>
+            </div>
+            <div>
+              <div className="text-base font-bold leading-6 text-foreground">
+                {path.title}
+              </div>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {path.description || path.conclusion || "暂无路径描述"}
+              </p>
+            </div>
+            <div className="rounded-md border border-border bg-[color:var(--surface-inset)] p-3">
+              <div className="text-xs font-semibold text-muted-foreground">
+                攻击入口
+              </div>
+              <div
+                className="mt-1 truncate text-sm font-semibold text-foreground"
+                title={nodeLabelById(nodes, path.entry_node_id)}
+              >
+                {nodeLabelById(nodes, path.entry_node_id)}
+              </div>
+              <div className="my-3 h-px bg-border" />
+              <div className="text-xs font-semibold text-muted-foreground">
+                影响目标
+              </div>
+              <div
+                className="mt-1 truncate text-sm font-semibold text-foreground"
+                title={nodeLabelById(nodes, path.target_node_id)}
+              >
+                {nodeLabelById(nodes, path.target_node_id)}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md border border-border px-3 py-2">
+                <div className="text-xs text-muted-foreground">路径关系</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {path.edge_ids?.length ?? 0}
+                </div>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2">
+                <div className="text-xs text-muted-foreground">证据数量</div>
+                <div className="mt-1 text-xl font-bold tabular-nums text-foreground">
+                  {path.evidence_ids?.length ?? 0}
+                </div>
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground">
+                修复建议
+              </div>
+              <p className="mt-2 text-sm leading-6 text-foreground">
+                {path.recommendation || "请结合节点证据复核处置优先级。"}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="grid flex-1 place-items-center px-6 text-center text-sm text-muted-foreground">
+            当前没有路径结论
+          </div>
+        )}
+      </aside>
+    );
+  }
+
+  const config = nodeConfig(node);
+  const Icon = config.Icon;
+  const connectedEdges = edges.filter(
+    (edge) => edge.source === node.id || edge.target === node.id,
+  );
+  const connectedIds = new Set(
+    connectedEdges.map((edge) =>
+      edge.source === node.id ? edge.target : edge.source,
+    ),
+  );
+  const connectedNodes = nodes.filter((candidate) =>
+    connectedIds.has(candidate.id),
+  );
+
+  return (
+    <aside className="flex min-h-[420px] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] xl:min-h-0">
+      <div className="border-b border-border px-4 py-3">
+        <div className="flex items-start gap-3">
+          <span
+            className="grid size-9 shrink-0 place-items-center rounded-md border"
+            style={{
+              borderColor: `${config.color}45`,
+              background: `${config.color}12`,
+              color: config.color,
+            }}
+          >
+            <Icon className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div
+              className="truncate text-sm font-bold text-foreground"
+              title={node.label}
+            >
+              {node.label}
+            </div>
+            <div
+              className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+              title={node.id}
+            >
+              {node.id}
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="关闭节点详情"
+            title="关闭节点详情"
+            onClick={onClearNode}
+          >
+            <X className="size-4" />
+          </Button>
+        </div>
+      </div>
+      <Tabs defaultValue="overview" className="flex min-h-0 flex-1 flex-col">
+        <TabsList className="mx-4 mt-3 grid h-9 grid-cols-3 rounded-md">
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="connections">上下游</TabsTrigger>
+          <TabsTrigger value="evidence">证据</TabsTrigger>
+        </TabsList>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 [scrollbar-gutter:stable] [scrollbar-width:thin]">
+          <TabsContent value="overview" className="mt-3 space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <span
+                className="rounded-full border px-2 py-0.5 text-xs font-bold"
+                style={{
+                  borderColor: `${config.color}45`,
+                  background: `${config.color}12`,
+                  color: config.color,
+                }}
+              >
+                {config.label}
+              </span>
+              <Badge variant="secondary">{severityLabel(node.risk)}</Badge>
+            </div>
+            <div className="grid gap-2 text-sm">
+              {[
+                ["评分", node.score != null ? `${node.score}/100` : "-"],
+                ["来源", node.source_model || node.source || "-"],
+                ["关联关系", String(connectedEdges.length)],
+                [
+                  "是否在当前路径",
+                  path?.node_ids?.includes(node.id) ? "是" : "否",
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={label}
+                  className="flex items-center justify-between gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2"
+                >
+                  <span className="text-xs font-semibold text-muted-foreground">
+                    {label}
+                  </span>
+                  <span
+                    className="min-w-0 truncate text-right text-xs font-semibold text-foreground"
+                    title={value}
+                  >
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {node.description ? (
+              <p className="text-sm leading-6 text-muted-foreground">
+                {node.description}
+              </p>
+            ) : null}
+            {viewMode === "focus" && connectedNodes.length ? (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => onExpandNode(node.id)}
+              >
+                <Network className="size-4" />
+                展开直接上下游
+              </Button>
+            ) : null}
+          </TabsContent>
+          <TabsContent value="connections" className="mt-3 space-y-2">
+            {connectedEdges.length ? (
+              connectedEdges.map((edge) => {
+                const outgoing = edge.source === node.id;
+                const otherId = outgoing ? edge.target : edge.source;
+                const otherNode = nodes.find(
+                  (candidate) => candidate.id === otherId,
+                );
+                return (
+                  <div
+                    key={edge.id}
+                    className="flex items-center gap-3 rounded-md border border-border bg-[color:var(--surface-inset)] p-3"
+                  >
+                    <ArrowRight
+                      className={cn(
+                        "size-4 shrink-0 text-cyan-600",
+                        !outgoing && "rotate-180",
+                      )}
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-foreground">
+                        {otherNode?.label || otherId}
+                      </div>
+                      <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                        {edge.type || edge.label}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                暂无上下游关系
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="evidence" className="mt-3">
+            {node.evidence_ids?.length ? (
+              <div className="space-y-2">
+                {node.evidence_ids.map((id) => (
+                  <div
+                    key={id}
+                    className="truncate rounded-md border border-border bg-[color:var(--surface-inset)] px-3 py-2 font-mono text-xs text-foreground"
+                    title={id}
+                  >
+                    {id}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                该节点暂无独立证据编号
+              </div>
+            )}
+          </TabsContent>
+        </div>
+      </Tabs>
+    </aside>
+  );
+}
+
+export function AttackChainGraph({
+  workspace,
+}: {
+  workspace: SecurityWorkspace;
+}) {
+  const graph = workspace.graph;
+  const rawNodes: GNode[] = graph?.nodes ?? [];
+  const rawEdges: GEdge[] = graph?.edges ?? [];
+  const attackPaths: GPath[] = graph?.attack_paths ?? [];
+  const graphSummary = graph?.summary;
+  const orderedPaths = useMemo(
+    () => [...attackPaths].sort((left, right) => right.score - left.score),
+    [attackPaths],
+  );
+
+  const [selectedPathId, setSelectedPathId] = useState<string | null>(
+    orderedPaths[0]?.id ?? null,
+  );
+  const [selectedNode, setSelectedNode] = useState<GNode | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<GEdge | null>(null);
+  const [viewMode, setViewMode] = useState<GraphViewMode>(
+    orderedPaths.length ? "focus" : "all",
+  );
+  const [selectedGroupKey, setSelectedGroupKey] =
+    useState<GraphOverviewGroupKey | null>(null);
+  const [groupNodeLimit, setGroupNodeLimit] = useState(24);
+  const [expandedNodeIds, setExpandedNodeIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [fullscreen, setFullscreen] = useState(false);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(
+    null,
+  );
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const el = containerRef.current; if (!el) return
-    const obs = new ResizeObserver(() => {
-      if (flowInstance) {
-        setTimeout(() => flowInstance.fitView({ padding: 0.1, duration: 400 }), 200)
-      }
-    })
-    obs.observe(el); return () => obs.disconnect()
-  }, [flowInstance, fullscreen])
-
-  const selectedPath = attackPaths.find(p => p.id === selectedPathId) ?? null
-  const isAllMode = selectedPathId === null
-
-  // Node classification
-  const pathNodeIds = useMemo(() => new Set(selectedPath?.node_ids ?? []), [selectedPath])
-  const pathEdgeIds = useMemo(() => new Set(selectedPath?.edge_ids ?? []), [selectedPath])
-
-  const semiNodeIds = useMemo(() => {
-    if (isAllMode) return new Set<string>() // all mode: no "semi" needed
-    const s = new Set<string>()
-    for (const e of rawEdges) {
-      if (pathNodeIds.has(e.source) && !pathNodeIds.has(e.target)) s.add(e.target)
-      if (pathNodeIds.has(e.target) && !pathNodeIds.has(e.source)) s.add(e.source)
+    if (!orderedPaths.length) {
+      setSelectedPathId(null);
+      setViewMode("all");
+      return;
     }
-    return s
-  }, [rawEdges, pathNodeIds, isAllMode])
+    if (
+      !selectedPathId ||
+      !orderedPaths.some((path) => path.id === selectedPathId)
+    ) {
+      setSelectedPathId(orderedPaths[0].id);
+      setViewMode("focus");
+    }
+  }, [orderedPaths, selectedPathId]);
 
-  // Layout: in "all" mode, ALL nodes participate; in path mode, only path+semi+expanded
-  const layoutInput = useMemo(() => {
-    if (isAllMode) return rawNodes
-    // Path mode: only show path + semi nodes; rest are hidden (not rendered as clusters)
-    const visible = new Set([...pathNodeIds, ...semiNodeIds])
-    return rawNodes.filter(n => visible.has(n.id))
-  }, [rawNodes, pathNodeIds, semiNodeIds, isAllMode])
+  const selectedPath =
+    orderedPaths.find((path) => path.id === selectedPathId) ??
+    orderedPaths[0] ??
+    null;
+  const focusNodeIdList = useMemo(
+    () => buildAttackPathFocusNodeIds(selectedPath, rawNodes, rawEdges, 20),
+    [selectedPath, rawNodes, rawEdges],
+  );
+  const focusNodeIds = useMemo(
+    () => new Set(focusNodeIdList),
+    [focusNodeIdList],
+  );
+  const pathEdgeIds = useMemo(
+    () => new Set(selectedPath?.edge_ids ?? []),
+    [selectedPath],
+  );
 
-  // Dynamic layout
-  const layoutResult = useMemo(
-    () => layoutNodes(layoutInput, rawEdges, layoutInput.length),
-    [layoutInput, rawEdges])
-  const layoutNodesOut = layoutResult.nodes
-  const nodeW = layoutResult.nodeW
+  const graphOverview = useMemo(
+    () => buildGraphOverview(rawNodes, rawEdges),
+    [rawNodes, rawEdges],
+  );
+  const overviewLayout = useMemo(
+    () => layoutOverviewGroups(graphOverview.groups),
+    [graphOverview.groups],
+  );
+  const selectedGroup = useMemo(
+    () =>
+      graphOverview.groups.find((group) => group.key === selectedGroupKey) ??
+      null,
+    [graphOverview.groups, selectedGroupKey],
+  );
+  const selectedGroupNodeIds = useMemo(
+    () => new Set(selectedGroup?.nodeIds ?? []),
+    [selectedGroup],
+  );
+  const selectedGroupNodes = useMemo(
+    () =>
+      rawNodes
+        .filter((node) => selectedGroupNodeIds.has(node.id))
+        .sort(
+          (left, right) =>
+            riskPriority(right.risk) - riskPriority(left.risk) ||
+            (right.score ?? 0) - (left.score ?? 0) ||
+            left.label.localeCompare(right.label, "zh-CN"),
+        ),
+    [rawNodes, selectedGroupNodeIds],
+  );
+  const displayedGroupNodes = useMemo(
+    () => selectedGroupNodes.slice(0, groupNodeLimit),
+    [selectedGroupNodes, groupNodeLimit],
+  );
 
-  // ReactFlow nodes — filter hidden in pathOnlyMode
-  const rfNodes: Node[] = useMemo(() => {
-    return layoutNodesOut
-      .filter(n => {
-        if (!pathOnlyMode || !selectedPath) return true
-        return pathNodeIds.has(n.id)
-      })
-      .map(n => {
-        const onPath = pathNodeIds.has(n.id)
-        const semi = semiNodeIds.has(n.id)
-        const dimmed = !isAllMode && selectedPath && !onPath && !semi
-        const pos = (n as any)._x != null ? { x: (n as any)._x, y: (n as any)._y } : { x: 0, y: 0 }
+  const visibleNodeIds = useMemo(() => {
+    if (viewMode === "all")
+      return new Set(displayedGroupNodes.map((node) => node.id));
+    if (!selectedPath) return new Set<string>();
+    return new Set([...focusNodeIdList, ...expandedNodeIds]);
+  }, [
+    viewMode,
+    selectedPath,
+    displayedGroupNodes,
+    focusNodeIdList,
+    expandedNodeIds,
+  ]);
+  const visibleNodes = useMemo(
+    () => rawNodes.filter((node) => visibleNodeIds.has(node.id)),
+    [rawNodes, visibleNodeIds],
+  );
+  const visibleEdges = useMemo(
+    () =>
+      rawEdges.filter(
+        (edge) =>
+          visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target),
+      ),
+    [rawEdges, visibleNodeIds],
+  );
+  const layout = useMemo(() => {
+    return layoutNodes(visibleNodes, visibleEdges);
+  }, [visibleNodes, visibleEdges]);
+  const flowPositionById = useMemo(
+    () =>
+      new Map(layout.nodes.map((node) => [node.id, { x: node.x, y: node.y }])),
+    [layout.nodes],
+  );
+  const overviewPositionById = useMemo(
+    () =>
+      new Map(
+        overviewLayout.map(({ group, x, y }) => [
+          `group-${group.key}`,
+          { x, y },
+        ]),
+      ),
+    [overviewLayout],
+  );
+
+  const flowNodes: Node[] = useMemo(() => {
+    if (viewMode === "all" && !selectedGroup) {
+      return overviewLayout.map(({ group, x, y, target, source }) => ({
+        id: `group-${group.key}`,
+        type: "clusterBubble",
+        position: { x, y },
+        data: {
+          group,
+          targetPosition: target,
+          sourcePosition: source,
+        },
+        draggable: false,
+        selectable: true,
+      }));
+    }
+    return layout.nodes.map((node) => ({
+      id: node.id,
+      type: "graphNode",
+      position: { x: node.x, y: node.y },
+      data: {
+        label: node.label,
+        raw: node,
+        highlighted: focusNodeIds.has(node.id),
+        context: expandedNodeIds.has(node.id) && !focusNodeIds.has(node.id),
+        dimmed: false,
+        width: layout.nodeWidth,
+        riskLevel: node.risk,
+      },
+      draggable: false,
+      selectable: true,
+    }));
+  }, [
+    viewMode,
+    selectedGroup,
+    overviewLayout,
+    layout,
+    focusNodeIds,
+    expandedNodeIds,
+  ]);
+
+  const flowEdges: Edge[] = useMemo(() => {
+    if (viewMode === "all" && !selectedGroup) {
+      return graphOverview.relations.map((relation) => {
+        const source = `group-${relation.source}`;
+        const target = `group-${relation.target}`;
+        const handles = edgeHandleIds(
+          overviewPositionById.get(source),
+          overviewPositionById.get(target),
+        );
+        const relationEdge = rawEdges.find((edge) =>
+          relation.edgeIds.includes(edge.id),
+        );
+        const color = relationEdge
+          ? relationColor(relationEdge, false)
+          : "#64748b";
+        const selected = relationEdge?.id === selectedEdge?.id;
         return {
-          id: n.id, type: 'graphNode', position: pos,
-          data: { label: n.label, raw: n, highlighted: onPath, semi, dimmed, _w: nodeW },
-          draggable: false, selectable: true,
-        }
-      })
-  }, [layoutNodesOut, pathNodeIds, semiNodeIds, selectedPath, isAllMode, pathOnlyMode, nodeW])
+          id: relation.id,
+          source,
+          target,
+          ...handles,
+          type: "attackEdge",
+          markerEnd: { type: MarkerType.ArrowClosed, color },
+          style: { opacity: selected ? 1 : 0.82 },
+          data: {
+            label: relation.label,
+            confidence: undefined,
+            selected,
+            isAggregate: true,
+            edgeIds: relation.edgeIds,
+            color,
+          },
+        };
+      });
+    }
+    return visibleEdges.map((edge) => {
+      const isPath = pathEdgeIds.has(edge.id);
+      const isContext = viewMode === "focus" && !isPath;
+      const isTrust =
+        edge.type?.includes("TRUST_") ||
+        edge.type?.includes("ATTESTATION_") ||
+        edge.type?.includes("PROVENANCE");
+      const handles = edgeHandleIds(
+        flowPositionById.get(edge.source),
+        flowPositionById.get(edge.target),
+      );
+      const color = relationColor(edge, isPath);
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        ...handles,
+        type: "attackEdge",
+        markerEnd: { type: MarkerType.ArrowClosed, color },
+        style: { opacity: selectedEdge?.id === edge.id ? 1 : 0.88 },
+        data: {
+          isPath,
+          isContext,
+          isTrust,
+          label: graphRelationLabel(edge.type, edge.label),
+          confidence:
+            edge.confidence != null
+              ? confidencePercent(edge.confidence)
+              : undefined,
+          selected: selectedEdge?.id === edge.id,
+          color,
+        },
+      };
+    });
+  }, [
+    viewMode,
+    selectedGroup,
+    graphOverview.relations,
+    visibleEdges,
+    pathEdgeIds,
+    overviewPositionById,
+    flowPositionById,
+    rawEdges,
+    selectedEdge,
+  ]);
 
-  // Edges: filter non-path in pathOnlyMode
-  const rfEdges: Edge[] = useMemo(() => {
-    const pathOnlyVisible = pathOnlyMode && selectedPath
-    return rawEdges
-      .filter(e => {
-        if (isAllMode) return true
-        if (!pathOnlyVisible) return true
-        return pathEdgeIds.has(e.id)
-      })
-      .map(e => {
-        if (isAllMode) {
-          const trust = e.type?.includes('TRUST_') || e.type?.includes('ATTESTATION_') || e.type?.includes('PROVENANCE')
-          return {
-            id: e.id, source: e.source, target: e.target, type: 'bezier',
-            style: { opacity: 1 },
-            data: { isPath: false, isSemi: true, isTrust: trust, label: e.label, bundleCount: 1 },
-          }
-        }
-        const onPath = pathEdgeIds.has(e.id)
-        const trust = e.type?.includes('TRUST_') || e.type?.includes('ATTESTATION_') || e.type?.includes('PROVENANCE')
-        const connectedToPath = pathNodeIds.has(e.source) || pathNodeIds.has(e.target)
-        const dimmed = selectedPath && !onPath && !connectedToPath
-        return {
-          id: e.id, source: e.source, target: e.target, type: 'bezier',
-          style: { opacity: dimmed ? 0.28 : 1 },
-          data: { isPath: onPath, isSemi: (connectedToPath || isAllMode) && !onPath, isTrust: trust, label: e.label, bundleCount: 1 },
-        }
-      })
-  }, [rawEdges, pathEdgeIds, pathNodeIds, selectedPath, isAllMode, pathOnlyMode])
-
-  // FitView: simple, covers all visible nodes
   useEffect(() => {
-    if (!flowInstance || !rfNodes.length) return
-    const t = setTimeout(() => {
-      flowInstance.fitView({ padding: 0.1, duration: 600, maxZoom: 2 })
-    }, 300)
-    return () => clearTimeout(t)
-  }, [flowInstance, selectedPathId, rfNodes.length])
+    if (!flowInstance || !flowNodes.length) return;
+    const timer = window.setTimeout(() => {
+      flowInstance.fitView({
+        padding: viewMode === "focus" ? 0.2 : selectedGroup ? 0.14 : 0.1,
+        duration: 450,
+        maxZoom: viewMode === "focus" ? 1.25 : selectedGroup ? 1.05 : 1.15,
+      });
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [
+    flowInstance,
+    selectedPathId,
+    viewMode,
+    selectedGroup,
+    groupNodeLimit,
+    flowNodes.length,
+    expandedNodeIds,
+  ]);
 
-  // Auto-refit on container resize or new data
   useEffect(() => {
-    if (!flowInstance || !rfNodes.length) return
-    const t = setTimeout(() => {
-      flowInstance.fitView({ padding: 0.1, duration: 400, maxZoom: 2 })
-    }, 200)
-    return () => clearTimeout(t)
-  }, [rawNodes.length])
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      if (!flowInstance || !flowNodes.length) return;
+      window.setTimeout(
+        () =>
+          flowInstance.fitView({
+            padding: viewMode === "focus" ? 0.2 : 0.12,
+            duration: 280,
+          }),
+        120,
+      );
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [flowInstance, fullscreen, flowNodes.length, viewMode, selectedGroup]);
 
-  const onNodeClick = useCallback((_e: any, node: Node) => {
-    setDetailNode((node.data as any).raw as GNode)
-  }, [])
+  const selectPath = useCallback((path: GPath) => {
+    setSelectedPathId(path.id);
+    setSelectedNode(null);
+    setSelectedEdge(null);
+    setExpandedNodeIds(new Set());
+    setSelectedGroupKey(null);
+    setViewMode("focus");
+  }, []);
 
-  const onPaneClick = useCallback(() => setSelectedPathId(null), [])
+  const expandNode = useCallback(
+    (nodeId: string) => {
+      const neighbors: string[] = [];
+      for (const edge of rawEdges) {
+        if (edge.source === nodeId) neighbors.push(edge.target);
+        if (edge.target === nodeId) neighbors.push(edge.source);
+        if (neighbors.length >= 12) break;
+      }
+      setExpandedNodeIds((current) => new Set([...current, ...neighbors]));
+    },
+    [rawEdges],
+  );
+
+  const selectGraphNode = useCallback((_event: unknown, node: Node) => {
+    const data = node.data as {
+      raw?: GNode;
+      group?: GraphOverviewGroup;
+    };
+    if (data.group) {
+      setSelectedGroupKey(data.group.key);
+      setGroupNodeLimit(24);
+      setSelectedNode(null);
+      setSelectedEdge(null);
+      return;
+    }
+    if (data.raw) {
+      setSelectedNode(data.raw);
+      setSelectedEdge(null);
+    }
+  }, []);
+
+  const expandGraphNode = useCallback(
+    (_event: unknown, node: Node) => {
+      const raw = (node.data as { raw?: GNode }).raw;
+      if (!raw) return;
+      setSelectedNode(raw);
+      setSelectedEdge(null);
+      if (viewMode === "focus") expandNode(raw.id);
+    },
+    [viewMode, expandNode],
+  );
+
+  const showGraphOverview = useCallback(() => {
+    setViewMode("all");
+    setSelectedGroupKey(null);
+    setSelectedNode(null);
+    setSelectedEdge(null);
+    setGroupNodeLimit(24);
+  }, []);
+
+  const selectGraphEdge = useCallback(
+    (_event: unknown, edge: Edge) => {
+      const data = edge.data as { edgeIds?: string[] } | undefined;
+      const edgeId = data?.edgeIds?.[0] ?? edge.id;
+      const raw = rawEdges.find((candidate) => candidate.id === edgeId);
+      if (!raw) return;
+      setSelectedEdge(raw);
+      setSelectedNode(null);
+    },
+    [rawEdges],
+  );
 
   if (!rawNodes.length) {
     return (
-      <div className="flex flex-col items-center justify-center gap-4 h-full text-muted-foreground">
-        <Network className="size-20 text-muted-foreground/8" />
-        <p className="text-sm">运行扫描后生成攻击链图谱</p>
+      <div className="grid h-full place-items-center rounded-md border border-border bg-[color:var(--surface-card)] text-center">
+        <div>
+          <Network className="mx-auto size-12 text-muted-foreground/40" />
+          <p className="mt-3 text-sm text-muted-foreground">
+            运行扫描后生成攻击链图谱
+          </p>
+        </div>
       </div>
-    )
+    );
   }
 
-  const score = selectedPath?.score ?? graphSummary?.risk_score ?? 0
-  const sc = score >= 90 ? '#ef4444' : score >= 75 ? '#f97316' : score >= 55 ? '#f59e0b' : '#22c55e'
-  const conf = Math.round((selectedPath?.confidence ?? graphSummary?.average_path_confidence ?? 0) * 100)
-
-  const bar = (
-    <div className={cn('flex items-center gap-2 shrink-0 rounded-lg surface-raised px-3 py-1.5 text-xs', fullscreen && 'bg-[color:var(--surface-overlay)] backdrop-blur border border-border')}>
-      <span className="text-muted-foreground">风险</span>
-      <span className="text-base font-black tabular-nums" style={{ color: sc }}>{score}</span>
-      <span className="w-px h-4 bg-border/30" />
-      <span className="text-muted-foreground">置信度</span>
-      <span className="font-bold text-cyan-400">{conf}%</span>
-      <span className="w-px h-4 bg-border/30" />
-      <span className="text-muted-foreground">{graphSummary?.actionable_attack_path_count ?? graphSummary?.attack_path_count ?? 0} 路径</span>
-      <span className="w-px h-4 bg-border/30" />
-      <span className="text-muted-foreground">{rawNodes.length} 节点</span>
-      <div className="flex items-center gap-1 ml-1 overflow-x-auto">
-        {attackPaths.map(p => (
-          <button key={p.id} onClick={() => setSelectedPathId(p.id === selectedPathId ? null : p.id)} className={cn(
-            'flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-medium shrink-0 transition-all duration-200 hover:-translate-y-0.5',
-            p.id === selectedPathId ? 'border-cyan-400/40 bg-console-cyan-soft text-console-cyan' : 'border-border bg-[color:var(--surface-inset)] hover:border-ring/30',
-          )}>
-            <span className="size-1.5 rounded-full" style={{ background: p.severity === 'critical' ? '#ef4444' : p.severity === 'high' ? '#f97316' : '#f59e0b' }} />
-            {p.title?.slice(0, 18)} <span className="font-bold">{p.score}</span>
-          </button>
-        ))}
-      </div>
-      <div className="flex-1" />
-      {pathOnlyMode && selectedPath ? (
-        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPathOnlyMode(false)}>
-          <EyeOff className="size-3" /> 显示全部
-        </Button>
-      ) : selectedPath ? (
-        <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setPathOnlyMode(true)}>
-          <Eye className="size-3" /> 只看当前链路
-        </Button>
-      ) : null}
-      {selectedPathId && <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => { setSelectedPathId(null); setPathOnlyMode(false) }}><X className="size-3" /> 全部</Button>}
-      <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setFullscreen(!fullscreen)}>
-        {fullscreen ? <><Minimize2 className="size-3" /> 退出</> : <><Maximize2 className="size-3" /> 全屏</>}
-      </Button>
-    </div>
-  )
-
-  const canvas = (
-    <div ref={containerRef} className="flex-1 min-h-0 rounded-lg overflow-hidden border border-border"
-      style={{ background: 'radial-gradient(ellipse at 25% 50%, rgba(6,182,212,0.04) 0%, transparent 55%), radial-gradient(ellipse at 70% 50%, rgba(239,68,68,0.03) 0%, transparent 55%), var(--background)' }}>
-      <ReactFlow
-        nodes={rfNodes} edges={rfEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-        onNodeClick={onNodeClick} onPaneClick={onPaneClick} onInit={setFlowInstance}
-        fitView fitViewOptions={{ padding: 0.15 }}
-        nodesDraggable nodesConnectable={false} elementsSelectable
-        minZoom={0.08} maxZoom={2.5}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background color="var(--border)" gap={48} size={0.6} />
-        <div
-          style={{
-            ['--xy-controls-button-background-color' as string]: 'transparent',
-            ['--xy-controls-button-background-color-hover' as string]: 'var(--surface-hover)',
-            ['--xy-controls-button-color' as string]: 'var(--muted-foreground)',
-            ['--xy-controls-button-color-hover' as string]: 'var(--foreground)',
-            ['--xy-controls-button-border-color' as string]: 'var(--border)',
-          }}
-        >
-          <Controls
-            className="!rounded-lg !overflow-hidden backdrop-blur"
-            style={{
-              border: '1px solid var(--border)',
-              background: 'var(--surface-overlay)',
-              boxShadow: 'var(--shadow-soft)',
-            }}
-          />
-        </div>
-        <MiniMap
-          pannable zoomable
-          className="!rounded-lg backdrop-blur"
-          style={{
-            border: '1px solid var(--border)',
-            background: 'var(--surface-overlay)',
-            boxShadow: 'var(--shadow-soft)',
-          }}
-          maskColor="color-mix(in oklch, var(--background) 95%, black)"
-          nodeColor={n => {
-            const d = (n as any)?.data
-            if (n.type === 'clusterBubble') return '#6b7280'
-            return nc(d?.raw || { type: '' }).color
-          }} />
-      </ReactFlow>
-    </div>
-  )
-
-  const content = (
-    <div className={cn('flex flex-col gap-1.5 min-h-0', fullscreen ? 'h-svh fixed inset-0 z-50 bg-background p-2' : 'h-[calc(100vh-7rem)]')}>
-      {bar}{canvas}
-    </div>
-  )
+  const score = selectedPath?.score ?? graphSummary?.risk_score ?? 0;
+  const confidence = confidencePercent(
+    selectedPath?.confidence ?? graphSummary?.average_path_confidence,
+  );
+  const pathCount =
+    graphSummary?.actionable_attack_path_count ??
+    graphSummary?.attack_path_count ??
+    orderedPaths.length;
 
   return (
-    <>
-      {content}
-      <Sheet open={!!detailNode} onOpenChange={v => { if (!v) setDetailNode(null) }}>
-        <SheetContent side="right" className="!w-[68vw] !max-w-[820px] overflow-hidden flex flex-col p-0">
-          {detailNode && (() => {
-            const c = nc(detailNode)
-            const Icon = c.Icon
-            const connEdges = rawEdges.filter(e => e.source === detailNode.id || e.target === detailNode.id)
-            const connIds = new Set(connEdges.map(e => e.source === detailNode.id ? e.target : e.source))
-            const connNodes = rawNodes.filter(n => connIds.has(n.id))
-            const onPath = selectedPath?.node_ids?.includes(detailNode.id)
-            return (<>
-              <div className="shrink-0 border-b border-border/50 px-6 py-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex size-12 items-center justify-center rounded-xl shrink-0" style={{ background: `${c.color}12`, border: `1px solid ${c.color}30`, color: c.color }}>
-                    <Icon className="size-6" /></div>
-                  <div className="min-w-0">
-                    <SheetTitle className="text-lg font-bold tracking-tight">{detailNode.label}</SheetTitle>
-                    <div className="flex items-center gap-2 mt-1 text-xs">
-                      <span className="px-2 py-0.5 rounded-full font-semibold text-[10px]" style={{ background: `${c.color}15`, color: c.color }}>{c.label}</span>
-                      <span className="font-mono text-muted-foreground">{detailNode.id}</span>
-                      {onPath && <Badge variant="secondary" className="text-[10px]">当前攻击链</Badge>}
-                    </div>
-                  </div>
+    <div
+      className={cn(
+        "flex min-h-0 flex-col gap-3 overflow-hidden",
+        fullscreen
+          ? "fixed inset-0 z-50 h-svh bg-background p-3"
+          : "h-full",
+      )}
+    >
+      <section className="flex shrink-0 flex-wrap items-center gap-x-5 gap-y-3 rounded-md border border-border bg-[color:var(--surface-card)] px-4 py-3">
+        <div className="flex items-center gap-2">
+          <ShieldAlert
+            className="size-4"
+            style={{ color: severityColor(selectedPath?.severity) }}
+          />
+          <span className="text-xs font-semibold text-muted-foreground">
+            最高风险
+          </span>
+          <span
+            className="text-xl font-bold tabular-nums"
+            style={{ color: severityColor(selectedPath?.severity) }}
+          >
+            {score}
+          </span>
+        </div>
+        <div className="h-5 w-px bg-border" />
+        <div className="text-xs text-muted-foreground">
+          置信度{" "}
+          <strong className="font-bold text-foreground">{confidence}%</strong>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          攻击路径{" "}
+          <strong className="font-bold text-foreground">{pathCount}</strong>
+        </div>
+        <div className="text-xs text-muted-foreground">
+          图谱节点{" "}
+          <strong className="font-bold text-foreground">
+            {rawNodes.length}
+          </strong>
+        </div>
+        <div
+          className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground"
+          title={selectedPath?.title}
+        >
+          {selectedPath?.title || "全部供应链关系"}
+        </div>
+        <div className="flex items-center rounded-md border border-border bg-[color:var(--surface-inset)] p-0.5">
+          <Button
+            variant={viewMode === "focus" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 rounded-sm px-2.5 text-xs"
+            disabled={!selectedPath}
+            onClick={() => {
+              setViewMode("focus");
+              setSelectedGroupKey(null);
+              setSelectedNode(null);
+              setSelectedEdge(null);
+            }}
+          >
+            <Eye className="size-3.5" />
+            聚焦路径
+          </Button>
+          <Button
+            variant={viewMode === "all" ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 rounded-sm px-2.5 text-xs"
+            onClick={showGraphOverview}
+          >
+            <Network className="size-3.5" />
+            全部图谱
+          </Button>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={() => setFullscreen((value) => !value)}
+        >
+          {fullscreen ? (
+            <Minimize2 className="size-4" />
+          ) : (
+            <Maximize2 className="size-4" />
+          )}
+          {fullscreen ? "退出全屏" : "全屏"}
+        </Button>
+      </section>
+
+      <div className="grid min-h-0 flex-1 auto-rows-min gap-3 overflow-y-auto xl:auto-rows-auto xl:grid-cols-[260px_minmax(0,1fr)_340px] xl:overflow-hidden">
+        <AttackPathQueue
+          paths={orderedPaths}
+          nodes={rawNodes}
+          selectedPathId={selectedPath?.id ?? null}
+          onSelect={selectPath}
+        />
+
+        <main
+          ref={containerRef}
+          className="flex min-h-[520px] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] xl:min-h-0"
+        >
+          <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-2">
+            <div className="flex min-w-0 items-center gap-2">
+              {viewMode === "all" && selectedGroup ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  title="返回图谱总览"
+                  onClick={showGraphOverview}
+                >
+                  <ArrowLeft className="size-4" />
+                </Button>
+              ) : null}
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold text-foreground">
+                  {viewMode === "focus"
+                    ? "供应链攻击路径"
+                    : selectedGroup
+                      ? OVERVIEW_GROUP_MAP[selectedGroup.key].label
+                      : "供应链图谱总览"}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {viewMode === "focus"
+                    ? `${focusNodeIdList.length} 个路径节点${expandedNodeIds.size ? `，已展开 ${expandedNodeIds.size} 个上下文节点` : ""}`
+                    : selectedGroup
+                      ? `显示 ${displayedGroupNodes.length}/${selectedGroup.nodeCount} 个节点，按风险优先级排列`
+                      : `${rawNodes.length} 个节点已归入 ${graphOverview.groups.length} 个业务阶段，连线数字代表跨阶段关系数量`}
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto px-6 py-4">
-                <Tabs defaultValue="overview">
-                  <TabsList className="h-9 mb-4 surface-inset">
-                    <TabsTrigger value="overview" className="text-[11px] h-7">概览</TabsTrigger>
-                    {connNodes.length > 0 && <TabsTrigger value="connections" className="text-[11px] h-7">上下游 ({connNodes.length})</TabsTrigger>}
-                    {detailNode.evidence_ids?.length ? <TabsTrigger value="evidence" className="text-[11px] h-7">证据 ({detailNode.evidence_ids.length})</TabsTrigger> : null}
-                  </TabsList>
-                  <TabsContent value="overview" className="mt-0 space-y-5">
-                    <div className="grid grid-cols-4 gap-4">
-                      {[['类型', c.label], ['风险等级', detailNode.risk || '—'], ['评分', detailNode.score != null ? String(detailNode.score) : '—'], ['来源', detailNode.source_model || detailNode.source || '—']].map(([l, v]) => (
-                        <div key={l}><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{l}</div><div className="text-sm font-bold">{v}</div></div>))}
-                    </div>
-                    {detailNode.description && <div><div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">描述</div><p className="text-sm leading-relaxed text-muted-foreground">{detailNode.description}</p></div>}
-                  </TabsContent>
-                  <TabsContent value="connections" className="mt-0 space-y-2">
-                    {connEdges.map(e => {
-                      const isOut = e.source === detailNode.id
-                      const other = connNodes.find(n => n.id === (isOut ? e.target : e.source))
-                      const oc = other ? nc(other) : null
-                      return (<div key={e.id} className="flex items-center gap-3 rounded-xl border border-border/40 bg-[color:var(--surface-panel)] p-3">
-                        <ArrowRight className={cn('size-4 shrink-0', !isOut && 'rotate-180')} style={{ color: isOut ? '#ef4444' : '#06b6d4' }} />
-                        <div className="min-w-0 flex-1">{other ? <><div className="text-sm font-bold truncate">{other.label}</div><div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">{oc && <span style={{ color: oc.color }}>{oc.label}</span>}<span>·</span><span>{e.type || e.label}</span>{e.confidence != null && <span>· {Math.round(e.confidence * 100)}%</span>}</div></> : <span className="text-sm font-mono text-muted-foreground">{(isOut ? e.target : e.source)}</span>}</div>
-                      </div>)})}
-                  </TabsContent>
-                  <TabsContent value="evidence" className="mt-0">
-                    <div className="flex flex-wrap gap-2">{detailNode.evidence_ids?.slice(0, 32).map(id => (<span key={id} className="rounded-lg bg-muted/30 border border-border/40 px-3 py-1.5 font-mono text-[11px]">{id}</span>))}{(detailNode.evidence_ids?.length || 0) > 32 && <span className="text-[11px] text-muted-foreground self-center">+{(detailNode.evidence_ids?.length || 0) - 32}</span>}</div>
-                  </TabsContent>
-                </Tabs>
+            </div>
+            {viewMode === "focus" ? (
+              <div className="hidden items-center gap-1.5 text-[10px] font-semibold text-muted-foreground 2xl:flex">
+                {ATTACK_STAGES.map((stage, index) => (
+                  <span
+                    key={stage}
+                    className="inline-flex items-center gap-1.5"
+                  >
+                    <span className="rounded-sm border border-border bg-[color:var(--surface-inset)] px-2 py-1">
+                      {stage}
+                    </span>
+                    {index < ATTACK_STAGES.length - 1 ? (
+                      <ArrowRight className="size-3" />
+                    ) : null}
+                  </span>
+                ))}
               </div>
-            </>)})()}
-        </SheetContent>
-      </Sheet>
-    </>
-  )
+            ) : selectedGroup &&
+              displayedGroupNodes.length < selectedGroup.nodeCount ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setGroupNodeLimit((current) => current + 24)}
+              >
+                <Layers className="size-3.5" />
+                再显示 24 个
+              </Button>
+            ) : viewMode === "all" && !selectedGroup ? (
+              <div className="hidden items-center gap-2 text-[11px] text-muted-foreground 2xl:flex">
+                <Layers className="size-3.5" />
+                点击阶段查看具体节点
+              </div>
+            ) : null}
+          </div>
+          <div className="min-h-0 flex-1 bg-[color:var(--surface-inset)]">
+            <ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodeClick={selectGraphNode}
+              onNodeDoubleClick={expandGraphNode}
+              onEdgeClick={selectGraphEdge}
+              onPaneClick={() => {
+                setSelectedNode(null);
+                setSelectedEdge(null);
+              }}
+              onInit={setFlowInstance}
+              fitView
+              fitViewOptions={{ padding: viewMode === "focus" ? 0.2 : 0.1 }}
+              nodesDraggable
+              nodesConnectable={false}
+              elementsSelectable
+              minZoom={viewMode === "focus" ? 0.25 : 0.18}
+              maxZoom={2.2}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="var(--border)" gap={40} size={0.6} />
+              <Controls
+                showInteractive={false}
+                className="!overflow-hidden !rounded-md !border !border-border !bg-[color:var(--surface-card)] !shadow-none"
+              />
+              {fullscreen && viewMode === "all" ? (
+                <MiniMap
+                  pannable
+                  zoomable
+                  className="!rounded-md !border !border-border !bg-[color:var(--surface-card)] !shadow-none"
+                  maskColor="color-mix(in oklch, var(--background) 90%, transparent)"
+                  nodeColor={(node) => {
+                    const data = node.data as {
+                      raw?: GNode;
+                      group?: GraphOverviewGroup;
+                    };
+                    if (data.group)
+                      return OVERVIEW_GROUP_MAP[data.group.key].color;
+                    return data.raw ? nodeConfig(data.raw).color : "#64748b";
+                  }}
+                />
+              ) : null}
+            </ReactFlow>
+          </div>
+        </main>
+
+        <GraphInspector
+          node={selectedNode}
+          edge={selectedEdge}
+          path={selectedPath}
+          nodes={rawNodes}
+          edges={rawEdges}
+          viewMode={viewMode}
+          onClearNode={() => setSelectedNode(null)}
+          onClearEdge={() => setSelectedEdge(null)}
+          onExpandNode={expandNode}
+        />
+      </div>
+    </div>
+  );
 }

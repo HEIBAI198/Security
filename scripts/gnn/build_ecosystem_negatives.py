@@ -25,6 +25,10 @@ OPTIONAL_FIELDS = (
     "maintainers",
     "versions",
     "latest_version",
+    "published",
+    "modified",
+    "created",
+    "dependencies",
 )
 
 
@@ -99,6 +103,8 @@ def _negative_record(
         "ecosystem": ecosystem,
         "package": package,
         "label": 0,
+        "label_source": "ecosystem_metadata_unlisted_unverified",
+        "label_confidence": 0.6,
         "source": "ecosystem_metadata_negative",
         "evidence_sources": ["ecosystem_metadata"],
         "text": _sample_text(ecosystem, package, record),

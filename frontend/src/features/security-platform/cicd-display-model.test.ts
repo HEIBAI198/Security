@@ -101,7 +101,15 @@ const artifactTrust: ArtifactTrustResult = {
 }
 
 describe('buildCicdDisplayModel', () => {
-  it('surfaces artifact and pipeline risks when the CI/CD audit has no findings', () => {
+  it('已完成但无工作流证据的扫描不进入风险看板', () => {
+    const model = buildCicdDisplayModel({ audit: emptyAudit })
+
+    expect(model.hasBuildChainEvidence).toBe(false)
+    expect(model.workflows).toEqual([])
+    expect(model.summary.finding_count).toBe(0)
+  })
+
+  it('CI/CD 扫描无风险时仍合并产物与流水线风险', () => {
     const model = buildCicdDisplayModel({
       audit: emptyAudit,
       pipeline,
@@ -116,12 +124,13 @@ describe('buildCicdDisplayModel', () => {
     expect(model.source.cicdFindings).toBe(0)
     expect(model.source.artifactFindings).toBe(2)
     expect(model.source.pipelineRisks).toBe(1)
+    expect(model.hasBuildChainEvidence).toBe(true)
     expect(model.findings.map((finding) => finding.scanner)).toContain('artifact_trust')
     expect(model.findings.map((finding) => finding.scanner)).toContain('pipeline')
     expect(model.workflows).toContain('.github/workflows/desktop-release.yml')
   })
 
-  it('creates a synthetic workflow label for risky pipeline evidence without workflow metadata', () => {
+  it('缺少工作流元数据时为流水线风险生成占位名称', () => {
     const model = buildCicdDisplayModel({
       audit: emptyAudit,
       pipeline: [

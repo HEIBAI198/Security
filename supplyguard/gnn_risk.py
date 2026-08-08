@@ -12,6 +12,7 @@ RISK_KEYWORDS = (
     "postinstall",
     "preinstall",
     "install script",
+    "download",
     "exfiltrat",
     "token",
     "credential",
@@ -93,15 +94,39 @@ class PackageRiskScorer:
         prediction = self.registry.predict(feature_values)
         if prediction.get("model_available"):
             score = float(prediction.get("score", 0.0))
+            evidence_conflict = self._has_evidence_conflict(
+                score,
+                vulnerabilities or [],
+                existing_risk,
+            )
+            confidence = float(prediction.get("confidence", 0.0) or 0.0)
+            inference_mode = str(prediction.get("inference_mode") or "package_features_only")
+            prediction_reliability = str(prediction.get("reliability") or "")
+            reliability = (
+                prediction_reliability
+                if prediction_reliability == "out_of_distribution"
+                else "limited" if evidence_conflict or inference_mode == "package_features_only" else "model"
+            )
+            explanations = list(prediction.get("explanations") or [])
+            if evidence_conflict:
+                confidence = min(confidence, 0.25)
+                explanations.append("模型低风险输出与漏洞或综合风险强证据冲突；不得据此降低总体风险")
             return self._result(
                 score=score,
                 reasons=self._reasons(score, signals or [], vulnerabilities or [], model=True),
                 model_available=True,
                 model_type=str(prediction.get("model_type") or self.registry.model_type),
-                confidence=float(prediction.get("confidence", 0.0) or 0.0),
-                explanations=list(prediction.get("explanations") or []),
+                confidence=confidence,
+                decision_margin=float(prediction.get("raw_confidence", confidence) or 0.0),
+                inference_mode=inference_mode,
+                reliability=reliability,
+                evidence_conflict=evidence_conflict,
+                explanations=explanations,
                 similar_packages=self.registry.similar_packages(feature_values),
                 model_error=prediction.get("model_error"),
+                decision_threshold=prediction.get("decision_threshold"),
+                calibration_temperature=prediction.get("calibration_temperature"),
+                ood_distance=prediction.get("ood_distance"),
             )
 
         if prediction.get("model_error"):
@@ -114,6 +139,10 @@ class PackageRiskScorer:
             model_available=False,
             model_type="rule_fallback",
             confidence=0.0,
+            decision_margin=0.0,
+            inference_mode="rule_fallback",
+            reliability="fallback",
+            evidence_conflict=False,
             explanations=["rule fallback score used because no GNN model was available"],
             similar_packages=[],
             model_error=self.load_error,
@@ -140,6 +169,18 @@ class PackageRiskScorer:
         risk_keyword_count = float(_risk_keyword_count(keyword_text))
         signal_count = float(len(signals))
         vulnerability_count = float(len(vulnerabilities))
+        aliases = {
+            str(alias).strip()
+            for vulnerability in vulnerabilities
+            if isinstance(vulnerability, dict)
+            for alias in vulnerability.get("aliases", [])
+            if str(alias).strip()
+        }
+        vulnerability_sources = {
+            str(vulnerability.get("source") or "").strip().lower()
+            for vulnerability in vulnerabilities
+            if isinstance(vulnerability, dict) and str(vulnerability.get("source") or "").strip()
+        }
         return {
             "ecosystem_npm": 1.0 if ecosystem == "npm" else 0.0,
             "ecosystem_pypi": 1.0 if ecosystem == "pypi" else 0.0,
@@ -148,8 +189,8 @@ class PackageRiskScorer:
             "has_scope": 1.0 if package.startswith("@") else 0.0,
             "has_digits": 1.0 if any(char.isdigit() for char in package) else 0.0,
             "version_count": 1.0 if version else 0.0,
-            "alias_count": vulnerability_count,
-            "evidence_source_count": 1.0,
+            "alias_count": float(len(aliases)),
+            "evidence_source_count": float(1 + len(vulnerability_sources)),
             "risk_keyword_count": risk_keyword_count,
             "text_length": float(len(text)),
             "graph_degree": 1.0 + signal_count + vulnerability_count,
@@ -157,6 +198,30 @@ class PackageRiskScorer:
             "graph_observed_in_degree": 1.0,
             "graph_ecosystem_degree": 1.0,
         }
+
+    @staticmethod
+    def _has_evidence_conflict(
+        score: float,
+        vulnerabilities: list[dict[str, Any]],
+        existing_risk: int | float,
+    ) -> bool:
+        if score >= 0.35:
+            return False
+        active_vulnerability = any(
+            str(
+                (
+                    vulnerability.get("analysis", {}).get("state")
+                    if isinstance(vulnerability.get("analysis"), dict)
+                    else None
+                )
+                or vulnerability.get("status")
+                or ""
+            ).strip().lower()
+            not in {"resolved", "fixed", "not_affected", "false_positive"}
+            for vulnerability in vulnerabilities
+            if isinstance(vulnerability, dict)
+        )
+        return active_vulnerability or float(existing_risk or 0) >= 70.0
 
     def _fallback_score(
         self,
@@ -204,9 +269,16 @@ class PackageRiskScorer:
         model_available: bool,
         model_type: str,
         confidence: float,
+        decision_margin: float,
+        inference_mode: str,
+        reliability: str,
+        evidence_conflict: bool,
         explanations: list[str],
         similar_packages: list[dict[str, Any]],
         model_error: Any = None,
+        decision_threshold: Any = None,
+        calibration_temperature: Any = None,
+        ood_distance: Any = None,
     ) -> dict[str, Any]:
         bounded_score = max(0.0, min(1.0, float(score)))
         result = {
@@ -216,6 +288,11 @@ class PackageRiskScorer:
             "gnn_model_available": bool(model_available),
             "gnn_model_type": model_type,
             "gnn_confidence": max(0.0, min(1.0, float(confidence))),
+            "gnn_decision_margin": max(0.0, min(1.0, float(decision_margin))),
+            "gnn_inference_mode": inference_mode,
+            "gnn_reliability": reliability,
+            "gnn_evidence_conflict": bool(evidence_conflict),
+            "gnn_target": "malicious_package_similarity",
             "gnn_explanations": explanations,
             "similar_malicious_packages": similar_packages,
             "model_available": bool(model_available),
@@ -223,6 +300,12 @@ class PackageRiskScorer:
         }
         if model_error:
             result["model_error"] = str(model_error)
+        if decision_threshold is not None:
+            result["gnn_decision_threshold"] = float(decision_threshold)
+        if calibration_temperature is not None:
+            result["gnn_calibration_temperature"] = float(calibration_temperature)
+        if ood_distance is not None:
+            result["gnn_ood_distance"] = round(float(ood_distance), 4)
         return result
 
 

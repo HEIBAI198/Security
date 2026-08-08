@@ -50,7 +50,7 @@ D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_p
 | val | 1603 | 0.9994 | 1.0000 | 0.9993 | 0.9997 |
 | test | 1604 | 0.9994 | 1.0000 | 0.9993 | 0.9997 |
 
-说明：
+说明：以上是旧模型在旧数据上的历史结果，不是本轮改造后的新模型结果。
 
 - 当前 PyG 训练已经成功产出 `package_risk_graphsage.pt`、`package_embeddings.npy` 和 `package_embedding_index.json`。
 - 本次是 CPU 训练，不是 GPU 训练；如需展示 GPU 加速，需要替换 CUDA 版 PyTorch。
@@ -110,6 +110,8 @@ D:\Anaconda3\python.exe scripts\graphrag\evaluate_retrieval.py --cases-json stor
 
 ## 风险与限制
 
+本轮代码改造后，训练数据会明确标注为 `malicious_package` 任务，并记录标签来源与置信度；真实依赖关系使用 `depends_on` 边，训练默认采用归纳式边隔离。特征标准化只拟合训练集，验证集用于早停、阈值选择和温度校准，测试集不参与调参。评估结果新增 PR-AUC、ROC-AUC、Brier 分数、ECE 和混淆矩阵；在线分布外输入会进入拒判状态。
+
 - 当前负样本仍可能包含未发现风险的真实包，标签质量需要继续提升。
 - ecosystem negatives 目前缺少独立 npm/PyPI 元数据，泛化评估不足。
 - PyG 当前安装的是 CPU wheel，训练已完成但没有使用 GPU。
@@ -118,8 +120,8 @@ D:\Anaconda3\python.exe scripts\graphrag\evaluate_retrieval.py --cases-json stor
 
 ## 下一步建议
 
-1. 安装 CUDA 版 PyTorch 并复跑训练，记录 GPU 训练耗时。
-2. 补充 npm/PyPI 正常包元数据，重建 ecosystem negatives。
-3. 将 PyG 导出的 package embedding 接入 GraphRAG `embedding` channel。
-4. 为 GraphRAG 构造固定评估 case 文件，生成 `storage\eval\graphrag_eval.json`。
-5. 在导出报告中加入 GNN 风险分布和 GraphRAG 证据摘要。
+1. 补充独立 npm/PyPI 正常包元数据和人工复核标签，直到数据审计通过。
+2. 重建 features 后先运行 `audit_package_risk_dataset.py --fail-on-warning`，审计未通过不得覆盖旧模型。
+3. 在真实 manifest/lockfile 中提供 `dependencies`，确认 `depends_on` 边数量和方向正确。
+4. 用时间外推测试集报告 PR-AUC、召回率、Brier 分数、ECE 和拒判率。
+5. 审计通过后再重训、替换模型，并在报告中展示数据质量状态、阈值和校准温度。

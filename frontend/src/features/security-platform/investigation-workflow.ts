@@ -87,8 +87,8 @@ export const investigationSteps: InvestigationStep[] = [
       },
       {
         id: 'reachability',
-        title: '可达性佐证',
-        description: '用代码路径辅助判断风险是否可触达',
+        title: '代码审查',
+        description: '检查代码缺陷、密钥泄露和不安全配置',
         target: 'code',
       },
     ],
@@ -168,7 +168,7 @@ export const workspaceTabTitles: Record<PlatformTab, string> = {
   logs: '日志印证',
   graph: '攻击链地图',
   report: '溯源报告',
-  code: '供应链可达性研判',
+  code: '代码审查研判',
   multimodal: '外部告警证据',
   copilot: '供应链溯源 Agent',
 }

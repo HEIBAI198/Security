@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..conversations import (
@@ -73,8 +73,18 @@ async def conversations_update(conversation_id: str, payload: ConversationUpdate
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
-@router.delete("/{conversation_id}/", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
+@router.delete(
+    "/{conversation_id}/",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def conversations_delete(conversation_id: str) -> None:
     try:
         delete_conversation(conversation_id)

@@ -119,6 +119,8 @@ def normalize_osv_payload(
             {
                 "source": "openssf/malicious-packages",
                 "source_id": source_id,
+                "label_source": "OpenSSF malicious-packages",
+                "label_confidence": 1.0,
                 "ecosystem": ecosystem,
                 "package": package,
                 "raw_package": str(raw_package).strip(),

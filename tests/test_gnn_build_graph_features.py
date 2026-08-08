@@ -157,6 +157,55 @@ class GraphFeatureBuilderTests(unittest.TestCase):
                 dataset_card["created_by"],
                 "scripts/gnn/build_graph_features.py",
             )
+            self.assertEqual(dataset_card["task"], "malicious_package")
+            self.assertIn("label_definition", dataset_card)
+
+    def test_builds_real_dependency_edges_and_label_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            positive = root / "positive.jsonl"
+            negative = root / "negative.jsonl"
+            output = root / "features"
+            positive.write_text(
+                json.dumps(
+                    {
+                        "ecosystem": "npm",
+                        "package": "app",
+                        "label": 1,
+                        "label_source": "OpenSSF malicious-packages",
+                        "label_confidence": 1.0,
+                        "dependencies": ["@scope/core@2.0.0", {"name": "left-pad", "ecosystem": "npm"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            negative.write_text(
+                json.dumps(
+                    {
+                        "ecosystem": "npm",
+                        "package": "left-pad",
+                        "label": 0,
+                        "label_source": "npm_registry_review",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            build_graph_features(positive, negative, output)
+
+            nodes = [json.loads(line) for line in (output / "train_nodes.jsonl").read_text(encoding="utf-8").splitlines()]
+            edges = [json.loads(line) for line in (output / "train_edges.jsonl").read_text(encoding="utf-8").splitlines()]
+            app = next(node for node in nodes if node["id"] == "pkg:npm:app")
+            edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in edges}
+
+            self.assertEqual(app["label_source"], "OpenSSF malicious-packages")
+            self.assertEqual(app["label_confidence"], 1.0)
+            self.assertIn(("pkg:npm:app", "pkg:npm:@scope/core", "depends_on"), edge_keys)
+            self.assertIn(("pkg:npm:app", "pkg:npm:left-pad", "depends_on"), edge_keys)
+            schema = json.loads((output / "feature_schema.json").read_text(encoding="utf-8"))
+            self.assertIn("depends_on", schema["edge_types"])
 
     def test_missing_positive_path_raises_file_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:

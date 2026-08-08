@@ -64,11 +64,12 @@ def _record(
     version: Any,
     source_path: Path,
     source_type: str,
+    dependencies: Any = None,
 ) -> dict[str, Any] | None:
     package = normalize_package_name(raw_package, ecosystem)
     if package is None:
         return None
-    return {
+    record = {
         "source": "local_dependency_baseline",
         "source_type": source_type,
         "evidence_sources": [str(source_path)],
@@ -77,7 +78,14 @@ def _record(
         "raw_package": str(raw_package).strip(),
         "versions": [str(version).strip()] if version is not None and str(version).strip() else [],
         "label": 0,
+        "label_source": "local_dependency_baseline_unverified",
+        "label_confidence": 0.2,
     }
+    if isinstance(dependencies, dict):
+        record["dependencies"] = sorted(str(name) for name in dependencies if str(name).strip())
+    elif isinstance(dependencies, list):
+        record["dependencies"] = sorted(str(name) for name in dependencies if str(name).strip())
+    return record
 
 
 def _records_from_package_json(path: Path) -> list[dict[str, Any]]:
@@ -121,7 +129,14 @@ def _records_from_package_lock(path: Path) -> list[dict[str, Any]]:
             if not isinstance(package_info, dict) or not lock_path:
                 continue
             name = package_info.get("name") or _package_name_from_lock_path(str(lock_path))
-            record = _record("npm", name, package_info.get("version"), path, "package-lock")
+            record = _record(
+                "npm",
+                name,
+                package_info.get("version"),
+                path,
+                "package-lock",
+                package_info.get("dependencies"),
+            )
             if record is not None:
                 records.append(record)
         return records
@@ -130,7 +145,8 @@ def _records_from_package_lock(path: Path) -> list[dict[str, Any]]:
     if isinstance(dependencies, dict):
         for name, package_info in dependencies.items():
             version = package_info.get("version") if isinstance(package_info, dict) else None
-            record = _record("npm", name, version, path, "package-lock")
+            child_dependencies = package_info.get("dependencies") if isinstance(package_info, dict) else None
+            record = _record("npm", name, version, path, "package-lock", child_dependencies)
             if record is not None:
                 records.append(record)
     return records
@@ -252,6 +268,9 @@ def _merge_record(
     existing["versions"] = sorted(set(existing["versions"]) | set(record["versions"]))
     existing["evidence_sources"] = sorted(
         set(existing["evidence_sources"]) | set(record["evidence_sources"])
+    )
+    existing["dependencies"] = sorted(
+        set(existing.get("dependencies") or []) | set(record.get("dependencies") or [])
     )
 
 

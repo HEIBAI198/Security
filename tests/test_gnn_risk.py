@@ -61,6 +61,31 @@ class PackageRiskScorerTests(unittest.TestCase):
         self.assertEqual(_risk_keyword_count("pure-eval 0.2.3"), 0)
         self.assertGreaterEqual(suspicious["risk_keyword_count"], 1.0)
 
+    def test_online_features_keep_aliases_and_sources_semantics(self):
+        scorer = PackageRiskScorer(Path("definitely-missing-model-dir"))
+        values = scorer._feature_values(
+            "npm",
+            "axios",
+            "1.6.8",
+            ["OSV: GHSA-test"],
+            [{"id": "GHSA-test", "source": "osv", "aliases": ["CVE-test"]}],
+            "axios 1.6.8 OSV: GHSA-test",
+        )
+
+        self.assertEqual(values["alias_count"], 1.0)
+        self.assertEqual(values["evidence_source_count"], 2.0)
+
+    def test_low_gnn_score_conflicts_with_active_vulnerability_evidence(self):
+        self.assertTrue(
+            PackageRiskScorer._has_evidence_conflict(
+                0.0,
+                [{"id": "GHSA-test", "source": "osv"}],
+                0,
+            )
+        )
+        self.assertTrue(PackageRiskScorer._has_evidence_conflict(0.0, [], 100))
+        self.assertFalse(PackageRiskScorer._has_evidence_conflict(0.0, [{"status": "fixed"}], 0))
+
     def _write_graphsage_fixture(self, data_dir: Path):
         (data_dir / "feature_schema.json").write_text(
             json.dumps(
@@ -355,6 +380,8 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertEqual(result["gnn_model_type"], "numpy_graphsage_mean_aggregator")
             self.assertGreaterEqual(result["gnn_score"], 0.0)
             self.assertLessEqual(result["gnn_score"], 1.0)
+            self.assertLessEqual(result["gnn_confidence"], 0.6)
+            self.assertEqual(result["gnn_inference_mode"], "package_features_only")
 
     def test_pyg_artifact_failure_falls_back_to_numpy_model(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -503,6 +530,27 @@ class PackageRiskScorerTests(unittest.TestCase):
 
             self.assertLess(prediction["score"], 0.75)
             self.assertIn("online evidence calibration", prediction["explanations"][-1])
+
+    def test_pyg_prediction_rejects_out_of_distribution_features(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = PackageRiskModelRegistry(Path(tmp))
+            registry.model_available = True
+            registry.model = object()
+            registry.model_type = "pyg_graphsage_package_risk"
+            registry.feature_names = ["risk_keyword_count"]
+            registry._pyg_model = object()
+            registry._pyg_torch = object()
+            registry._pyg_data_cls = object()
+            registry._pyg_feature_mean = np.asarray([0.0], dtype=np.float32)
+            registry._pyg_feature_scale = np.asarray([1.0], dtype=np.float32)
+            registry._pyg_ood_threshold = 6.0
+            with mock.patch.object(registry, "_predict_pyg_score", return_value=0.99):
+                prediction = registry.predict({"risk_keyword_count": 20.0})
+
+            self.assertEqual(prediction["reliability"], "out_of_distribution")
+            self.assertLessEqual(prediction["confidence"], 0.2)
+            self.assertGreater(prediction["ood_distance"], 6.0)
+            self.assertTrue(any("超出训练分布" in item for item in prediction["explanations"]))
 
 
 if __name__ == "__main__":
