@@ -112,6 +112,11 @@ class NumpyGraphSageTrainingTests(unittest.TestCase):
             self.assertEqual(metrics["samples"], 4)
             self.assertIn("f1", metrics)
             self.assertTrue((output_dir / "package_risk_gnn.npz").exists())
+            model_card = json.loads((output_dir / "graphsage_model_card.json").read_text(encoding="utf-8"))
+            self.assertEqual(model_card["schema_version"], 3)
+            self.assertEqual(model_card["task"], "malicious_package")
+            self.assertTrue(model_card["artifact_id"])
+            self.assertTrue(model_card["dataset_hash"])
             self.assertTrue((output_dir / "graphsage_metrics.json").exists())
             self.assertTrue((output_dir / "graphsage_model_card.json").exists())
 

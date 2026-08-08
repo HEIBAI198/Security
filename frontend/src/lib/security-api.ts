@@ -204,6 +204,13 @@ export type SecurityDependency = {
   gnn_ood_distance?: number
   gnn_evidence_conflict?: boolean
   gnn_target?: string
+  gnn_decision_status?: 'malicious' | 'benign' | 'conflict' | 'abstain' | 'unavailable' | string
+  gnn_score_kind?: 'probability' | 'similarity' | 'heuristic' | string
+  gnn_artifact_id?: string
+  gnn_data_quality_status?: 'passed' | 'warning' | 'legacy' | 'unknown' | string
+  gnn_dataset_version?: string
+  gnn_dataset_hash?: string
+  gnn_trained_at?: string
   gnn_explanations?: string[]
   similar_malicious_packages?: Array<{
     package?: string

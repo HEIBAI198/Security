@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import pickle
 from pathlib import Path
@@ -8,6 +9,13 @@ from typing import Any
 import numpy as np
 
 from .package_embeddings import PackageEmbeddingIndex, feature_vector_from_values
+
+
+ARTIFACT_SCHEMA_VERSION = 3
+
+
+class LegacyArtifactError(ValueError):
+    pass
 
 
 class PackageRiskModelRegistry:
@@ -30,7 +38,30 @@ class PackageRiskModelRegistry:
         self._pyg_temperature = 1.0
         self._pyg_decision_threshold = 0.5
         self._pyg_ood_threshold = 6.0
+        self.artifact_status = "unknown"
+        self.artifact_id = ""
+        self.dataset_version = ""
+        self.dataset_hash = ""
+        self.trained_at = ""
+        self.score_kind = "heuristic"
+        self.artifact_metadata: dict[str, Any] = {}
         self._load_model()
+
+    def artifact_info(self) -> dict[str, Any]:
+        return {
+            "model_available": self.model_available,
+            "model_type": self.model_type,
+            "artifact_id": self.artifact_id,
+            "data_quality_status": self.artifact_status,
+            "dataset_version": self.dataset_version,
+            "dataset_hash": self.dataset_hash,
+            "trained_at": self.trained_at,
+            "score_kind": self.score_kind,
+            "decision_threshold": self._pyg_decision_threshold,
+            "calibration_temperature": self._pyg_temperature,
+            "ood_distance_threshold": self._pyg_ood_threshold,
+            "load_error": self.load_error,
+        }
 
     def predict(self, feature_values: dict[str, float]) -> dict[str, Any]:
         if not self.model_available or self.model is None:
@@ -43,6 +74,7 @@ class PackageRiskModelRegistry:
                 "inference_mode": "rule_fallback",
                 "explanations": [],
                 "model_error": self.load_error,
+                **self._prediction_artifact_fields(),
             }
 
         try:
@@ -83,6 +115,7 @@ class PackageRiskModelRegistry:
                 "ood_distance": ood_distance,
                 "explanations": explanations,
                 "model_error": self.load_error,
+                **self._prediction_artifact_fields(),
             }
         except Exception as exc:  # pragma: no cover - defensive runtime guard
             self._record_load_error("prediction", str(exc))
@@ -95,6 +128,7 @@ class PackageRiskModelRegistry:
                 "inference_mode": "rule_fallback",
                 "explanations": [],
                 "model_error": self.load_error,
+                **self._prediction_artifact_fields(),
             }
 
     def similar_packages(self, feature_values: dict[str, float], *, limit: int = 3) -> list[dict[str, Any]]:
@@ -202,6 +236,7 @@ class PackageRiskModelRegistry:
 
         try:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            self._activate_artifact_metadata(metadata, source="pyg_graphsage")
             model_type = str(metadata.get("model_type") or "pyg_graphsage_package_risk")
             if model_type != "pyg_graphsage_package_risk":
                 raise ValueError(f"unsupported PyG model type: {model_type}")
@@ -250,10 +285,21 @@ class PackageRiskModelRegistry:
 
     def _load_graphsage_model(self) -> bool:
         model_path = self.model_dir / "package_risk_gnn.npz"
+        metadata_path = self.model_dir / "graphsage_model_card.json"
         if not model_path.exists():
             self._record_load_error("numpy_graphsage", f"model not found: {model_path}")
             return False
         try:
+            if metadata_path.exists():
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                try:
+                    self._activate_artifact_metadata(metadata, source="numpy_graphsage")
+                except LegacyArtifactError as exc:
+                    self._record_load_error("numpy_graphsage", str(exc))
+                    self._activate_legacy_artifact(model_path, source="numpy_graphsage")
+            else:
+                self._record_load_error("numpy_graphsage", f"legacy artifact metadata missing: {metadata_path}")
+                self._activate_legacy_artifact(model_path, source="numpy_graphsage")
             with np.load(model_path, allow_pickle=False) as artifact:
                 self._npz_model = {
                     "w1": artifact["w1"],
@@ -265,6 +311,11 @@ class PackageRiskModelRegistry:
                 }
                 self.feature_names = [str(item) for item in artifact["feature_names"].tolist()]
                 self._raw_feature_dim = int(artifact["raw_feature_dim"][0])
+                if self.artifact_status != "legacy":
+                    artifact_id = str(artifact["artifact_id"][0])
+                    dataset_hash = str(artifact["dataset_hash"][0])
+                    if artifact_id != self.artifact_id or dataset_hash != self.dataset_hash:
+                        raise ValueError("NumPy artifact metadata does not match model arrays")
             self._validate_graphsage_model()
         except Exception as exc:  # pragma: no cover - defensive startup guard
             self._record_load_error("numpy_graphsage", str(exc))
@@ -394,10 +445,17 @@ class PackageRiskModelRegistry:
 
     def _load_sklearn_model(self) -> bool:
         model_path = self.model_dir / "package_risk.pkl"
+        metadata_path = self.model_dir / "model_card.json"
         if not model_path.exists():
             self._record_load_error("sklearn", f"model not found: {model_path}")
             return False
+        if not metadata_path.exists():
+            self.artifact_status = "legacy"
+            self._record_load_error("sklearn", f"legacy artifact metadata missing: {metadata_path}")
+            return False
         try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            self._activate_artifact_metadata(metadata, source="sklearn")
             with model_path.open("rb") as handle:
                 artifact = pickle.load(handle)
         except Exception as exc:  # pragma: no cover - defensive startup guard
@@ -405,6 +463,12 @@ class PackageRiskModelRegistry:
             return False
         if not isinstance(artifact, dict) or "model" not in artifact:
             self._record_load_error("sklearn", "invalid model artifact")
+            return False
+        if str(artifact.get("artifact_id") or "") != self.artifact_id:
+            self._record_load_error("sklearn", "artifact metadata does not match model payload")
+            return False
+        if str(artifact.get("dataset_hash") or "") != self.dataset_hash:
+            self._record_load_error("sklearn", "dataset hash does not match model payload")
             return False
 
         feature_names = [str(item) for item in artifact.get("feature_names", [])]
@@ -418,6 +482,83 @@ class PackageRiskModelRegistry:
         self.model_available = True
         self.load_error = "; ".join(self._load_errors) or None
         return True
+
+    def _activate_artifact_metadata(self, metadata: Any, *, source: str) -> None:
+        if not isinstance(metadata, dict):
+            self.artifact_status = "legacy"
+            raise LegacyArtifactError(f"{source} metadata must be an object")
+        required = {
+            "schema_version",
+            "task",
+            "training_status",
+            "data_quality_status",
+            "edge_split_policy",
+            "decision_threshold",
+            "calibration",
+            "dataset_audit",
+            "artifact_id",
+            "dataset_version",
+            "dataset_hash",
+            "trained_at",
+        }
+        missing = sorted(required.difference(metadata))
+        if missing:
+            self.artifact_status = "legacy"
+            raise LegacyArtifactError(f"legacy artifact metadata missing fields: {missing}")
+        try:
+            schema_version = int(metadata["schema_version"])
+        except (TypeError, ValueError) as exc:
+            self.artifact_status = "legacy"
+            raise LegacyArtifactError("invalid artifact schema_version") from exc
+        if schema_version < ARTIFACT_SCHEMA_VERSION:
+            self.artifact_status = "legacy"
+            raise LegacyArtifactError(f"artifact schema_version {schema_version} is no longer supported")
+        if str(metadata.get("task")) != "malicious_package":
+            raise ValueError("artifact task must be malicious_package")
+        if str(metadata.get("training_status")) != "trained":
+            raise ValueError("artifact training_status must be trained")
+        calibration = metadata.get("calibration")
+        audit = metadata.get("dataset_audit")
+        if not isinstance(calibration, dict) or "temperature" not in calibration:
+            raise ValueError("artifact calibration temperature is required")
+        if not isinstance(audit, dict):
+            raise ValueError("artifact dataset_audit must be an object")
+
+        quality = str(metadata.get("data_quality_status") or "unknown")
+        edge_policy = str(metadata.get("edge_split_policy") or "")
+        trusted = quality == "passed" and edge_policy == "inductive" and bool(audit.get("ready_for_training"))
+        self.artifact_status = "passed" if trusted else "warning"
+        self.score_kind = "probability" if trusted else "similarity"
+        self.artifact_id = str(metadata.get("artifact_id") or "")
+        self.dataset_version = str(metadata.get("dataset_version") or "")
+        self.dataset_hash = str(metadata.get("dataset_hash") or "")
+        self.trained_at = str(metadata.get("trained_at") or "")
+        if not self.artifact_id or not self.dataset_hash or not self.trained_at:
+            raise ValueError("artifact identity fields must not be empty")
+        self._pyg_decision_threshold = min(0.99, max(0.01, float(metadata["decision_threshold"])))
+        self._pyg_temperature = max(0.05, float(calibration["temperature"]))
+        self._pyg_ood_threshold = max(1.0, float(metadata.get("ood_distance_threshold") or 6.0))
+        self.artifact_metadata = dict(metadata)
+
+    def _prediction_artifact_fields(self) -> dict[str, Any]:
+        return {
+            "artifact_id": self.artifact_id,
+            "data_quality_status": self.artifact_status,
+            "dataset_version": self.dataset_version,
+            "dataset_hash": self.dataset_hash,
+            "trained_at": self.trained_at,
+            "score_kind": self.score_kind,
+        }
+
+    def _activate_legacy_artifact(self, model_path: Path, *, source: str) -> None:
+        digest = hashlib.sha256(model_path.read_bytes()).hexdigest()
+        self.artifact_status = "legacy"
+        self.artifact_id = f"legacy:{source}:{digest[:12]}"
+        self.dataset_version = ""
+        self.dataset_hash = ""
+        self.trained_at = ""
+        self.score_kind = "heuristic"
+        self.artifact_metadata = {}
 
     def _predict_graphsage_score(self, values: dict[str, float]) -> float:
         if self._npz_model is None:

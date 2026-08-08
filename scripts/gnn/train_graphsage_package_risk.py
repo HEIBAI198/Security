@@ -14,6 +14,8 @@ from sklearn.model_selection import train_test_split
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from scripts.gnn.artifact_metadata import build_artifact_metadata
+
 
 GRAPH_FEATURES = [
     "graph_degree",
@@ -225,6 +227,7 @@ def train_graphsage_package_risk(
     epochs: int = 80,
     learning_rate: float = 0.05,
     random_state: int = 42,
+    model_card_filename: str = "graphsage_model_card.json",
 ) -> dict[str, Any]:
     data_path = Path(data_dir)
     output_path = Path(output_dir)
@@ -264,6 +267,13 @@ def train_graphsage_package_risk(
     }
 
     output_path.mkdir(parents=True, exist_ok=True)
+    artifact_metadata = build_artifact_metadata(
+        data_path,
+        model_type=metrics["model_type"],
+        edge_split_policy="transductive",
+        decision_threshold=0.5,
+        calibration_temperature=1.0,
+    )
     np.savez_compressed(
         output_path / "package_risk_gnn.npz",
         w1=weights["w1"],
@@ -275,12 +285,15 @@ def train_graphsage_package_risk(
         feature_names=np.asarray([*feature_names, *GRAPH_FEATURES], dtype=np.str_),
         node_ids=np.asarray(node_ids, dtype=np.str_),
         raw_feature_dim=np.asarray([raw_features.shape[1]], dtype=np.int64),
+        artifact_id=np.asarray([artifact_metadata["artifact_id"]], dtype=np.str_),
+        dataset_hash=np.asarray([artifact_metadata["dataset_hash"]], dtype=np.str_),
     )
     (output_path / "graphsage_metrics.json").write_text(
         json.dumps(metrics, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     model_card = {
+        **artifact_metadata,
         "model_type": metrics["model_type"],
         "description": "Two-layer NumPy neural network over package features concatenated with mean neighbor features.",
         "feature_source": "self package features + mean aggregated graph-neighbor features",
@@ -293,7 +306,7 @@ def train_graphsage_package_risk(
             "Use as a competition demo risk-ranking signal, not a production malicious package detector.",
         ],
     }
-    (output_path / "graphsage_model_card.json").write_text(
+    (output_path / model_card_filename).write_text(
         json.dumps(model_card, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )

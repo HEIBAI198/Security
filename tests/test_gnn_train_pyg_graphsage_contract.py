@@ -338,10 +338,14 @@ class PyGGraphSageContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = self._write_tiny_dataset(root)
-            with mock.patch.object(trainer, "_load_torch_pyg") as load_torch_pyg:
+            with mock.patch.object(trainer, "_load_torch_pyg") as load_torch_pyg, mock.patch.object(
+                trainer,
+                "_load_training_inputs",
+            ) as load_training_inputs:
                 with self.assertRaisesRegex(ValueError, "dataset audit failed"):
                     train_pyg_graphsage_package_risk(data, root / "model", require_audit_pass=True)
             load_torch_pyg.assert_not_called()
+            load_training_inputs.assert_not_called()
 
     @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("torch_geometric"), "torch/PyG not installed")
     def test_trains_tiny_graph_and_writes_artifacts(self):

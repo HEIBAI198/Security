@@ -174,6 +174,11 @@ class GraphFeatureBuilderTests(unittest.TestCase):
                         "label": 1,
                         "label_source": "OpenSSF malicious-packages",
                         "label_confidence": 1.0,
+                        "version": "1.2.3",
+                        "published": "2024-01-01T00:00:00Z",
+                        "maintainers": [{"name": "maintainer"}],
+                        "repository": "https://github.com/example/app",
+                        "install_scripts": {"postinstall": "node install.js"},
                         "dependencies": ["@scope/core@2.0.0", {"name": "left-pad", "ecosystem": "npm"}],
                     }
                 )
@@ -202,6 +207,10 @@ class GraphFeatureBuilderTests(unittest.TestCase):
 
             self.assertEqual(app["label_source"], "OpenSSF malicious-packages")
             self.assertEqual(app["label_confidence"], 1.0)
+            self.assertEqual(app["version"], "1.2.3")
+            self.assertEqual(app["maintainers"], [{"name": "maintainer"}])
+            self.assertEqual(app["repository"], "https://github.com/example/app")
+            self.assertEqual(app["install_scripts"], {"postinstall": "node install.js"})
             self.assertIn(("pkg:npm:app", "pkg:npm:@scope/core", "depends_on"), edge_keys)
             self.assertIn(("pkg:npm:app", "pkg:npm:left-pad", "depends_on"), edge_keys)
             schema = json.loads((output / "feature_schema.json").read_text(encoding="utf-8"))

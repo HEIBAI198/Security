@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import FRONTEND_DIST_DIR, resolve_frontend_dir
+from .dependency_audit import dependency_gnn_scorer
 from .routes.auth import router as auth_router
 from .routes.conversations import router as conversations_router
 from .routes.imports import router as imports_router
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/ready", tags=["Ops"])
     async def ready() -> dict[str, Any]:
+        gnn = dependency_gnn_scorer().registry.artifact_info()
         return {
             "ready": True,
             "service": "SupplyGuard KG Security Platform",
@@ -61,6 +63,7 @@ def create_app() -> FastAPI:
             "frontend": str(frontend_dir) if frontend_dir else "",
             "frontend_mode": frontend_mode,
             "frontend_ready": frontend_dir is not None,
+            "gnn": gnn,
         }
 
     @app.get("/api/health", tags=["Ops"])

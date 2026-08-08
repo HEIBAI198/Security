@@ -108,6 +108,18 @@ def audit_dataset(
         warnings.append(
             f"{low_confidence_labels} 个节点的标签置信度低于 {float(min_label_confidence):.0%}，需要人工或可信数据源复核"
         )
+    trusted_negative_nodes = [
+        node
+        for node in package_nodes
+        if int(node.get("label") or 0) == 0
+        and float(node.get("label_confidence") or 0.0) >= float(min_label_confidence)
+        and not any(
+            marker in str(node.get("label_source") or "").strip().lower()
+            for marker in ("unverified", "weak", "local_dependency_baseline")
+        )
+    ]
+    if label_counts.get(0, 0) and not trusted_negative_nodes:
+        warnings.append("没有独立来源或人工复核的高置信正常包，禁止用弱负样本替代 ecosystem negatives")
     missing_timestamp = sum(
         not str(
             node.get("published")
@@ -137,6 +149,7 @@ def audit_dataset(
             Counter(str(node.get("label_source") or "unknown") for node in package_nodes)
         ),
         "low_confidence_label_count": low_confidence_labels,
+        "trusted_negative_count": len(trusted_negative_nodes),
         "edge_counts": dict(Counter(str(edge.get("type") or "unknown") for edge in edges)),
         "dependency_edge_count": len(dependency_edges),
         "warnings": warnings,

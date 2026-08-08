@@ -18,6 +18,8 @@ from sklearn.preprocessing import StandardScaler
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from scripts.gnn.artifact_metadata import build_artifact_metadata
+
 
 GRAPH_FEATURES = [
     "graph_degree",
@@ -168,11 +170,20 @@ def train_package_risk(
     }
 
     output_path.mkdir(parents=True, exist_ok=True)
+    artifact_metadata = build_artifact_metadata(
+        data_path,
+        model_type=metrics["model_type"],
+        edge_split_policy="transductive",
+        decision_threshold=0.5,
+        calibration_temperature=1.0,
+    )
     artifact = {
         "model": model,
         "feature_names": full_feature_names,
         "node_ids": node_ids,
         "model_type": metrics["model_type"],
+        "artifact_id": artifact_metadata["artifact_id"],
+        "dataset_hash": artifact_metadata["dataset_hash"],
     }
     with (output_path / "package_risk.pkl").open("wb") as handle:
         pickle.dump(artifact, handle)
@@ -182,6 +193,7 @@ def train_package_risk(
         encoding="utf-8",
     )
     model_card = {
+        **artifact_metadata,
         "model_type": metrics["model_type"],
         "feature_names": full_feature_names,
         "training_samples": metrics["samples"],

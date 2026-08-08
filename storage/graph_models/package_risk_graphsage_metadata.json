@@ -5,32 +5,94 @@
     "metrics": "graphsage_eval.json",
     "model": "package_risk_graphsage.pt"
   },
+  "artifact_id": "pyg_graphsage_package_risk:67fd7e160a06:2026-08-08T135336.438493+0000",
+  "best_epoch": 1,
+  "calibration": {
+    "fit_split": "val",
+    "method": "temperature",
+    "temperature": 0.25
+  },
   "cuda_available": true,
   "cuda_device_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "data_quality_status": "passed",
+  "data_quality_warnings": [],
+  "dataset_audit": {
+    "dependency_edge_count": 1311,
+    "edge_counts": {
+      "depends_on": 1311,
+      "has_risk_signal": 3491,
+      "in_ecosystem": 2624,
+      "observed_in": 624
+    },
+    "label_counts": {
+      "negative": 624,
+      "positive": 2000
+    },
+    "label_source_counts": {
+      "OpenSSF malicious-packages": 2000,
+      "npm_registry_explicit_curated_review": 624
+    },
+    "low_confidence_label_count": 0,
+    "positive_ratio": 0.762195,
+    "ready_for_training": true,
+    "samples": 2624,
+    "schema_version": 2,
+    "split_overlap_groups": [],
+    "split_overlap_ids": [],
+    "split_stats": {
+      "test": {
+        "negative_samples": 95,
+        "positive_ratio": 0.759494,
+        "positive_samples": 300,
+        "samples": 395
+      },
+      "train": {
+        "negative_samples": 436,
+        "positive_ratio": 0.762527,
+        "positive_samples": 1400,
+        "samples": 1836
+      },
+      "val": {
+        "negative_samples": 93,
+        "positive_ratio": 0.763359,
+        "positive_samples": 300,
+        "samples": 393
+      }
+    },
+    "task": "malicious_package",
+    "trusted_negative_count": 624,
+    "warnings": []
+  },
+  "dataset_hash": "67fd7e160a06e4780c5452f5d87a36f46b8e0dad054213f68265629f5d505730",
+  "dataset_version": "67fd7e160a06",
+  "decision_threshold": 0.4,
   "device": "cuda",
   "dropout": 0.3,
+  "early_stopping_patience": 12,
   "edge_construction": {
     "edge_types": [
+      "depends_on",
       "has_risk_signal",
       "observed_in"
     ],
-    "max_group_size": 128,
+    "max_group_size": null,
     "method": "package-package edges by shared targets"
   },
-  "edge_count": 5698,
+  "edge_count": 698076,
+  "edge_split_policy": "inductive",
   "epochs": 80,
   "feature_mean": [
-    0.5153896808624268,
-    0.48461034893989563,
-    15.607540130615234,
-    1.1187201738357544,
-    0.022359434515237808,
-    0.30657684803009033,
-    0.64814293384552,
-    0.07231733202934265,
-    0.7785574197769165,
-    0.8012910485267639,
-    572.8263549804688
+    1.0,
+    0.0,
+    23.747276306152344,
+    1.6633987426757812,
+    0.6982570886611938,
+    0.5179738402366638,
+    4.4466233253479,
+    0.30119824409484863,
+    0.7124183177947998,
+    0.5245097875595093,
+    401.9667663574219
   ],
   "feature_names": [
     "ecosystem_npm",
@@ -46,38 +108,44 @@
     "text_length"
   ],
   "feature_scale": [
-    0.4997659921646118,
-    0.4997659921646118,
-    8.162222862243652,
-    1.4482338428497314,
-    0.1478610336780548,
-    0.4610770046710968,
-    2.885878324508667,
-    0.28384527564048767,
-    3.129734992980957,
-    0.5951570868492126,
-    315.50341796875
+    1.0,
+    1.0,
+    12.830519676208496,
+    2.080359935760498,
+    0.4590124785900116,
+    0.4996814727783203,
+    7.595544815063477,
+    0.48643994331359863,
+    1.2766016721725464,
+    0.7879470586776733,
+    350.0639953613281
   ],
   "hidden_dim": 64,
   "input_dim": 11,
+  "label_confidence_weighting": true,
   "label_mapping": {
     "benign": 0,
     "malicious": 1
   },
   "learning_rate": 0.01,
-  "max_edge_group_size": 128,
-  "max_train_positive_ratio": 1.0,
+  "max_edge_group_size": null,
+  "max_train_positive_ratio": null,
+  "min_delta": 0.0001,
   "model_type": "pyg_graphsage_package_risk",
-  "node_count": 10689,
-  "online_loss_weight": 1.5,
+  "node_count": 2624,
+  "online_loss_weight": 0.0,
+  "ood_distance_threshold": 6.0,
   "random_state": 42,
+  "schema_version": 3,
   "split_counts": {
-    "test": 1604,
-    "train": 7482,
-    "val": 1603
+    "test": 395,
+    "train": 1836,
+    "val": 393
   },
+  "task": "malicious_package",
   "torch_cuda_version": "12.8",
   "torch_version": "2.7.0+cu128",
-  "trained_epochs": 80,
+  "trained_at": "2026-08-08T13:53:36.438493+00:00",
+  "trained_epochs": 13,
   "training_status": "trained"
 }

@@ -29,6 +29,10 @@ class PackageRiskScorerTests(unittest.TestCase):
             "gnn_reasons",
             "gnn_confidence",
             "gnn_explanations",
+            "gnn_decision_status",
+            "gnn_score_kind",
+            "gnn_artifact_id",
+            "gnn_data_quality_status",
             "similar_malicious_packages",
         ]:
             self.assertIn(key, result)
@@ -85,6 +89,38 @@ class PackageRiskScorerTests(unittest.TestCase):
         )
         self.assertTrue(PackageRiskScorer._has_evidence_conflict(0.0, [], 100))
         self.assertFalse(PackageRiskScorer._has_evidence_conflict(0.0, [{"status": "fixed"}], 0))
+
+    def test_low_model_score_with_strong_evidence_returns_conflict(self):
+        scorer = PackageRiskScorer(Path("definitely-missing-model-dir"))
+        prediction = {
+            "score": 0.0283,
+            "model_available": True,
+            "model_type": "numpy_graphsage_mean_aggregator",
+            "confidence": 0.94,
+            "raw_confidence": 0.94,
+            "inference_mode": "package_features_only",
+            "reliability": "limited",
+            "decision_threshold": 0.5,
+            "calibration_temperature": 1.0,
+            "explanations": [],
+            "score_kind": "similarity",
+            "data_quality_status": "warning",
+        }
+        with mock.patch.object(scorer.registry, "predict", return_value=prediction):
+            result = scorer.score_package(
+                "npm",
+                "axios",
+                "1.6.8",
+                ["29 vulnerability findings"],
+                [{"id": "GHSA-test", "status": "affected"}],
+                existing_risk=100,
+            )
+
+        self.assertEqual(result["gnn_score"], 0.0283)
+        self.assertEqual(result["gnn_decision_status"], "conflict")
+        self.assertEqual(result["gnn_score_kind"], "similarity")
+        self.assertTrue(result["gnn_evidence_conflict"])
+        self.assertLessEqual(result["gnn_confidence"], 0.25)
 
     def _write_graphsage_fixture(self, data_dir: Path):
         (data_dir / "feature_schema.json").write_text(
@@ -382,6 +418,28 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertLessEqual(result["gnn_score"], 1.0)
             self.assertLessEqual(result["gnn_confidence"], 0.6)
             self.assertEqual(result["gnn_inference_mode"], "package_features_only")
+
+    def test_legacy_graphsage_artifact_is_loaded_only_as_heuristic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_dir = root / "features"
+            model_dir = root / "model"
+            data_dir.mkdir()
+            self._write_graphsage_fixture(data_dir)
+            train_graphsage_package_risk(data_dir, model_dir, epochs=4, hidden_dim=4, random_state=7)
+            metadata_path = model_dir / "graphsage_model_card.json"
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            metadata["schema_version"] = 2
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+            scorer = PackageRiskScorer(model_dir)
+            result = scorer.score_package("npm", "axios", "1.6.8", [], [], existing_risk=100)
+
+            self.assertTrue(result["gnn_model_available"])
+            self.assertEqual(result["gnn_score_kind"], "heuristic")
+            self.assertEqual(result["gnn_data_quality_status"], "legacy")
+            self.assertTrue(result["gnn_artifact_id"].startswith("legacy:numpy_graphsage:"))
+            self.assertIn("schema_version", result["model_error"])
 
     def test_pyg_artifact_failure_falls_back_to_numpy_model(self):
         with tempfile.TemporaryDirectory() as tmp:

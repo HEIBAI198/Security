@@ -218,7 +218,7 @@ def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
     package = str(record.get("package") or "").lower()
     if ecosystem not in {"npm", "pypi"} or not package:
         return None
-    return {
+    node = {
         "id": _package_id(ecosystem, package),
         "type": "package",
         "ecosystem": ecosystem,
@@ -232,6 +232,25 @@ def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "created": str(record.get("created") or ""),
         "features": _features(record),
     }
+    # Keep provenance and package metadata on graph nodes for audit, review,
+    # and future feature extraction. These fields are intentionally optional.
+    for field_name in (
+        "version",
+        "latest_version",
+        "versions",
+        "dependencies",
+        "maintainers",
+        "repository",
+        "homepage",
+        "license",
+        "install_scripts",
+        "scripts",
+        "metadata_source",
+    ):
+        value = record.get(field_name)
+        if not _is_missing_value(value):
+            node[field_name] = value
+    return node
 
 
 def _edges_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
@@ -324,6 +343,12 @@ def _merge_duplicate_record(
         "dependencies",
         "dependency_names",
         "requires",
+        "maintainers",
+        "repository",
+        "homepage",
+        "license",
+        "install_scripts",
+        "scripts",
     ):
         values = _unique_field_values(existing, incoming, field_name)
         if values:

@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.gnn.audit_package_risk_dataset import audit_dataset
+from scripts.gnn.artifact_metadata import build_artifact_metadata
 
 
 PYG_MODEL_TYPE = "pyg_graphsage_package_risk"
@@ -421,6 +422,15 @@ def _split_metrics(
     score_values = [float(value) for value in probabilities.detach().cpu().tolist()]
     label_values = [int(value) for value in split_labels.detach().cpu().tolist()]
     roc_auc, pr_auc = _auc_metrics(label_values, score_values)
+    brier = float(np.mean((np.asarray(score_values) - np.asarray(label_values)) ** 2))
+    ece = 0.0
+    score_array = np.asarray(score_values)
+    label_array = np.asarray(label_values)
+    for lower in np.linspace(0.0, 1.0, 11)[:-1]:
+        upper = lower + 0.1
+        bucket = (score_array >= lower) & (score_array < upper if upper < 1.0 else score_array <= upper)
+        if np.any(bucket):
+            ece += float(np.sum(bucket) / len(score_values)) * abs(float(np.mean(score_array[bucket])) - float(np.mean(label_array[bucket])))
     return {
         "samples": sample_count,
         "positive_samples": positive_samples,
@@ -431,6 +441,8 @@ def _split_metrics(
         "f1": float(f1),
         "roc_auc": roc_auc,
         "pr_auc": pr_auc,
+        "brier": brier,
+        "ece": ece,
         "threshold": float(threshold),
         "temperature": float(temperature),
         "confusion_matrix": {
@@ -653,6 +665,7 @@ def train_pyg_graphsage_package_risk(
     min_delta: float = 1e-4,
     edge_split_policy: str = "inductive",
     require_audit_pass: bool = False,
+    build_numpy_fallback: bool = True,
 ) -> dict[str, Any]:
     if int(early_stopping_patience) < 0:
         raise ValueError("early_stopping_patience must be >= 0")
@@ -662,6 +675,12 @@ def train_pyg_graphsage_package_risk(
         raise ValueError("edge_split_policy must be inductive or transductive")
     data_path = Path(data_dir)
     output_path = Path(output_dir)
+    # Audit before constructing the projected package graph; invalid data must fail fast.
+    dataset_audit = audit_dataset(data_path)
+    if require_audit_pass and not dataset_audit["ready_for_training"]:
+        raise ValueError(
+            "dataset audit failed: " + "; ".join(str(item) for item in dataset_audit["warnings"])
+        )
     training_inputs = _load_training_inputs(
         data_path,
         hidden_dim=hidden_dim,
@@ -670,11 +689,6 @@ def train_pyg_graphsage_package_risk(
         dropout=dropout,
         max_edge_group_size=max_edge_group_size,
     )
-    dataset_audit = audit_dataset(data_path)
-    if require_audit_pass and not dataset_audit["ready_for_training"]:
-        raise ValueError(
-            "dataset audit failed: " + "; ".join(str(item) for item in dataset_audit["warnings"])
-        )
     torch, Data, SAGEConv = _load_torch_pyg()
 
     random.seed(random_state)
@@ -856,7 +870,16 @@ def train_pyg_graphsage_package_risk(
     output_path.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), output_path / "package_risk_graphsage.pt")
 
+    artifact_metadata = build_artifact_metadata(
+        data_path,
+        model_type=PYG_MODEL_TYPE,
+        dataset_audit=dataset_audit,
+        edge_split_policy=edge_split_policy,
+        decision_threshold=decision_threshold,
+        calibration_temperature=calibration_temperature,
+    )
     metadata = {
+        **artifact_metadata,
         "model_type": PYG_MODEL_TYPE,
         "feature_names": feature_names,
         "input_dim": int(features.shape[1]),
@@ -886,8 +909,6 @@ def train_pyg_graphsage_package_risk(
         "best_epoch": int(best_epoch or trained_epochs),
         "decision_threshold": float(decision_threshold),
         "calibration": {"method": "temperature", "temperature": float(calibration_temperature), "fit_split": "val"},
-        "task": "malicious_package",
-        "data_quality_status": "passed" if dataset_audit["ready_for_training"] else "warning",
         "data_quality_warnings": dataset_audit["warnings"],
         "label_confidence_weighting": True,
         "device": selected_device,
@@ -930,6 +951,22 @@ def train_pyg_graphsage_package_risk(
         json.dumps(metrics, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
+    if build_numpy_fallback:
+        from scripts.gnn.train_graphsage_package_risk import train_graphsage_package_risk
+
+        metrics["numpy_fallback"] = train_graphsage_package_risk(
+            data_path,
+            output_path,
+            hidden_dim=hidden_dim,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            random_state=random_state,
+            model_card_filename="numpy_graphsage_model_card.json",
+        )
+        (output_path / "graphsage_eval.json").write_text(
+            json.dumps(metrics, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     return metrics
 
 
@@ -950,6 +987,7 @@ def main() -> int:
     parser.add_argument("--min-delta", type=float, default=1e-4)
     parser.add_argument("--edge-split-policy", choices=["inductive", "transductive"], default="inductive")
     parser.add_argument("--require-audit-pass", action="store_true")
+    parser.add_argument("--skip-numpy-fallback", action="store_true")
     args = parser.parse_args()
 
     metrics = train_pyg_graphsage_package_risk(
@@ -968,6 +1006,7 @@ def main() -> int:
         min_delta=args.min_delta,
         edge_split_policy=args.edge_split_policy,
         require_audit_pass=args.require_audit_pass,
+        build_numpy_fallback=not args.skip_numpy_fallback,
     )
     print(json.dumps(metrics, ensure_ascii=False, sort_keys=True))
     return 0

@@ -38,6 +38,7 @@ class PackageRiskDatasetAuditTests(unittest.TestCase):
             self.assertTrue(any("正样本占比" in warning for warning in report["warnings"]))
             self.assertTrue(any("标签来源" in warning for warning in report["warnings"]))
             self.assertTrue(any("depends_on" in warning for warning in report["warnings"]))
+            self.assertTrue(any("高置信正常包" in warning for warning in report["warnings"]))
 
     def test_accepts_balanced_provenance_data_with_dependency_edges(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -72,6 +73,7 @@ class PackageRiskDatasetAuditTests(unittest.TestCase):
 
             self.assertTrue(report["ready_for_training"])
             self.assertEqual(report["dependency_edge_count"], 1)
+            self.assertEqual(report["trusted_negative_count"], 3)
             self.assertEqual(report["warnings"], [])
 
 

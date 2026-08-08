@@ -181,6 +181,7 @@ import { Logo } from '@/assets/logo'
 import { IconGithub } from '@/assets/brand-icons'
 import { cn } from '@/lib/utils'
 import { decideAgentQuestionAction } from './agent-question-routing'
+import { gnnScoreLabel, isGnnJudged, resolveGnnDecisionStatus } from './gnn-display-model'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -4767,14 +4768,15 @@ type ReachabilityEvidenceKind = 'code' | 'entry' | 'execution' | 'external' | 'g
 function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }) {
   const gnnItems = items.filter((item) => typeof item.dependency.gnn_score === 'number')
   if (!gnnItems.length) return null
+  const judgedItems = gnnItems.filter((item) => isGnnJudged(item.dependency))
 
-  const topItems = gnnItems
+  const topItems = judgedItems
     .slice()
     .sort((left, right) => (right.dependency.gnn_score ?? 0) - (left.dependency.gnn_score ?? 0))
     .slice(0, 4)
-  const highCount = gnnItems.filter((item) => item.dependency.gnn_label === 'high').length
-  const elevatedCount = gnnItems.filter((item) => item.dependency.gnn_label === 'elevated').length
-  const confidences = gnnItems
+  const highCount = judgedItems.filter((item) => item.dependency.gnn_label === 'high').length
+  const elevatedCount = judgedItems.filter((item) => item.dependency.gnn_label === 'elevated').length
+  const confidences = judgedItems
     .map((item) => item.dependency.gnn_confidence)
     .filter((value): value is number => typeof value === 'number')
   const avgConfidence = confidences.length
@@ -4788,7 +4790,7 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
         <div>
           <div className='flex items-center gap-2 text-sm font-semibold text-cyan-100'>
             <BrainCircuit className='size-4' />
-            GNN 依赖风险证据
+            GNN 恶意包判定证据
           </div>
           <div className='mt-1 text-xs text-muted-foreground'>
             图神经网络对当前高风险依赖重新打分，用于补充可达性、版本和相似恶意包证据。
@@ -4805,8 +4807,8 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
 
       <div className='mt-3 grid gap-2 text-xs sm:grid-cols-4'>
         <ReachabilityGnnMetric label='覆盖依赖' value={`${gnnItems.length}/${items.length}`} />
-        <ReachabilityGnnMetric label='高危标签' value={String(highCount)} />
-        <ReachabilityGnnMetric label='提升风险' value={String(elevatedCount)} />
+        <ReachabilityGnnMetric label='恶意倾向' value={String(highCount)} />
+        <ReachabilityGnnMetric label='可疑倾向' value={String(elevatedCount)} />
         <ReachabilityGnnMetric label='平均判定确定度' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
       </div>
 
@@ -4823,7 +4825,7 @@ function ReachabilityGnnSummary({ items }: { items: ReachabilityAnalysisItem[] }
               <ReachabilityGnnPill dependency={item.dependency} />
             </div>
             <div className='mt-1 truncate text-[11px] text-muted-foreground'>
-              {item.dependency.gnn_explanations?.[0] || item.dependency.gnn_reasons?.[0] || item.dependency.gnn_model_type || 'GNN risk signal'}
+              {item.dependency.gnn_explanations?.[0] || item.dependency.gnn_reasons?.[0] || item.dependency.gnn_model_type || 'malicious package similarity signal'}
             </div>
           </button>
         ))}
@@ -4843,13 +4845,14 @@ function ReachabilityGnnMetric({ label, value }: { label: string; value: string 
 
 function ReachabilityGnnPill({ dependency }: { dependency: SecurityDependency }) {
   if (typeof dependency.gnn_score !== 'number') return null
-  if (dependency.gnn_reliability === 'out_of_distribution') {
+  const decisionStatus = resolveGnnDecisionStatus(dependency)
+  if (decisionStatus === 'abstain' || decisionStatus === 'unavailable') {
     return (
       <span
         className='rounded-full border border-amber-300/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold text-amber-200'
-        title='输入超出训练分布，模型已拒绝给出确定风险结论'
+        title={decisionStatus === 'abstain' ? '输入超出训练分布，模型已拒绝给出确定结论' : '当前没有通过兼容性门禁的模型'}
       >
-        GNN 暂不判定
+        {decisionStatus === 'abstain' ? 'GNN 暂不判定' : '模型不可用'}
       </span>
     )
   }
@@ -4863,9 +4866,9 @@ function ReachabilityGnnPill({ dependency }: { dependency: SecurityDependency })
   return (
     <span
       className={cn('rounded-full border px-2 py-0.5 text-[11px] font-bold tabular-nums', tone)}
-      title={dependency.gnn_reasons?.join('；') || dependency.gnn_model_type || 'GNN 风险分：表示模型输出的风险强度，不是总体风险评分'}
+      title={dependency.gnn_reasons?.join('；') || dependency.gnn_model_type || '模型分表示恶意包特征强度，不是总体风险评分'}
     >
-      GNN 风险 {formatPercent(dependency.gnn_score)}
+      {gnnScoreLabel(dependency, formatPercent(dependency.gnn_score))}
     </span>
   )
 }
@@ -4897,7 +4900,7 @@ function ReachabilityGnnEvidence({ dependency }: { dependency: SecurityDependenc
             判定确定度 {formatPercent(dependency.gnn_confidence)}
           </span>
         ) : null}
-        {dependency.gnn_reliability === 'out_of_distribution' ? (
+        {resolveGnnDecisionStatus(dependency) === 'abstain' ? (
           <span className='rounded-full border border-amber-300/40 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-200'>
             超出训练分布
           </span>
@@ -4905,10 +4908,10 @@ function ReachabilityGnnEvidence({ dependency }: { dependency: SecurityDependenc
       </div>
 
       <p className='mt-2 text-[11px] leading-5 text-muted-foreground'>
-        GNN 风险分表示模型判断的风险强度；判定确定度表示模型对这个分数的确定程度，二者不是同一个指标。总体风险还会综合漏洞、依赖和其他证据。
+        恶意包概率或相似度只表示模型识别出的恶意行为特征；判定确定度不是准确率。总体风险还会综合漏洞、可达性和其他证据。
       </p>
 
-      {dependency.gnn_reliability === 'out_of_distribution' ? (
+      {resolveGnnDecisionStatus(dependency) === 'abstain' ? (
         <div className='mt-2 rounded-md border border-amber-300/50 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200'>
           当前依赖与训练数据差异较大，GNN 已拒绝给出确定结论，请以漏洞、调用与人工证据为准。
         </div>
@@ -8373,7 +8376,7 @@ function DependencyVexBadge({ dependency }: { dependency: SecurityDependency }) 
 
 function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependency[] }) {
   const gnnDependencies = dependenciesWithGnn(dependencies)
-  const judgedDependencies = gnnDependencies.filter((dependency) => dependency.gnn_reliability !== 'out_of_distribution')
+  const judgedDependencies = gnnDependencies.filter(isGnnJudged)
   if (!gnnDependencies.length) {
     return null
   }
@@ -8393,7 +8396,7 @@ function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependen
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <div className='flex items-center gap-2 text-sm font-medium'>
           <BrainCircuit className='size-4 text-cyan-600' />
-          GNN 依赖风险证据
+          GNN 恶意包判定证据
         </div>
         <div className='flex flex-wrap gap-1'>
           {modelTypes.slice(0, 2).map((model) => (
@@ -8406,8 +8409,8 @@ function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependen
 
       <div className='mt-3 grid gap-2 text-xs sm:grid-cols-5'>
         <InfoPill label='覆盖依赖' value={`${gnnDependencies.length}/${dependencies.length}`} />
-        <InfoPill label='高危标签' value={String(highCount)} />
-        <InfoPill label='提升风险' value={String(elevatedCount)} />
+        <InfoPill label='恶意倾向' value={String(highCount)} />
+        <InfoPill label='可疑倾向' value={String(elevatedCount)} />
         <InfoPill label='平均判定确定度' value={avgConfidence === null ? '-' : formatPercent(avgConfidence)} />
         <InfoPill label='暂不判定' value={String(gnnDependencies.length - judgedDependencies.length)} />
       </div>
@@ -8421,11 +8424,11 @@ function DependencyGnnSummary({ dependencies }: { dependencies: SecurityDependen
                 variant='outline'
                 className={cn('shrink-0 rounded-md text-[10px]', severityClasses[dependencyGnnSeverity(dependency)])}
               >
-                GNN 风险 {formatPercent(dependency.gnn_score ?? 0)}
+                {gnnScoreLabel(dependency, formatPercent(dependency.gnn_score ?? 0))}
               </Badge>
             </div>
             <div className='mt-1 truncate text-[11px] text-muted-foreground'>
-              {dependency.gnn_explanations?.[0] || dependency.gnn_reasons?.[0] || dependency.gnn_model_type || 'GNN risk signal'}
+              {dependency.gnn_explanations?.[0] || dependency.gnn_reasons?.[0] || dependency.gnn_model_type || 'malicious package similarity signal'}
             </div>
           </div>
         ))}
@@ -8440,14 +8443,14 @@ function dependenciesWithGnn(dependencies: SecurityDependency[]) {
 
 function topGnnDependencies(dependencies: SecurityDependency[], limit: number) {
   return dependenciesWithGnn(dependencies)
-    .filter((dependency) => dependency.gnn_reliability !== 'out_of_distribution')
+    .filter(isGnnJudged)
     .slice()
     .sort((left, right) => (right.gnn_score ?? 0) - (left.gnn_score ?? 0))
     .slice(0, limit)
 }
 
 function dependencyGnnSeverity(dependency: SecurityDependency): SecuritySeverity {
-  if (dependency.gnn_evidence_conflict) return 'high'
+  if (resolveGnnDecisionStatus(dependency) === 'conflict') return 'high'
   if (dependency.gnn_label === 'high') return 'high'
   if (dependency.gnn_label === 'elevated') return 'medium'
   return 'low'
@@ -8457,20 +8460,21 @@ function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) 
   if (typeof dependency.gnn_score !== 'number') {
     return null
   }
-  if (dependency.gnn_reliability === 'out_of_distribution') {
+  const decisionStatus = resolveGnnDecisionStatus(dependency)
+  if (decisionStatus === 'abstain' || decisionStatus === 'unavailable') {
     return (
       <Badge
         variant='outline'
         className='mt-1 w-fit rounded-md border-amber-400/50 bg-amber-50 text-[10px] text-amber-700 dark:bg-amber-950/20 dark:text-amber-200'
-        title='输入超出训练分布，模型已拒绝给出确定风险结论'
+        title={decisionStatus === 'abstain' ? '输入超出训练分布，模型已拒绝给出确定结论' : '当前没有通过兼容性门禁的模型'}
       >
-        GNN 暂不判定
+        {decisionStatus === 'abstain' ? 'GNN 暂不判定' : '模型不可用'}
       </Badge>
     )
   }
   const score = Math.round(dependency.gnn_score * 100)
   const tone =
-    dependency.gnn_evidence_conflict
+    decisionStatus === 'conflict'
       ? severityClasses.high
       : dependency.gnn_label === 'high'
       ? severityClasses.high
@@ -8481,9 +8485,9 @@ function DependencyGnnBadge({ dependency }: { dependency: SecurityDependency }) 
     <Badge
       variant='outline'
       className={cn('mt-1 w-fit rounded-md text-[10px]', tone)}
-      title={dependency.gnn_reasons?.join('；') || 'GNN 风险分：恶意包相似度信号，不是总体风险评分'}
+      title={dependency.gnn_reasons?.join('；') || '恶意包概率或相似度不是总体风险评分'}
     >
-      GNN 风险 {score}%
+      {gnnScoreLabel(dependency, `${score}%`)}
     </Badge>
   )
 }
@@ -8619,7 +8623,7 @@ function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency 
             判定确定度 {formatPercent(dependency.gnn_confidence)}
           </Badge>
         ) : null}
-        {dependency.gnn_reliability === 'out_of_distribution' ? (
+        {resolveGnnDecisionStatus(dependency) === 'abstain' ? (
           <Badge variant='outline' className='rounded-md border-amber-400/50 bg-amber-50 text-[10px] text-amber-700 dark:bg-amber-950/20 dark:text-amber-200'>
             超出训练分布
           </Badge>
@@ -8636,15 +8640,15 @@ function DependencyGnnEvidence({ dependency }: { dependency: SecurityDependency 
         </div>
       ) : null}
 
-      {dependency.gnn_reliability === 'out_of_distribution' ? (
+      {resolveGnnDecisionStatus(dependency) === 'abstain' ? (
         <div className='mt-2 rounded-md border border-amber-300/50 bg-amber-50 px-2.5 py-2 text-[11px] leading-5 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200'>
           输入超出训练分布，模型已降低确定度；不要把该分数作为放行依据。
         </div>
       ) : null}
 
-      {dependency.gnn_evidence_conflict ? (
+      {resolveGnnDecisionStatus(dependency) === 'conflict' ? (
         <div className='mt-2 rounded-md border border-red-300/50 bg-red-50 px-2.5 py-2 text-[11px] leading-5 text-red-800 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-200'>
-          GNN 低风险输出与漏洞或综合风险证据冲突，已降低该模型信号的可靠性；不能据此降低总体风险。
+          恶意包概率或相似度较低，但与漏洞或综合风险强证据冲突；不能据此降低总体风险。
         </div>
       ) : null}
 
@@ -16558,7 +16562,7 @@ function GraphRagEvidenceCard({ graphRag }: { graphRag?: SecurityGraphRagResult 
                       </Badge>
                       {gnnScore !== null ? (
                         <Badge variant='outline' className='rounded-md bg-cyan-50 text-[10px] text-cyan-700 dark:bg-cyan-950/30 dark:text-cyan-200'>
-                          GNN 风险 {gnnScore}%
+                          恶意包相似度 {gnnScore}%
                         </Badge>
                       ) : null}
                     </div>

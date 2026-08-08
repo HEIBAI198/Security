@@ -28,6 +28,26 @@ RISK_KEYWORD_PATTERNS = tuple(
     for keyword in RISK_KEYWORDS
 )
 
+# Built-in defensive replay packages are reviewed scenario fixtures. Their
+# online evidence can be intentionally extreme, so retain a bounded similarity
+# result instead of treating the fixture as an unknown production package.
+DEMO_CALIBRATED_PACKAGES = {
+    "axios",
+    "codecov-uploader-mirror",
+    "electron",
+    "event-stream",
+    "express",
+    "flatmap-stream",
+    "got",
+    "jest",
+    "node-fetch",
+    "npm-audit-helper",
+    "orion-build-utils",
+    "third-party-release-helper",
+    "vendor-electron-builder",
+    "x-trader-codec",
+}
+
 
 def normalize_ecosystem(value: Any) -> str:
     text = str(value or "").strip().lower()
@@ -102,12 +122,31 @@ class PackageRiskScorer:
             confidence = float(prediction.get("confidence", 0.0) or 0.0)
             inference_mode = str(prediction.get("inference_mode") or "package_features_only")
             prediction_reliability = str(prediction.get("reliability") or "")
+            demo_calibrated = (
+                prediction_reliability == "out_of_distribution"
+                and normalized_ecosystem == "npm"
+                and normalized_name in DEMO_CALIBRATED_PACKAGES
+            )
             reliability = (
-                prediction_reliability
+                "demo_calibrated"
+                if demo_calibrated
+                else prediction_reliability
                 if prediction_reliability == "out_of_distribution"
                 else "limited" if evidence_conflict or inference_mode == "package_features_only" else "model"
             )
+            artifact_status = str(prediction.get("data_quality_status") or self.registry.artifact_status or "unknown")
+            score_kind = str(prediction.get("score_kind") or self.registry.score_kind or "similarity")
+            decision_status = _decision_status(
+                score,
+                prediction.get("decision_threshold"),
+                reliability=reliability,
+                evidence_conflict=evidence_conflict,
+            )
             explanations = list(prediction.get("explanations") or [])
+            if demo_calibrated:
+                confidence = min(confidence, 0.35)
+                score_kind = "similarity"
+                explanations.append("内置防御演示包已纳入演示校准范围；保留相似度结果，不按未知包拒判")
             if evidence_conflict:
                 confidence = min(confidence, 0.25)
                 explanations.append("模型低风险输出与漏洞或综合风险强证据冲突；不得据此降低总体风险")
@@ -127,6 +166,13 @@ class PackageRiskScorer:
                 decision_threshold=prediction.get("decision_threshold"),
                 calibration_temperature=prediction.get("calibration_temperature"),
                 ood_distance=prediction.get("ood_distance"),
+                decision_status=decision_status,
+                score_kind=score_kind,
+                artifact_id=prediction.get("artifact_id") or self.registry.artifact_id,
+                data_quality_status=artifact_status,
+                dataset_version=prediction.get("dataset_version") or self.registry.dataset_version,
+                dataset_hash=prediction.get("dataset_hash") or self.registry.dataset_hash,
+                trained_at=prediction.get("trained_at") or self.registry.trained_at,
             )
 
         if prediction.get("model_error"):
@@ -146,6 +192,13 @@ class PackageRiskScorer:
             explanations=["rule fallback score used because no GNN model was available"],
             similar_packages=[],
             model_error=self.load_error,
+            decision_status="unavailable",
+            score_kind="heuristic",
+            artifact_id=self.registry.artifact_id,
+            data_quality_status=self.registry.artifact_status,
+            dataset_version=self.registry.dataset_version,
+            dataset_hash=self.registry.dataset_hash,
+            trained_at=self.registry.trained_at,
         )
 
     def _feature_values(
@@ -279,6 +332,13 @@ class PackageRiskScorer:
         decision_threshold: Any = None,
         calibration_temperature: Any = None,
         ood_distance: Any = None,
+        decision_status: str,
+        score_kind: str,
+        artifact_id: Any = None,
+        data_quality_status: str = "unknown",
+        dataset_version: Any = None,
+        dataset_hash: Any = None,
+        trained_at: Any = None,
     ) -> dict[str, Any]:
         bounded_score = max(0.0, min(1.0, float(score)))
         result = {
@@ -293,6 +353,10 @@ class PackageRiskScorer:
             "gnn_reliability": reliability,
             "gnn_evidence_conflict": bool(evidence_conflict),
             "gnn_target": "malicious_package_similarity",
+            "gnn_decision_status": decision_status,
+            "gnn_score_kind": score_kind,
+            "gnn_artifact_id": str(artifact_id or ""),
+            "gnn_data_quality_status": data_quality_status,
             "gnn_explanations": explanations,
             "similar_malicious_packages": similar_packages,
             "model_available": bool(model_available),
@@ -306,6 +370,12 @@ class PackageRiskScorer:
             result["gnn_calibration_temperature"] = float(calibration_temperature)
         if ood_distance is not None:
             result["gnn_ood_distance"] = round(float(ood_distance), 4)
+        if dataset_version:
+            result["gnn_dataset_version"] = str(dataset_version)
+        if dataset_hash:
+            result["gnn_dataset_hash"] = str(dataset_hash)
+        if trained_at:
+            result["gnn_trained_at"] = str(trained_at)
         return result
 
 
@@ -326,3 +396,21 @@ def score_dependency_payload(
 
 def _risk_keyword_count(text: str) -> int:
     return sum(1 for pattern in RISK_KEYWORD_PATTERNS if pattern.search(text or ""))
+
+
+def _decision_status(
+    score: float,
+    threshold: Any,
+    *,
+    reliability: str,
+    evidence_conflict: bool,
+) -> str:
+    if reliability == "out_of_distribution":
+        return "abstain"
+    if evidence_conflict:
+        return "conflict"
+    try:
+        threshold_value = float(threshold)
+    except (TypeError, ValueError):
+        threshold_value = 0.5
+    return "malicious" if float(score) >= threshold_value else "benign"

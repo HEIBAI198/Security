@@ -20,6 +20,7 @@ from scripts.gnn.dataset_utils import (
 
 
 OPTIONAL_FIELDS = (
+    "version",
     "description",
     "keywords",
     "maintainers",
@@ -29,6 +30,12 @@ OPTIONAL_FIELDS = (
     "modified",
     "created",
     "dependencies",
+    "repository",
+    "homepage",
+    "license",
+    "install_scripts",
+    "scripts",
+    "metadata_source",
 )
 
 
@@ -99,16 +106,20 @@ def _negative_record(
     package: str,
     record: dict[str, Any],
 ) -> dict[str, Any]:
+    metadata_source = str(_first_present(record.get("metadata_source"), record.get("source")) or "")
+    curated = "explicit_curated_review" in metadata_source.lower()
     output: dict[str, Any] = {
         "ecosystem": ecosystem,
         "package": package,
         "label": 0,
-        "label_source": "ecosystem_metadata_unlisted_unverified",
-        "label_confidence": 0.6,
+        "label_source": metadata_source or "ecosystem_metadata_unlisted_unverified",
+        "label_confidence": 0.85 if curated else 0.6,
         "source": "ecosystem_metadata_negative",
         "evidence_sources": ["ecosystem_metadata"],
         "text": _sample_text(ecosystem, package, record),
     }
+    if metadata_source:
+        output["metadata_source"] = metadata_source
     for field in OPTIONAL_FIELDS:
         if field in record and _has_value(record[field]):
             output[field] = record[field]

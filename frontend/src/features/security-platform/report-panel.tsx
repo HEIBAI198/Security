@@ -1096,7 +1096,7 @@ function removeReportAppendixSection(markdown:string){
 }
 
 function rewriteAiTriageSection(markdown:string, workspace:SecurityWorkspace){
-  const headingMatch=/^##\s*(?:\d+\.\s*)?(?:GraphRAG\s*\/\s*GNN\s*(?:风险增强|辅助研判)|AI 辅助研判|AI 引入风险复核)\s*$/m.exec(markdown)
+  const headingMatch=/^##\s*(?:\d+\.\s*)?(?:GraphRAG\s*\/\s*GNN\s*(?:风险增强|恶意包判定|辅助研判)|AI 辅助研判|AI 引入风险复核)\s*$/m.exec(markdown)
   if(!headingMatch)return markdown
   const sectionStart=headingMatch.index
   const contentStart=sectionStart+headingMatch[0].length
@@ -1140,8 +1140,8 @@ function aiTriageConcern(item:{label:string;score:number}){
   if(/build-agent|builder|runner|workflow|ci/.test(label))return '构建相关对象，可能影响产物生成或发布链路'
   if(/codec|serialize|parser|json|yaml/.test(label))return '解析或编解码相关依赖，需确认是否参与敏感路径'
   if(/npm:|pypi:|@/.test(label))return '第三方依赖来源不明，需确认引入方式和安装脚本'
-  if(item.score>=0.75)return '图谱排序靠前，建议确认是否与当前攻击链有关'
-  return '可疑度较低，但建议结合引入记录做来源复核'
+  if(item.score>=0.75)return '恶意包相似度排序靠前，建议确认是否与当前攻击链有关'
+  return '恶意包相似度较低，但建议结合引入记录做来源复核'
 }
 
 function getGnnCandidateNodes(workspace:SecurityWorkspace){
