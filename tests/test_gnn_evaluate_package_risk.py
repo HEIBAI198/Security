@@ -9,7 +9,10 @@ from unittest import mock
 from scripts.gnn.evaluate_package_risk import (
     _read_labels_scores_jsonl,
     classification_metrics,
+    expected_calibration_error,
+    fit_temperature,
     main,
+    select_threshold,
     top_k_hit_rate,
 )
 
@@ -21,6 +24,8 @@ class PackageRiskEvaluationTests(unittest.TestCase):
         self.assertEqual(metrics["accuracy"], 1.0)
         self.assertEqual(metrics["f1"], 1.0)
         self.assertIn("pr_auc", metrics)
+        self.assertIn("brier_score", metrics)
+        self.assertIn("ece", metrics)
         self.assertEqual(metrics["confusion_matrix"], {"tp": 2, "fp": 0, "tn": 2, "fn": 0})
 
     def test_classification_metrics_one_class_auc_values_are_zero(self):
@@ -54,6 +59,15 @@ class PackageRiskEvaluationTests(unittest.TestCase):
 
     def test_top_k_hit_rate_counts_positive_labels(self):
         self.assertEqual(top_k_hit_rate([0, 1, 0, 1], [0.2, 0.9, 0.8, 0.1], k=2), 0.5)
+
+    def test_validation_selects_threshold_without_using_test_labels(self):
+        self.assertEqual(select_threshold([1, 1, 0, 0], [0.8, 0.7, 0.4, 0.2]), 0.5)
+
+    def test_temperature_and_ece_are_finite(self):
+        temperature = fit_temperature([1, 1, 0, 0], [0.99, 0.8, 0.3, 0.01])
+
+        self.assertGreater(temperature, 0.0)
+        self.assertGreaterEqual(expected_calibration_error([1, 0], [0.8, 0.2]), 0.0)
 
     def test_top_k_hit_rate_uses_available_rows_when_k_exceeds_sample_count(self):
         self.assertEqual(top_k_hit_rate([1, 0], [0.7, 0.6], k=5), 0.5)

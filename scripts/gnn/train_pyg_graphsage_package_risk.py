@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import random
 import sys
@@ -13,13 +14,15 @@ import numpy as np
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
+from scripts.gnn.audit_package_risk_dataset import audit_dataset
+
 
 PYG_MODEL_TYPE = "pyg_graphsage_package_risk"
 MISSING_DEPENDENCY_MESSAGE = (
     "PyTorch and PyTorch Geometric are required for PyG GraphSAGE training. "
     "See docs/graphrag-gnn-environment.md."
 )
-PACKAGE_EDGE_TYPES = ["has_risk_signal", "observed_in"]
+PACKAGE_EDGE_TYPES = ["depends_on", "has_risk_signal", "observed_in"]
 REQUIRED_SPLIT_KEYS = {"train", "val", "test"}
 RISK_KEYWORDS = (
     "postinstall",
@@ -122,15 +125,21 @@ def _package_package_edges(
     index = {node_id: idx for idx, node_id in enumerate(node_ids)}
     shared_targets: dict[tuple[str, str], list[int]] = defaultdict(list)
 
+    direct_edges: set[tuple[int, int]] = set()
     for edge in edges:
         source = str(edge.get("source") or "")
         target = str(edge.get("target") or "")
         edge_type = str(edge.get("type") or "")
         if source not in index or edge_type not in set(PACKAGE_EDGE_TYPES) or not target:
             continue
+        if edge_type == "depends_on":
+            if target in index and index[source] != index[target]:
+                direct_edges.add((index[source], index[target]))
+                direct_edges.add((index[target], index[source]))
+            continue
         shared_targets[(edge_type, target)].append(index[source])
 
-    package_edges: set[tuple[int, int]] = set()
+    package_edges: set[tuple[int, int]] = set(direct_edges)
     for group in shared_targets.values():
         unique_group = sorted(set(group))
         if max_group_size is not None and int(max_group_size) > 0 and len(unique_group) > int(max_group_size):
@@ -141,6 +150,24 @@ def _package_package_edges(
                     package_edges.add((left, right))
 
     return sorted(package_edges)
+
+
+def _filter_edges_by_split(
+    package_edges: list[tuple[int, int]],
+    node_ids: list[str],
+    splits: dict[str, list[str]],
+) -> list[tuple[int, int]]:
+    """只保留同一划分内部的边，防止验证/测试节点通过消息传递泄漏训练信息。"""
+    owner_by_id = {
+        str(node_id): split_name
+        for split_name, split_ids in splits.items()
+        for node_id in split_ids
+    }
+    return [
+        (left, right)
+        for left, right in package_edges
+        if owner_by_id.get(node_ids[left]) == owner_by_id.get(node_ids[right])
+    ]
 
 
 def _validate_hyperparameters(
@@ -312,14 +339,75 @@ def _empty_split_metrics() -> dict[str, float | int | None]:
     }
 
 
-def _split_metrics(torch: Any, logits: Any, labels: Any, mask: Any) -> dict[str, float | int | None]:
+def _positive_probabilities(torch: Any, logits: Any, *, temperature: float = 1.0) -> Any:
+    temperature_value = max(0.05, float(temperature))
+    return torch.softmax(logits / temperature_value, dim=1)[:, 1]
+
+
+def _auc_metrics(labels: list[int], scores: list[float]) -> tuple[float | None, float | None]:
+    if len(set(labels)) < 2:
+        return 0.0, 0.0
+    try:
+        from sklearn.metrics import average_precision_score, roc_auc_score
+
+        return float(roc_auc_score(labels, scores)), float(average_precision_score(labels, scores))
+    except Exception:
+        return None, None
+
+
+def _best_threshold(labels: list[int], scores: list[float]) -> float:
+    if not labels or len(set(labels)) < 2:
+        return 0.5
+    candidates = [index / 100 for index in range(5, 96, 5)]
+    best = (0.0, 0.5, 0.0, 0.0)
+    for threshold in candidates:
+        predictions = [1 if score >= threshold else 0 for score in scores]
+        tp = sum(prediction == label == 1 for prediction, label in zip(predictions, labels))
+        fp = sum(prediction == 1 and label == 0 for prediction, label in zip(predictions, labels))
+        fn = sum(prediction == 0 and label == 1 for prediction, label in zip(predictions, labels))
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        f1 = 2 * precision * recall / max(1e-12, precision + recall)
+        candidate = (f1, threshold, precision, -abs(threshold - 0.5))
+        if (candidate[0], candidate[2], candidate[3]) > (best[0], best[2], best[3]):
+            best = candidate
+    return float(best[1])
+
+
+def _fit_temperature(labels: list[int], scores: list[float]) -> float:
+    """在验证集上做轻量温度搜索，不把测试集用于校准。"""
+    if not labels or len(set(labels)) < 2:
+        return 1.0
+    logits = np.log(np.clip(np.asarray(scores, dtype=np.float64), 1e-6, 1 - 1e-6) / np.clip(1 - np.asarray(scores, dtype=np.float64), 1e-6, 1))
+    targets = np.asarray(labels, dtype=np.float64)
+    best_temperature = 1.0
+    best_loss = float("inf")
+    for temperature in np.linspace(0.25, 4.0, 31):
+        calibrated = 1.0 / (1.0 + np.exp(-np.clip(logits / temperature, -40, 40)))
+        loss = float(-np.mean(targets * np.log(np.clip(calibrated, 1e-6, 1 - 1e-6)) + (1 - targets) * np.log(np.clip(1 - calibrated, 1e-6, 1 - 1e-6))))
+        if loss < best_loss:
+            best_loss = loss
+            best_temperature = float(temperature)
+    return best_temperature
+
+
+def _split_metrics(
+    torch: Any,
+    logits: Any,
+    labels: Any,
+    mask: Any,
+    *,
+    threshold: float = 0.5,
+    temperature: float = 1.0,
+) -> dict[str, float | int | None]:
     sample_count = int(mask.sum().item())
     if sample_count == 0:
         return _empty_split_metrics()
 
     split_logits = logits[mask]
     split_labels = labels[mask]
-    predictions = split_logits.argmax(dim=1)
+    probabilities = _positive_probabilities(torch, split_logits, temperature=temperature)
+    predictions = (probabilities >= float(threshold)).long()
     true_positive = int(((predictions == 1) & (split_labels == 1)).sum().item())
     false_positive = int(((predictions == 1) & (split_labels == 0)).sum().item())
     false_negative = int(((predictions == 0) & (split_labels == 1)).sum().item())
@@ -330,6 +418,9 @@ def _split_metrics(torch: Any, logits: Any, labels: Any, mask: Any) -> dict[str,
     precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
     recall = true_positive / (true_positive + false_negative) if true_positive + false_negative else 0.0
     f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    score_values = [float(value) for value in probabilities.detach().cpu().tolist()]
+    label_values = [int(value) for value in split_labels.detach().cpu().tolist()]
+    roc_auc, pr_auc = _auc_metrics(label_values, score_values)
     return {
         "samples": sample_count,
         "positive_samples": positive_samples,
@@ -338,12 +429,25 @@ def _split_metrics(torch: Any, logits: Any, labels: Any, mask: Any) -> dict[str,
         "precision": float(precision),
         "recall": float(recall),
         "f1": float(f1),
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+        "threshold": float(threshold),
+        "temperature": float(temperature),
+        "confusion_matrix": {
+            "tp": true_positive,
+            "fp": false_positive,
+            "tn": negative_samples - false_positive,
+            "fn": false_negative,
+        },
     }
 
 
-def _feature_scaler(features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    mean = features.mean(axis=0).astype(np.float32)
-    scale = features.std(axis=0).astype(np.float32)
+def _feature_scaler(features: np.ndarray, fit_mask: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    fit_features = features if fit_mask is None else features[np.asarray(fit_mask, dtype=bool)]
+    if len(fit_features) == 0:
+        raise ValueError("feature scaler fit set must not be empty")
+    mean = fit_features.mean(axis=0).astype(np.float32)
+    scale = fit_features.std(axis=0).astype(np.float32)
     scale = np.where(np.abs(scale) < 1e-6, 1.0, scale).astype(np.float32)
     return mean, scale
 
@@ -500,6 +604,12 @@ def _class_weights(torch: Any, labels: Any, train_mask: Any) -> Any:
     return weights
 
 
+def _confidence_weighted_loss(torch: Any, losses: Any, confidences: Any) -> Any:
+    """让人工确认样本比弱标签拥有更高训练权重，同时保留少量弱标签信号。"""
+    weights = confidences.to(dtype=torch.float32).clamp(min=0.05, max=1.0)
+    return (losses * weights).sum() / weights.sum().clamp(min=1e-6)
+
+
 def _build_model(torch: Any, SAGEConv: type[Any], input_dim: int, hidden_dim: int, dropout: float) -> Any:
     class PackageRiskGraphSAGE(torch.nn.Module):
         def __init__(self) -> None:
@@ -539,7 +649,17 @@ def train_pyg_graphsage_package_risk(
     online_loss_weight: float = 0.0,
     device: str = "auto",
     max_edge_group_size: int | None = None,
+    early_stopping_patience: int = 12,
+    min_delta: float = 1e-4,
+    edge_split_policy: str = "inductive",
+    require_audit_pass: bool = False,
 ) -> dict[str, Any]:
+    if int(early_stopping_patience) < 0:
+        raise ValueError("early_stopping_patience must be >= 0")
+    if float(min_delta) < 0:
+        raise ValueError("min_delta must be >= 0")
+    if edge_split_policy not in {"inductive", "transductive"}:
+        raise ValueError("edge_split_policy must be inductive or transductive")
     data_path = Path(data_dir)
     output_path = Path(output_dir)
     training_inputs = _load_training_inputs(
@@ -550,6 +670,11 @@ def train_pyg_graphsage_package_risk(
         dropout=dropout,
         max_edge_group_size=max_edge_group_size,
     )
+    dataset_audit = audit_dataset(data_path)
+    if require_audit_pass and not dataset_audit["ready_for_training"]:
+        raise ValueError(
+            "dataset audit failed: " + "; ".join(str(item) for item in dataset_audit["warnings"])
+        )
     torch, Data, SAGEConv = _load_torch_pyg()
 
     random.seed(random_state)
@@ -564,23 +689,12 @@ def train_pyg_graphsage_package_risk(
     labels = training_inputs["labels"]
     node_ids = training_inputs["node_ids"]
     package_nodes = training_inputs["package_nodes"]
+    label_confidences = np.asarray(
+        [float(node.get("label_confidence") or 0.0) for node in package_nodes],
+        dtype=np.float32,
+    )
     package_edges = training_inputs["package_edges"]
     splits = training_inputs["splits"]
-    feature_mean, feature_scale = _feature_scaler(features)
-    scaled_features = (features - feature_mean) / feature_scale
-
-    x = torch.tensor(scaled_features, dtype=torch.float32, device=selected_device)
-    y = torch.tensor(labels, dtype=torch.long, device=selected_device)
-    if package_edges:
-        edge_index = torch.tensor(package_edges, dtype=torch.long, device=selected_device).t().contiguous()
-    else:
-        edge_index = torch.empty((2, 0), dtype=torch.long, device=selected_device)
-    data = Data(x=x, edge_index=edge_index, y=y)
-    online_data = Data(
-        x=x,
-        edge_index=torch.empty((2, 0), dtype=torch.long, device=selected_device),
-        y=y,
-    )
 
     train_mask = _balanced_training_mask(
         torch,
@@ -593,36 +707,97 @@ def train_pyg_graphsage_package_risk(
     val_mask = _mask_from_split(torch, node_ids, splits["val"]).to(selected_device)
     test_mask = _mask_from_split(torch, node_ids, splits["test"]).to(selected_device)
 
+    train_mask_cpu = train_mask.detach().cpu().numpy().astype(bool)
+    feature_mean, feature_scale = _feature_scaler(features, train_mask_cpu)
+    scaled_features = (features - feature_mean) / feature_scale
+    x = torch.tensor(scaled_features, dtype=torch.float32, device=selected_device)
+    y = torch.tensor(labels, dtype=torch.long, device=selected_device)
+    confidence_tensor = torch.tensor(label_confidences, dtype=torch.float32, device=selected_device)
+    if edge_split_policy == "inductive":
+        package_edges = _filter_edges_by_split(package_edges, node_ids, splits)
+    if package_edges:
+        edge_index = torch.tensor(package_edges, dtype=torch.long, device=selected_device).t().contiguous()
+    else:
+        edge_index = torch.empty((2, 0), dtype=torch.long, device=selected_device)
+    data = Data(x=x, edge_index=edge_index, y=y)
+    online_data = Data(x=x, edge_index=torch.empty((2, 0), dtype=torch.long, device=selected_device), y=y)
+
     model = _build_model(torch, SAGEConv, x.shape[1], int(hidden_dim), float(dropout)).to(selected_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(learning_rate))
-    criterion = torch.nn.CrossEntropyLoss(weight=_class_weights(torch, y, train_mask))
+    criterion = torch.nn.CrossEntropyLoss(weight=_class_weights(torch, y, train_mask), reduction="none")
     online_weight = max(0.0, float(online_loss_weight))
 
     final_loss = 0.0
     trained_epochs = 0
+    best_state: dict[str, Any] | None = None
+    best_val_metric = float("-inf")
+    best_epoch = 0
+    patience_count = 0
     for _ in range(int(epochs)):
         model.train()
         optimizer.zero_grad()
         logits = model(data)
-        loss = criterion(logits[train_mask], data.y[train_mask])
+        loss = _confidence_weighted_loss(
+            torch,
+            criterion(logits[train_mask], data.y[train_mask]),
+            confidence_tensor[train_mask],
+        )
         if online_weight > 0:
             online_logits = model(online_data)
-            online_loss = criterion(online_logits[train_mask], online_data.y[train_mask])
+            online_loss = _confidence_weighted_loss(
+                torch,
+                criterion(online_logits[train_mask], online_data.y[train_mask]),
+                confidence_tensor[train_mask],
+            )
             loss = loss + online_loss * online_weight
         loss.backward()
         optimizer.step()
         final_loss = float(loss.detach().item())
         trained_epochs += 1
 
+        model.eval()
+        with torch.no_grad():
+            validation_logits = model(data)[val_mask]
+            validation_labels = y[val_mask]
+            validation_probabilities = _positive_probabilities(torch, validation_logits)
+        if int(validation_labels.numel()) > 0:
+            val_labels = [int(value) for value in validation_labels.detach().cpu().tolist()]
+            val_scores = [float(value) for value in validation_probabilities.detach().cpu().tolist()]
+            _, val_pr_auc = _auc_metrics(val_labels, val_scores)
+            val_metric = float(val_pr_auc if val_pr_auc is not None and len(set(val_labels)) == 2 else 0.0)
+            if val_metric > best_val_metric + float(min_delta) or best_state is None:
+                best_val_metric = val_metric
+                best_state = copy.deepcopy(model.state_dict())
+                best_epoch = trained_epochs
+                patience_count = 0
+            else:
+                patience_count += 1
+            if int(early_stopping_patience) > 0 and patience_count >= int(early_stopping_patience):
+                break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
     model.eval()
     with torch.no_grad():
         logits = model(data)
         embeddings = model.encode(data.x, data.edge_index, apply_dropout=False).detach().cpu().numpy()
 
+    with torch.no_grad():
+        validation_logits = model(data)[val_mask]
+        validation_labels = y[val_mask]
+    validation_scores = [float(value) for value in _positive_probabilities(torch, validation_logits).detach().cpu().tolist()]
+    validation_labels_list = [int(value) for value in validation_labels.detach().cpu().tolist()]
+    calibration_temperature = _fit_temperature(validation_labels_list, validation_scores)
+    calibrated_validation_scores = [
+        float(1.0 / (1.0 + np.exp(-np.clip(np.log(np.clip(score, 1e-6, 1 - 1e-6) / np.clip(1 - score, 1e-6, 1)) / calibration_temperature, -40, 40))))
+        for score in validation_scores
+    ]
+    decision_threshold = _best_threshold(validation_labels_list, calibrated_validation_scores)
     split_metrics = {
-        "train": _split_metrics(torch, logits, y, train_mask),
-        "val": _split_metrics(torch, logits, y, val_mask),
-        "test": _split_metrics(torch, logits, y, test_mask),
+        "train": _split_metrics(torch, logits, y, train_mask, threshold=decision_threshold, temperature=calibration_temperature),
+        "val": _split_metrics(torch, logits, y, val_mask, threshold=decision_threshold, temperature=calibration_temperature),
+        "test": _split_metrics(torch, logits, y, test_mask, threshold=decision_threshold, temperature=calibration_temperature),
     }
     online_metrics = _online_no_edge_metrics(
         torch,
@@ -657,6 +832,15 @@ def train_pyg_graphsage_package_risk(
         "max_train_positive_ratio": max_train_positive_ratio,
         "online_loss_weight": online_weight,
         "max_edge_group_size": max_edge_group_size,
+        "edge_split_policy": edge_split_policy,
+        "early_stopping_patience": int(early_stopping_patience),
+        "min_delta": float(min_delta),
+        "best_epoch": int(best_epoch or trained_epochs),
+        "decision_threshold": float(decision_threshold),
+        "calibration": {"method": "temperature", "temperature": float(calibration_temperature), "fit_split": "val"},
+        "task": "malicious_package",
+        "dataset_audit": dataset_audit,
+        "label_confidence_weighting": True,
         "feature_mean": [float(value) for value in feature_mean.tolist()],
         "feature_scale": [float(value) for value in feature_scale.tolist()],
         "device": selected_device,
@@ -696,6 +880,16 @@ def train_pyg_graphsage_package_risk(
         "max_train_positive_ratio": max_train_positive_ratio,
         "online_loss_weight": online_weight,
         "max_edge_group_size": max_edge_group_size,
+        "edge_split_policy": edge_split_policy,
+        "early_stopping_patience": int(early_stopping_patience),
+        "min_delta": float(min_delta),
+        "best_epoch": int(best_epoch or trained_epochs),
+        "decision_threshold": float(decision_threshold),
+        "calibration": {"method": "temperature", "temperature": float(calibration_temperature), "fit_split": "val"},
+        "task": "malicious_package",
+        "data_quality_status": "passed" if dataset_audit["ready_for_training"] else "warning",
+        "data_quality_warnings": dataset_audit["warnings"],
+        "label_confidence_weighting": True,
         "device": selected_device,
         "cuda_available": bool(torch.cuda.is_available()),
         "cuda_device_name": cuda_device_name,
@@ -752,6 +946,10 @@ def main() -> int:
     parser.add_argument("--online-loss-weight", type=float, default=0.0)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--max-edge-group-size", type=int, default=None)
+    parser.add_argument("--early-stopping-patience", type=int, default=12)
+    parser.add_argument("--min-delta", type=float, default=1e-4)
+    parser.add_argument("--edge-split-policy", choices=["inductive", "transductive"], default="inductive")
+    parser.add_argument("--require-audit-pass", action="store_true")
     args = parser.parse_args()
 
     metrics = train_pyg_graphsage_package_risk(
@@ -766,6 +964,10 @@ def main() -> int:
         online_loss_weight=args.online_loss_weight,
         device=args.device,
         max_edge_group_size=args.max_edge_group_size,
+        early_stopping_patience=args.early_stopping_patience,
+        min_delta=args.min_delta,
+        edge_split_policy=args.edge_split_policy,
+        require_audit_pass=args.require_audit_pass,
     )
     print(json.dumps(metrics, ensure_ascii=False, sort_keys=True))
     return 0

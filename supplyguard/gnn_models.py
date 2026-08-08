@@ -27,6 +27,9 @@ class PackageRiskModelRegistry:
         self._embedding_index: PackageEmbeddingIndex | None = None
         self._pyg_feature_mean: np.ndarray | None = None
         self._pyg_feature_scale: np.ndarray | None = None
+        self._pyg_temperature = 1.0
+        self._pyg_decision_threshold = 0.5
+        self._pyg_ood_threshold = 6.0
         self._load_model()
 
     def predict(self, feature_values: dict[str, float]) -> dict[str, Any]:
@@ -44,9 +47,15 @@ class PackageRiskModelRegistry:
 
         try:
             inference_mode = "package_features_only"
+            reliability = "limited"
+            ood_distance: float | None = None
             if self._pyg_model is not None:
                 raw_score = self._predict_pyg_score(feature_values)
-                score, calibration_note = self._calibrate_pyg_online_score(raw_score, feature_values)
+                score, calibration_note, ood_distance, is_ood = self._calibrate_pyg_online_score(
+                    raw_score,
+                    feature_values,
+                )
+                reliability = "out_of_distribution" if is_ood else "limited"
             elif self._npz_model is not None:
                 score = self._predict_graphsage_score(feature_values)
                 calibration_note = "当前为单包特征推理，未使用项目实时依赖图"
@@ -57,9 +66,10 @@ class PackageRiskModelRegistry:
             explanations = self._explanations(score, feature_values)
             if calibration_note:
                 explanations.append(calibration_note)
-            raw_confidence = self._confidence(score)
+            raw_confidence = self._confidence(score, self._pyg_decision_threshold)
             # 在线接口目前只提供单包特征，没有运行时依赖图邻居；不把距离分界线的数值冒充成校准后的准确率。
-            confidence = min(raw_confidence, 0.6) if inference_mode == "package_features_only" else raw_confidence
+            confidence_limit = 0.2 if reliability == "out_of_distribution" else 0.6
+            confidence = min(raw_confidence, confidence_limit) if inference_mode == "package_features_only" else raw_confidence
             return {
                 "score": score,
                 "model_available": True,
@@ -67,6 +77,10 @@ class PackageRiskModelRegistry:
                 "confidence": confidence,
                 "raw_confidence": raw_confidence,
                 "inference_mode": inference_mode,
+                "reliability": reliability,
+                "decision_threshold": self._pyg_decision_threshold,
+                "calibration_temperature": self._pyg_temperature,
+                "ood_distance": ood_distance,
                 "explanations": explanations,
                 "model_error": self.load_error,
             }
@@ -203,6 +217,10 @@ class PackageRiskModelRegistry:
             feature_mean = _optional_float_array(metadata.get("feature_mean"), input_dim, default=0.0)
             feature_scale = _optional_float_array(metadata.get("feature_scale"), input_dim, default=1.0)
             feature_scale = np.where(np.abs(feature_scale) < 1e-6, 1.0, feature_scale).astype(np.float32)
+            calibration = metadata.get("calibration") if isinstance(metadata.get("calibration"), dict) else {}
+            temperature = max(0.05, float(calibration.get("temperature") or 1.0))
+            decision_threshold = min(0.99, max(0.01, float(metadata.get("decision_threshold") or 0.5)))
+            ood_threshold = max(1.0, float(metadata.get("ood_distance_threshold") or 6.0))
 
             torch, Data, SAGEConv = self._load_torch_pyg()
             model = self._build_pyg_model(torch, SAGEConv, input_dim, hidden_dim, dropout)
@@ -219,6 +237,9 @@ class PackageRiskModelRegistry:
             self.feature_names = feature_names
             self._pyg_feature_mean = feature_mean
             self._pyg_feature_scale = feature_scale
+            self._pyg_temperature = temperature
+            self._pyg_decision_threshold = decision_threshold
+            self._pyg_ood_threshold = ood_threshold
             self.model_type = model_type
             self.model_available = True
             self.load_error = "; ".join(self._load_errors) or None
@@ -314,18 +335,35 @@ class PackageRiskModelRegistry:
         self._pyg_model.eval()
         with torch.no_grad():
             logits = self._pyg_model(data)
-            probabilities = torch.softmax(logits, dim=1)
+            probabilities = torch.softmax(logits / self._pyg_temperature, dim=1)
         return float(probabilities[0, 1].detach().cpu().item())
 
-    def _calibrate_pyg_online_score(self, score: float, values: dict[str, float]) -> tuple[float, str | None]:
+    def _calibrate_pyg_online_score(
+        self,
+        score: float,
+        values: dict[str, float],
+    ) -> tuple[float, str | None, float | None, bool]:
+        raw_row = np.asarray(
+            [float(values.get(name, 0.0) or 0.0) for name in self.feature_names],
+            dtype=np.float32,
+        )
+        ood_distance: float | None = None
+        is_ood = False
+        if self._pyg_feature_mean is not None and self._pyg_feature_scale is not None:
+            standardized = np.abs((raw_row - self._pyg_feature_mean) / self._pyg_feature_scale)
+            ood_distance = float(np.max(standardized)) if standardized.size else 0.0
+            is_ood = bool(ood_distance > self._pyg_ood_threshold)
+        if is_ood:
+            # 分布外样本收缩到中性区间，避免输出虚假的 0% 或 100%。
+            return 0.5 + (float(score) - 0.5) * 0.2, "输入特征超出训练分布，GNN 已拒绝给出确定结论", ood_distance, True
         evidence_strength = (
             float(values.get("risk_keyword_count", 0.0) or 0.0)
             + float(values.get("alias_count", 0.0) or 0.0)
             + max(0.0, float(values.get("graph_degree", 1.0) or 1.0) - 1.0)
         )
         if score >= 0.75 and evidence_strength <= 0:
-            return 0.6, "online evidence calibration reduced an unsupported high PyG score"
-        return score, None
+            return 0.6, "online evidence calibration reduced an unsupported high PyG score", ood_distance, False
+        return score, None, ood_distance, False
 
     def _embedding_for_features(self, values: dict[str, float]) -> np.ndarray | None:
         if self._pyg_model is None or self._pyg_torch is None or self._pyg_data_cls is None:
@@ -403,7 +441,7 @@ class PackageRiskModelRegistry:
     def _explanations(self, score: float, values: dict[str, float]) -> list[str]:
         explanations = [
             f"{self.model_type} 模型输出恶意包相似度风险分 {score:.2f}",
-            f"判定确定度 {self._confidence(score):.2f}，由风险分距 0.5 分界线计算，不是模型准确率",
+            f"判定确定度 {self._confidence(score, self._pyg_decision_threshold):.2f}，由风险分距验证集阈值 {self._pyg_decision_threshold:.2f} 计算，不是模型准确率",
         ]
         risk_keywords = float(values.get("risk_keyword_count", 0.0) or 0.0)
         if risk_keywords > 0:
@@ -466,8 +504,12 @@ class PackageRiskModelRegistry:
         return max(0.0, min(1.0, float(score)))
 
     @staticmethod
-    def _confidence(score: float) -> float:
-        return max(0.0, min(1.0, abs(float(score) - 0.5) * 2.0))
+    def _confidence(score: float, threshold: float = 0.5) -> float:
+        threshold_value = min(0.99, max(0.01, float(threshold)))
+        score_value = min(1.0, max(0.0, float(score)))
+        distance = abs(score_value - threshold_value)
+        side_width = 1.0 - threshold_value if score_value >= threshold_value else threshold_value
+        return max(0.0, min(1.0, distance / max(side_width, 1e-6)))
 
 
 def _optional_float_array(value: Any, size: int, *, default: float) -> np.ndarray:

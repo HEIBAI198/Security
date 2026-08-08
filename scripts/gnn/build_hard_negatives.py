@@ -53,6 +53,8 @@ def _with_hard_negative_source(record: dict[str, Any]) -> dict[str, Any]:
         evidence_sources.append("hard_negative")
     output["evidence_sources"] = evidence_sources
     output["source"] = "hard_negative_keyword_filter"
+    output["label_source"] = "hard_negative_heuristic_unverified"
+    output["label_confidence"] = 0.2
     return output
 
 

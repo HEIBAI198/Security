@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from scripts.gnn.dataset_utils import (
+    grouped_time_train_val_test_split,
     grouped_train_val_test_split,
     normalize_package_name,
     package_group_key,
@@ -118,6 +119,36 @@ class GNNDatasetUtilsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "train_ratio \\+ val_ratio"):
             grouped_train_val_test_split(nodes, train_ratio=0.8, val_ratio=0.3)
+
+    def test_time_split_keeps_newest_packages_for_test_and_stratifies_labels(self):
+        nodes = []
+        for label, prefix in ((0, "safe"), (1, "evil")):
+            for index in range(5):
+                nodes.append(
+                    {
+                        "id": f"pkg:npm:{prefix}-{index}",
+                        "ecosystem": "npm",
+                        "package": f"{prefix}-{index}",
+                        "label": label,
+                        "published": f"2026-01-0{index + 1}T00:00:00Z",
+                    }
+                )
+
+        splits = grouped_time_train_val_test_split(nodes, train_ratio=0.6, val_ratio=0.2)
+
+        self.assertIsNotNone(splits)
+        assert splits is not None
+        self.assertEqual(set(splits["test"]), {"pkg:npm:safe-4", "pkg:npm:evil-4"})
+        self.assertEqual(len(splits["val"]), 2)
+        self.assertEqual(len(splits["train"]), 6)
+
+    def test_time_split_returns_none_when_timestamps_are_incomplete(self):
+        nodes = [
+            {"id": f"pkg:npm:pkg-{index}", "ecosystem": "npm", "package": f"pkg-{index}", "label": index % 2}
+            for index in range(6)
+        ]
+
+        self.assertIsNone(grouped_time_train_val_test_split(nodes))
 
     def test_jsonl_helpers_create_parent_directories_and_preserve_utf8(self):
         records = [

@@ -3580,6 +3580,9 @@ def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
             "gnn_reliability": gnn_risk.get("gnn_reliability", ""),
             "gnn_evidence_conflict": gnn_risk.get("gnn_evidence_conflict", False),
             "gnn_target": gnn_risk.get("gnn_target", "malicious_package_similarity"),
+            "gnn_decision_threshold": gnn_risk.get("gnn_decision_threshold"),
+            "gnn_calibration_temperature": gnn_risk.get("gnn_calibration_temperature"),
+            "gnn_ood_distance": gnn_risk.get("gnn_ood_distance"),
             "gnn_explanations": gnn_risk.get("gnn_explanations", []),
             "similar_malicious_packages": gnn_risk.get("similar_malicious_packages", []),
         }

@@ -4,6 +4,7 @@ import json
 import random
 import re
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -114,6 +115,65 @@ def grouped_train_val_test_split(
 
     _ensure_requested_splits_have_groups(split_groups, train_ratio, val_ratio)
     return _format_split_groups(split_groups)
+
+
+def grouped_time_train_val_test_split(
+    nodes: list[dict[str, Any]],
+    *,
+    train_ratio: float = 0.7,
+    val_ratio: float = 0.15,
+) -> dict[str, list[str]] | None:
+    """按标签分层并按发布时间切分；时间不完整或类别过少时返回 None。"""
+    _validate_split_ratios(train_ratio, val_ratio)
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for node in nodes:
+        if str(node.get("id") or ""):
+            grouped[package_group_key(node)].append(node)
+
+    rows: list[tuple[int, datetime, str, list[str]]] = []
+    for group_key, group_nodes in grouped.items():
+        timestamps = [
+            parsed
+            for node in group_nodes
+            if (parsed := _parse_timestamp(node.get("published") or node.get("modified") or node.get("created") or node.get("timestamp")))
+        ]
+        if len(timestamps) != len(group_nodes):
+            return None
+        label = max(int(node.get("label") or 0) for node in group_nodes)
+        rows.append((label, min(timestamps), group_key, [str(node["id"]) for node in group_nodes]))
+
+    by_label: dict[int, list[tuple[int, datetime, str, list[str]]]] = defaultdict(list)
+    for row in rows:
+        by_label[row[0]].append(row)
+    if set(by_label) != {0, 1} or any(len(items) < 3 for items in by_label.values()):
+        return None
+
+    result: dict[str, list[str]] = {"train": [], "val": [], "test": []}
+    for label_rows in by_label.values():
+        label_rows.sort(key=lambda item: (item[1], item[2]))
+        count = len(label_rows)
+        train_end = max(1, min(count - 2, int(count * train_ratio)))
+        val_size = max(1, int(count * val_ratio))
+        val_end = min(count - 1, train_end + val_size)
+        for split_name, selected in (
+            ("train", label_rows[:train_end]),
+            ("val", label_rows[train_end:val_end]),
+            ("test", label_rows[val_end:]),
+        ):
+            result[split_name].extend(
+                node_id for _, _, _, node_ids in selected for node_id in node_ids
+            )
+    return {name: sorted(node_ids) for name, node_ids in result.items()}
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _format_split_groups(

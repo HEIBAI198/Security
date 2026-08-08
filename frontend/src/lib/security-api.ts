@@ -199,6 +199,9 @@ export type SecurityDependency = {
   gnn_decision_margin?: number
   gnn_inference_mode?: string
   gnn_reliability?: 'model' | 'limited' | 'fallback' | string
+  gnn_decision_threshold?: number
+  gnn_calibration_temperature?: number
+  gnn_ood_distance?: number
   gnn_evidence_conflict?: boolean
   gnn_target?: string
   gnn_explanations?: string[]

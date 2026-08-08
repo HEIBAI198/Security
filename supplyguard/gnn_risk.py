@@ -101,7 +101,12 @@ class PackageRiskScorer:
             )
             confidence = float(prediction.get("confidence", 0.0) or 0.0)
             inference_mode = str(prediction.get("inference_mode") or "package_features_only")
-            reliability = "limited" if evidence_conflict or inference_mode == "package_features_only" else "model"
+            prediction_reliability = str(prediction.get("reliability") or "")
+            reliability = (
+                prediction_reliability
+                if prediction_reliability == "out_of_distribution"
+                else "limited" if evidence_conflict or inference_mode == "package_features_only" else "model"
+            )
             explanations = list(prediction.get("explanations") or [])
             if evidence_conflict:
                 confidence = min(confidence, 0.25)
@@ -119,6 +124,9 @@ class PackageRiskScorer:
                 explanations=explanations,
                 similar_packages=self.registry.similar_packages(feature_values),
                 model_error=prediction.get("model_error"),
+                decision_threshold=prediction.get("decision_threshold"),
+                calibration_temperature=prediction.get("calibration_temperature"),
+                ood_distance=prediction.get("ood_distance"),
             )
 
         if prediction.get("model_error"):
@@ -268,6 +276,9 @@ class PackageRiskScorer:
         explanations: list[str],
         similar_packages: list[dict[str, Any]],
         model_error: Any = None,
+        decision_threshold: Any = None,
+        calibration_temperature: Any = None,
+        ood_distance: Any = None,
     ) -> dict[str, Any]:
         bounded_score = max(0.0, min(1.0, float(score)))
         result = {
@@ -289,6 +300,12 @@ class PackageRiskScorer:
         }
         if model_error:
             result["model_error"] = str(model_error)
+        if decision_threshold is not None:
+            result["gnn_decision_threshold"] = float(decision_threshold)
+        if calibration_temperature is not None:
+            result["gnn_calibration_temperature"] = float(calibration_temperature)
+        if ood_distance is not None:
+            result["gnn_ood_distance"] = round(float(ood_distance), 4)
         return result
 
 

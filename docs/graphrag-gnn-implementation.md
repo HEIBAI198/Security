@@ -40,11 +40,22 @@
 
 ## 数据流水线命令
 
+### GNN 数据与评估门禁
+
+GNN 当前明确解决的是“恶意包相似度分类”任务，不等同于漏洞是否可达、是否被调用或项目综合风险。正样本和负样本必须分别记录 `label_source`、`label_confidence`；训练节点还应包含 `published`/`modified` 时间和 `dependencies` 依赖列表。
+
+- 正样本应来自可信恶意包情报，例如 OpenSSF malicious-packages。
+- 正常包只能来自独立生态元数据或人工复核，不能把“没有扫描到风险”直接当成高置信安全标签。
+- 本地锁文件提取的包只作为弱负样本，默认标签置信度为 0.2。
+- `depends_on` 边来自 manifest/lockfile 的真实依赖关系；共享风险词仅作为辅助关系。
+
 ```powershell
 D:\Anaconda3\python.exe scripts\gnn\build_weak_negatives.py --root . --output storage\gnn_datasets\weak_negative_packages.jsonl --positive-path storage\gnn_datasets\malicious_packages.jsonl
 Copy-Item storage\gnn_datasets\weak_negative_packages.jsonl storage\gnn_datasets\ecosystem_negative_packages.jsonl
 D:\Anaconda3\python.exe scripts\gnn\build_hard_negatives.py --negative-path storage\gnn_datasets\ecosystem_negative_packages.jsonl --output storage\gnn_datasets\hard_negative_packages.jsonl --limit 5000
 D:\Anaconda3\python.exe scripts\gnn\build_graph_features.py --positive storage\gnn_datasets\malicious_packages.jsonl --negative storage\gnn_datasets\weak_negative_packages.jsonl --negative storage\gnn_datasets\ecosystem_negative_packages.jsonl --negative storage\gnn_datasets\hard_negative_packages.jsonl --output storage\gnn_datasets\features
+
+D:\Anaconda3\python.exe scripts\gnn\audit_package_risk_dataset.py --data storage\gnn_datasets\features --output storage\gnn_datasets\features\dataset_audit.json --fail-on-warning
 ```
 
 ## 模型训练
@@ -69,6 +80,9 @@ conda run -n supplyguard-gnn python -m pip install -r requirements-gnn-pyg.txt
 
 ```powershell
 D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_pyg_graphsage_package_risk.py --data storage\gnn_datasets\features --output storage\graph_models --epochs 80 --hidden-dim 64 --learning-rate 0.01 --dropout 0.3 --random-state 42
+
+# 正式训练开启门禁；审计有警告时不会覆盖旧模型
+D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_pyg_graphsage_package_risk.py --data storage\gnn_datasets\features --output storage\graph_models --epochs 80 --hidden-dim 64 --learning-rate 0.01 --dropout 0.3 --random-state 42 --require-audit-pass --edge-split-policy inductive
 ```
 
 主要输出：
@@ -79,7 +93,7 @@ D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_p
 - `storage\graph_models\package_embedding_index.json`
 - `storage\graph_models\graphsage_eval.json`
 
-当前测试集指标：
+旧模型历史测试集指标（仅用于说明当时的运行结果，不代表本轮改造后的真实性能）：
 
 ```json
 {
@@ -91,7 +105,9 @@ D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_p
 }
 ```
 
-注意：当前负样本仍以项目内弱负样本为主，指标只能说明在当前构造数据和固定 split 上模型能学到区分信号，不能宣称真实世界恶意包检测准确率接近 100%。
+注意：当前负样本仍以项目内弱负样本为主，旧指标只能说明在当时构造数据和固定 split 上模型能学到区分信号，不能宣称真实世界恶意包检测准确率接近 100%。本轮正式训练必须先通过数据审计。
+
+训练器现在只用训练集拟合特征均值/方差，按验证集 PR-AUC 早停，在验证集选择决策阈值并做温度校准；测试集只用于最终报告。元数据会记录 `decision_threshold`、`calibration.temperature`、`edge_split_policy`、`data_quality_warnings` 和 `dataset_audit`。在线输入明显偏离训练分布时会标记 `gnn_reliability=out_of_distribution` 并显示“GNN 暂不判定”。
 
 ## 模型加载与降级
 

@@ -9,7 +9,7 @@ from typing import Any, Iterable
 if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from scripts.gnn.dataset_utils import grouped_train_val_test_split
+from scripts.gnn.dataset_utils import grouped_time_train_val_test_split, grouped_train_val_test_split
 
 
 FEATURE_NAMES = [
@@ -79,6 +79,48 @@ def _package_id(ecosystem: str, package: str) -> str:
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _dependency_values(record: dict[str, Any]) -> list[tuple[str, str]]:
+    """读取不同采集器输出的依赖字段，并统一为生态系统和包名。"""
+    ecosystem = str(record.get("ecosystem") or "").strip().lower()
+    raw_dependencies = (
+        _as_list(record.get("dependencies"))
+        or _as_list(record.get("dependency_names"))
+        or _as_list(record.get("requires"))
+    )
+    dependencies: list[tuple[str, str]] = []
+    for dependency in raw_dependencies:
+        dependency_ecosystem = ecosystem
+        dependency_name = ""
+        if isinstance(dependency, dict):
+            dependency_ecosystem = str(
+                dependency.get("ecosystem") or dependency.get("system") or ecosystem
+            ).strip().lower()
+            dependency_name = str(
+                dependency.get("package")
+                or dependency.get("name")
+                or dependency.get("id")
+                or ""
+            ).strip()
+        else:
+            dependency_name = str(dependency or "").strip()
+        if dependency_name.startswith("pkg:"):
+            body = dependency_name[4:]
+            if ":" in body:
+                dependency_ecosystem, dependency_name = body.split(":", 1)
+            elif "/" in body:
+                dependency_ecosystem, dependency_name = body.split("/", 1)
+        dependency_ecosystem = dependency_ecosystem.lower()
+        dependency_name = dependency_name.strip().lower()
+        version_separator = dependency_name.rfind("@")
+        if version_separator > 0:
+            dependency_name = dependency_name[:version_separator]
+        if dependency_ecosystem in {"npm", "pypi"} and dependency_name:
+            if dependency_ecosystem == "pypi":
+                dependency_name = dependency_name.replace("_", "-").replace(".", "-")
+            dependencies.append((dependency_ecosystem, dependency_name))
+    return sorted(set(dependencies))
 
 
 def _stable_unique(values: Iterable[Any]) -> list[Any]:
@@ -183,6 +225,11 @@ def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "package": package,
         "raw_package": str(record.get("raw_package") or package),
         "label": int(record.get("label") or 0),
+        "label_source": str(record.get("label_source") or record.get("source") or "unknown"),
+        "label_confidence": float(record.get("label_confidence") or 0.0),
+        "published": str(record.get("published") or ""),
+        "modified": str(record.get("modified") or ""),
+        "created": str(record.get("created") or ""),
         "features": _features(record),
     }
 
@@ -226,6 +273,16 @@ def _edges_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
 
+    for dependency_ecosystem, dependency_name in _dependency_values(record):
+        edges.append(
+            {
+                "source": source_id,
+                "target": _package_id(dependency_ecosystem, dependency_name),
+                "type": "depends_on",
+                "weight": 1.0,
+            }
+        )
+
     return edges
 
 
@@ -259,7 +316,15 @@ def _merge_duplicate_record(
             merged[field_name] = value
 
     merged["label"] = 1 if existing_is_positive or incoming_is_positive else 0
-    for field_name in ("evidence_sources", "versions", "affected_versions", "aliases"):
+    for field_name in (
+        "evidence_sources",
+        "versions",
+        "affected_versions",
+        "aliases",
+        "dependencies",
+        "dependency_names",
+        "requires",
+    ):
         values = _unique_field_values(existing, incoming, field_name)
         if values:
             merged[field_name] = values
@@ -303,26 +368,49 @@ def build_graph_features(
             handle.write(json.dumps(edge, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
 
-    schema = {"features": FEATURE_NAMES, "risk_keywords": RISK_KEYWORDS}
+    schema = {
+        "schema_version": 2,
+        "task": "malicious_package",
+        "label_definition": "1=经可信来源确认的恶意或高风险包，0=独立来源确认的正常包",
+        "features": FEATURE_NAMES,
+        "risk_keywords": RISK_KEYWORDS,
+        "edge_types": ["depends_on", "has_risk_signal", "observed_in"],
+    }
     (output_path / "feature_schema.json").write_text(
-        json.dumps(schema, ensure_ascii=False, indent=2),
+        json.dumps(schema, ensure_ascii=True, indent=2),
         encoding="utf-8",
     )
     package_nodes = [node for node in nodes if node.get("type") == "package"]
-    splits = grouped_train_val_test_split(package_nodes)
+    splits = grouped_time_train_val_test_split(package_nodes)
+    split_strategy = "label_stratified_chronological"
+    if splits is None:
+        splits = grouped_train_val_test_split(package_nodes)
+        split_strategy = "normalized_package_group_random"
     (output_path / "splits.json").write_text(
         json.dumps(splits, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     split_counts = {split_name: len(node_ids) for split_name, node_ids in splits.items()}
     negative_sources = [str(path) for path in negative_paths]
+    label_counts = {
+        "positive": sum(1 for node in package_nodes if int(node.get("label") or 0) == 1),
+        "negative": sum(1 for node in package_nodes if int(node.get("label") or 0) == 0),
+    }
+    dependency_edge_count = sum(1 for edge in edges if edge.get("type") == "depends_on")
     dataset_card = {
+        "schema_version": 2,
+        "task": "malicious_package",
+        "label_definition": "1=经可信来源确认的恶意或高风险包，0=独立来源确认的正常包",
         "positive_records": len(positives),
         "negative_records": len(negatives),
+        "label_counts": label_counts,
+        "positive_ratio": round(label_counts["positive"] / max(1, len(package_nodes)), 6),
         "node_count": len(nodes),
         "edge_count": len(edges),
+        "dependency_edge_count": dependency_edge_count,
         "negative_sources": negative_sources,
         "split_counts": split_counts,
+        "split_strategy": split_strategy,
         "created_by": "scripts/gnn/build_graph_features.py",
     }
     (output_path / "dataset_card.json").write_text(

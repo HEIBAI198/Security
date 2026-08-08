@@ -67,6 +67,12 @@ def classification_metrics(labels: list[int], scores: list[float], *, threshold:
         },
     }
 
+    clipped_scores = [min(1.0, max(0.0, score)) for score in score_values]
+    metrics["brier_score"] = float(
+        sum((score - label) ** 2 for score, label in zip(clipped_scores, label_values)) / len(label_values)
+    )
+    metrics["ece"] = expected_calibration_error(label_values, clipped_scores)
+
     if len(set(label_values)) == 2:
         metrics["roc_auc"] = float(roc_auc_score(label_values, score_values))
         metrics["pr_auc"] = float(average_precision_score(label_values, score_values))
@@ -75,6 +81,72 @@ def classification_metrics(labels: list[int], scores: list[float], *, threshold:
         metrics["pr_auc"] = 0.0
 
     return metrics
+
+
+def expected_calibration_error(labels: list[int], scores: list[float], *, bins: int = 10) -> float:
+    """计算等宽分箱 ECE，数值越低表示概率越接近真实命中率。"""
+    label_values, score_values = _validate_inputs(labels, scores)
+    if int(bins) <= 0:
+        raise ValueError("bins must be > 0")
+    total = len(label_values)
+    error = 0.0
+    for index in range(int(bins)):
+        lower = index / float(bins)
+        upper = (index + 1) / float(bins)
+        members = [
+            (label, min(1.0, max(0.0, score)))
+            for label, score in zip(label_values, score_values)
+            if (lower <= score < upper) or (index == bins - 1 and score == upper)
+        ]
+        if not members:
+            continue
+        accuracy = sum(label for label, _ in members) / len(members)
+        confidence = sum(score for _, score in members) / len(members)
+        error += len(members) / total * abs(accuracy - confidence)
+    return float(error)
+
+
+def select_threshold(labels: list[int], scores: list[float]) -> float:
+    """只在验证集上按 F1 选择阈值；类别不足时回退到 0.5。"""
+    label_values, score_values = _validate_inputs(labels, scores)
+    if len(set(label_values)) < 2:
+        return 0.5
+    best = (float("-inf"), 0.5, float("-inf"), float("-inf"))
+    for index in range(5, 96, 5):
+        threshold = index / 100.0
+        candidate = classification_metrics(label_values, score_values, threshold=threshold)
+        rank = (float(candidate["f1"]), threshold, float(candidate["precision"]), -abs(threshold - 0.5))
+        if (rank[0], rank[2], rank[3]) > (best[0], best[2], best[3]):
+            best = rank
+    return float(best[1])
+
+
+def fit_temperature(labels: list[int], scores: list[float]) -> float:
+    """在验证集上网格搜索温度，避免把未经校准的距离当成概率。"""
+    label_values, score_values = _validate_inputs(labels, scores)
+    if len(set(label_values)) < 2:
+        return 1.0
+    import numpy as np
+
+    logits = np.log(np.clip(score_values, 1e-6, 1 - 1e-6) / np.clip(1 - np.asarray(score_values), 1e-6, 1))
+    target = np.asarray(label_values, dtype=float)
+    best_temperature, best_loss = 1.0, float("inf")
+    for temperature in np.linspace(0.25, 4.0, 31):
+        calibrated = 1.0 / (1.0 + np.exp(-np.clip(logits / temperature, -40, 40)))
+        loss = float(-np.mean(target * np.log(np.clip(calibrated, 1e-6, 1 - 1e-6)) + (1 - target) * np.log(np.clip(1 - calibrated, 1e-6, 1 - 1e-6))))
+        if loss < best_loss:
+            best_loss, best_temperature = loss, float(temperature)
+    return best_temperature
+
+
+def apply_temperature(scores: list[float], temperature: float) -> list[float]:
+    import numpy as np
+
+    temperature_value = max(0.05, float(temperature))
+    values = np.asarray(scores, dtype=float)
+    logits = np.log(np.clip(values, 1e-6, 1 - 1e-6) / np.clip(1 - values, 1e-6, 1))
+    calibrated = 1.0 / (1.0 + np.exp(-np.clip(logits / temperature_value, -40, 40)))
+    return [float(value) for value in calibrated.tolist()]
 
 
 def top_k_hit_rate(labels: list[int], scores: list[float], *, k: int = 10) -> float:
@@ -114,17 +186,33 @@ def main() -> int:
     parser.add_argument("--labels-scores-jsonl", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--validation-labels-scores-jsonl", type=Path)
+    parser.add_argument("--auto-calibrate", action="store_true")
     parser.add_argument("--top-k", type=int, default=10)
     args = parser.parse_args()
 
     labels, scores = _read_labels_scores_jsonl(args.labels_scores_jsonl)
+    threshold = float(args.threshold)
+    temperature = 1.0
+    calibration_source = "fixed"
+    if args.auto_calibrate:
+        if args.validation_labels_scores_jsonl is None:
+            raise ValueError("--auto-calibrate 需要 --validation-labels-scores-jsonl")
+        validation_labels, validation_scores = _read_labels_scores_jsonl(args.validation_labels_scores_jsonl)
+        validation_labels, validation_scores = _validate_inputs(validation_labels, validation_scores)
+        temperature = fit_temperature(validation_labels, validation_scores)
+        threshold = select_threshold(validation_labels, apply_temperature(validation_scores, temperature))
+        calibration_source = "validation"
+    calibrated_scores = apply_temperature(scores, temperature)
     precision_at_k = top_k_hit_rate(labels, scores, k=args.top_k)
     summary: dict[str, Any] = {
-        "classification": classification_metrics(labels, scores, threshold=args.threshold),
+        "classification": classification_metrics(labels, calibrated_scores, threshold=threshold),
         "precision_at_k": precision_at_k,
         "top_k_hit_rate": precision_at_k,
         "top_k": int(args.top_k),
-        "threshold": float(args.threshold),
+        "threshold": threshold,
+        "temperature": temperature,
+        "calibration_source": calibration_source,
     }
 
     output_json = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)

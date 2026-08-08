@@ -274,6 +274,20 @@ class PyGGraphSageContractTests(unittest.TestCase):
 
         self.assertEqual(package_edges, [(0, 3), (3, 0)])
 
+    def test_dependency_edges_are_bidirectional_for_message_passing(self):
+        node_ids = ["pkg:npm:app", "pkg:npm:dependency"]
+        edges = [{"source": node_ids[0], "target": node_ids[1], "type": "depends_on"}]
+
+        self.assertEqual(trainer._package_package_edges(node_ids, edges), [(0, 1), (1, 0)])
+
+    def test_feature_scaler_only_uses_training_rows(self):
+        features = np.asarray([[0.0], [2.0], [1000.0]], dtype=np.float32)
+
+        mean, scale = trainer._feature_scaler(features, np.asarray([True, True, False]))
+
+        self.assertEqual(float(mean[0]), 1.0)
+        self.assertEqual(float(scale[0]), 1.0)
+
     @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("torch_geometric"), "torch/PyG not installed")
     def test_training_writes_online_no_edge_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -320,6 +334,15 @@ class PyGGraphSageContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, f"^{re.escape(trainer.MISSING_DEPENDENCY_MESSAGE)}$"):
                     train_pyg_graphsage_package_risk(data, root / "model")
 
+    def test_strict_audit_rejects_untrusted_tiny_dataset_before_dependency_load(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = self._write_tiny_dataset(root)
+            with mock.patch.object(trainer, "_load_torch_pyg") as load_torch_pyg:
+                with self.assertRaisesRegex(ValueError, "dataset audit failed"):
+                    train_pyg_graphsage_package_risk(data, root / "model", require_audit_pass=True)
+            load_torch_pyg.assert_not_called()
+
     @unittest.skipUnless(importlib.util.find_spec("torch") and importlib.util.find_spec("torch_geometric"), "torch/PyG not installed")
     def test_trains_tiny_graph_and_writes_artifacts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -342,10 +365,13 @@ class PyGGraphSageContractTests(unittest.TestCase):
 
             self.assertEqual(metadata["input_dim"], 4)
             self.assertEqual(metadata["label_mapping"], {"benign": 0, "malicious": 1})
-            self.assertEqual(metadata["edge_construction"]["edge_types"], ["has_risk_signal", "observed_in"])
+            self.assertEqual(metadata["edge_construction"]["edge_types"], ["depends_on", "has_risk_signal", "observed_in"])
             self.assertEqual(metadata["split_counts"], {"train": 2, "val": 1, "test": 1})
             self.assertEqual(metadata["trained_epochs"], 3)
             self.assertEqual(metadata["training_status"], "trained")
+            self.assertEqual(metadata["task"], "malicious_package")
+            self.assertIn("decision_threshold", metadata)
+            self.assertEqual(metadata["calibration"]["fit_split"], "val")
             self.assertEqual(embeddings.shape[0], len(embedding_index))
             self.assertEqual(len(embedding_index), metadata["node_count"])
 
