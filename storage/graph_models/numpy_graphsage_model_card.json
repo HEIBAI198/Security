@@ -1,5 +1,5 @@
 {
-  "artifact_id": "numpy_graphsage_mean_aggregator:67fd7e160a06:2026-08-08T134448.167418+0000",
+  "artifact_id": "numpy_graphsage_mean_aggregator:1a14bfdecb3f:2026-08-08T162811.482563+0000",
   "calibration": {
     "fit_split": "training",
     "method": "temperature",
@@ -9,10 +9,22 @@
   "dataset_audit": {
     "dependency_edge_count": 1311,
     "edge_counts": {
+      "declares_dependency": 1248,
       "depends_on": 1311,
-      "has_risk_signal": 3491,
+      "has_risk_signal": 3497,
       "in_ecosystem": 2624,
-      "observed_in": 624
+      "maintained_by": 1498,
+      "observed_in": 1872,
+      "runs_install_script": 4,
+      "sourced_from": 622
+    },
+    "hard_negative_count": 18,
+    "heterogeneous_relation_coverage": {
+      "declares_dependency": 1248,
+      "has_risk_signal": 3497,
+      "maintained_by": 1498,
+      "runs_install_script": 4,
+      "sourced_from": 622
     },
     "label_counts": {
       "negative": 624,
@@ -23,10 +35,21 @@
       "npm_registry_explicit_curated_review": 624
     },
     "low_confidence_label_count": 0,
+    "node_type_counts": {
+      "dependency_package": 327,
+      "ecosystem": 1,
+      "evidence_source": 1,
+      "install_script": 4,
+      "maintainer": 540,
+      "package": 2624,
+      "project": 2,
+      "repository": 371,
+      "risk_signal": 11
+    },
     "positive_ratio": 0.762195,
     "ready_for_training": true,
     "samples": 2624,
-    "schema_version": 2,
+    "schema_version": 3,
     "split_overlap_groups": [],
     "split_overlap_ids": [],
     "split_stats": {
@@ -50,11 +73,12 @@
       }
     },
     "task": "malicious_package",
+    "trusted_hard_negative_count": 18,
     "trusted_negative_count": 624,
     "warnings": []
   },
-  "dataset_hash": "67fd7e160a06e4780c5452f5d87a36f46b8e0dad054213f68265629f5d505730",
-  "dataset_version": "67fd7e160a06",
+  "dataset_hash": "1a14bfdecb3f56ef71538ed8b9f0f0152e1fd1278d87a951949ad54f903b8097",
+  "dataset_version": "1a14bfdecb3f",
   "decision_threshold": 0.5,
   "description": "Two-layer NumPy neural network over package features concatenated with mean neighbor features.",
   "edge_split_policy": "transductive",
@@ -70,7 +94,7 @@
   "positive_samples": 2000,
   "schema_version": 3,
   "task": "malicious_package",
-  "trained_at": "2026-08-08T13:44:48.167418+00:00",
+  "trained_at": "2026-08-08T16:28:11.482563+00:00",
   "training_samples": 2624,
   "training_status": "trained"
 }

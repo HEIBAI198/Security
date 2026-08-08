@@ -23,7 +23,14 @@ MISSING_DEPENDENCY_MESSAGE = (
     "PyTorch and PyTorch Geometric are required for PyG GraphSAGE training. "
     "See docs/graphrag-gnn-environment.md."
 )
-PACKAGE_EDGE_TYPES = ["depends_on", "has_risk_signal", "observed_in"]
+PACKAGE_EDGE_TYPES = [
+    "depends_on",
+    "has_risk_signal",
+    "observed_in",
+    "maintained_by",
+    "sourced_from",
+    "runs_install_script",
+]
 REQUIRED_SPLIT_KEYS = {"train", "val", "test"}
 RISK_KEYWORDS = (
     "postinstall",
@@ -71,7 +78,7 @@ def _package_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     package_nodes: list[dict[str, Any]] = []
     for node in nodes:
         node_id = str(node.get("id") or "")
-        if node_id.startswith("pkg:") and isinstance(node.get("features"), dict):
+        if node.get("type") in {None, "package"} and node_id.startswith("pkg:") and isinstance(node.get("features"), dict):
             package_nodes.append(node)
     return package_nodes
 
@@ -618,7 +625,7 @@ def _class_weights(torch: Any, labels: Any, train_mask: Any) -> Any:
 
 def _confidence_weighted_loss(torch: Any, losses: Any, confidences: Any) -> Any:
     """让人工确认样本比弱标签拥有更高训练权重，同时保留少量弱标签信号。"""
-    weights = confidences.to(dtype=torch.float32).clamp(min=0.05, max=1.0)
+    weights = confidences.to(dtype=torch.float32).clamp(min=0.05, max=2.0)
     return (losses * weights).sum() / weights.sum().clamp(min=1e-6)
 
 
@@ -707,6 +714,10 @@ def train_pyg_graphsage_package_risk(
         [float(node.get("label_confidence") or 0.0) for node in package_nodes],
         dtype=np.float32,
     )
+    hard_negative_weights = np.asarray(
+        [float(node.get("hard_negative_weight") or 1.0) for node in package_nodes],
+        dtype=np.float32,
+    )
     package_edges = training_inputs["package_edges"]
     splits = training_inputs["splits"]
 
@@ -726,7 +737,8 @@ def train_pyg_graphsage_package_risk(
     scaled_features = (features - feature_mean) / feature_scale
     x = torch.tensor(scaled_features, dtype=torch.float32, device=selected_device)
     y = torch.tensor(labels, dtype=torch.long, device=selected_device)
-    confidence_tensor = torch.tensor(label_confidences, dtype=torch.float32, device=selected_device)
+    sample_weights = label_confidences * hard_negative_weights
+    confidence_tensor = torch.tensor(sample_weights, dtype=torch.float32, device=selected_device)
     if edge_split_policy == "inductive":
         package_edges = _filter_edges_by_split(package_edges, node_ids, splits)
     if package_edges:
@@ -855,6 +867,15 @@ def train_pyg_graphsage_package_risk(
         "task": "malicious_package",
         "dataset_audit": dataset_audit,
         "label_confidence_weighting": True,
+        "hard_negative_weighting": True,
+        "hard_negative_count": int(sum(bool(node.get("hard_negative")) for node in package_nodes)),
+        "trusted_hard_negative_count": int(
+            sum(
+                bool(node.get("hard_negative"))
+                and str(node.get("hard_negative_verification") or "") == "trusted_normal_source"
+                for node in package_nodes
+            )
+        ),
         "feature_mean": [float(value) for value in feature_mean.tolist()],
         "feature_scale": [float(value) for value in feature_scale.tolist()],
         "device": selected_device,
@@ -887,7 +908,7 @@ def train_pyg_graphsage_package_risk(
         "feature_scale": [float(value) for value in feature_scale.tolist()],
         "label_mapping": {"benign": 0, "malicious": 1},
         "edge_construction": {
-            "method": "package-package edges by shared targets",
+            "method": "relation-aware package projection from heterogeneous entity graph",
             "edge_types": PACKAGE_EDGE_TYPES,
             "max_group_size": max_edge_group_size,
         },
@@ -911,6 +932,15 @@ def train_pyg_graphsage_package_risk(
         "calibration": {"method": "temperature", "temperature": float(calibration_temperature), "fit_split": "val"},
         "data_quality_warnings": dataset_audit["warnings"],
         "label_confidence_weighting": True,
+        "hard_negative_weighting": True,
+        "hard_negative_count": int(sum(bool(node.get("hard_negative")) for node in package_nodes)),
+        "trusted_hard_negative_count": int(
+            sum(
+                bool(node.get("hard_negative"))
+                and str(node.get("hard_negative_verification") or "") == "trusted_normal_source"
+                for node in package_nodes
+            )
+        ),
         "device": selected_device,
         "cuda_available": bool(torch.cuda.is_available()),
         "cuda_device_name": cuda_device_name,

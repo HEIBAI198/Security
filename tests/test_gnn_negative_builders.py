@@ -252,6 +252,37 @@ class NegativeBuilderTests(unittest.TestCase):
             self.assertEqual(rows[0]["source"], "hard_negative_keyword_filter")
             self.assertEqual(rows[0]["evidence_sources"], ["hard_negative"])
 
+    def test_preserves_trusted_normal_provenance_and_adds_training_weight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            negatives = root / "negatives.jsonl"
+            output = root / "hard.jsonl"
+            negatives.write_text(
+                json.dumps(
+                    {
+                        "ecosystem": "npm",
+                        "package": "safe-installer",
+                        "description": "Downloads a platform binary during install",
+                        "label": 0,
+                        "label_source": "npm_registry_explicit_curated_review",
+                        "label_confidence": 0.85,
+                        "install_scripts": {"postinstall": "node install.js"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = build_hard_negatives(negatives, output)
+            row = json.loads(output.read_text(encoding="utf-8").strip())
+
+            self.assertEqual(summary["trusted_written"], 1)
+            self.assertEqual(row["label_source"], "npm_registry_explicit_curated_review")
+            self.assertEqual(row["label_confidence"], 0.85)
+            self.assertEqual(row["hard_negative_verification"], "trusted_normal_source")
+            self.assertEqual(row["hard_negative_weight"], 1.5)
+            self.assertIn("keyword:postinstall", row["hard_negative_reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()

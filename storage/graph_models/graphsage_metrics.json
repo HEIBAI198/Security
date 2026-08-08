@@ -1,14 +1,14 @@
 {
-  "accuracy": 0.926829268292683,
+  "accuracy": 0.9329268292682927,
   "epochs": 80,
   "evaluation": "holdout",
-  "f1": 0.9495798319327731,
+  "f1": 0.9539748953974896,
   "hidden_dim": 64,
   "model_type": "numpy_graphsage_mean_aggregator",
   "negative_samples": 624,
   "positive_samples": 2000,
   "precision": 1.0,
-  "recall": 0.904,
+  "recall": 0.912,
   "roc_auc": 1.0,
   "samples": 2624
 }

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -75,6 +77,12 @@ def _read_many_jsonl(paths: Iterable[str | Path]) -> list[dict[str, Any]]:
 
 def _package_id(ecosystem: str, package: str) -> str:
     return f"pkg:{ecosystem}:{package}"
+
+
+def _entity_id(entity_type: str, value: Any) -> str:
+    serialized = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+    digest = hashlib.sha256(serialized.casefold().encode("utf-8")).hexdigest()[:16]
+    return f"{entity_type}:{digest}"
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -178,6 +186,22 @@ def _risk_signals(text: str) -> list[str]:
     return sorted({keyword for keyword in RISK_KEYWORDS if keyword in lowered})
 
 
+def _record_text(record: dict[str, Any]) -> str:
+    values = [
+        record.get("text"),
+        record.get("description"),
+        record.get("keywords"),
+        record.get("install_scripts"),
+        record.get("scripts"),
+    ]
+    return " ".join(
+        json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if isinstance(value, (dict, list))
+        else str(value or "")
+        for value in values
+    )
+
+
 def _source_signal(source: str) -> str | None:
     normalized = source.replace("\\", "/").lower()
     if "requirements" in normalized:
@@ -195,7 +219,7 @@ def _features(record: dict[str, Any]) -> dict[str, float]:
     versions = _as_list(record.get("affected_versions")) or _as_list(record.get("versions"))
     aliases = _as_list(record.get("aliases"))
     evidence_sources = _as_list(record.get("evidence_sources"))
-    text = str(record.get("text") or " ".join(str(item) for item in evidence_sources))
+    text = _record_text(record) or " ".join(str(item) for item in evidence_sources)
     signals = _risk_signals(text)
 
     return {
@@ -227,6 +251,8 @@ def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "label": int(record.get("label") or 0),
         "label_source": str(record.get("label_source") or record.get("source") or "unknown"),
         "label_confidence": float(record.get("label_confidence") or 0.0),
+        "hard_negative": bool(record.get("hard_negative")),
+        "hard_negative_weight": float(record.get("hard_negative_weight") or 1.0),
         "published": str(record.get("published") or ""),
         "modified": str(record.get("modified") or ""),
         "created": str(record.get("created") or ""),
@@ -246,6 +272,8 @@ def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "install_scripts",
         "scripts",
         "metadata_source",
+        "hard_negative_reasons",
+        "hard_negative_verification",
     ):
         value = record.get(field_name)
         if not _is_missing_value(value):
@@ -269,7 +297,7 @@ def _edges_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
         }
     ]
 
-    text = str(record.get("text") or "")
+    text = _record_text(record)
     for signal in _risk_signals(text):
         edges.append(
             {
@@ -303,6 +331,97 @@ def _edges_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
         )
 
     return edges
+
+
+def _repository_value(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("url") or value.get("web") or value.get("type") or "").strip()
+    if isinstance(value, list):
+        for item in value:
+            candidate = _repository_value(item)
+            if candidate:
+                return candidate
+        return ""
+    return str(value or "").strip()
+
+
+def _maintainer_values(value: Any) -> list[dict[str, str]]:
+    maintainers: list[dict[str, str]] = []
+    for item in _as_list(value):
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("username") or "").strip()
+            email = str(item.get("email") or "").strip()
+        else:
+            name, email = str(item or "").strip(), ""
+        if name or email:
+            maintainers.append({"name": name, "email": email})
+    return maintainers
+
+
+def _install_script_values(record: dict[str, Any]) -> list[tuple[str, str]]:
+    scripts = record.get("install_scripts") or record.get("scripts") or {}
+    if isinstance(scripts, list):
+        merged: dict[str, str] = {}
+        for item in scripts:
+            if isinstance(item, dict):
+                merged.update({str(key): str(value) for key, value in item.items()})
+        scripts = merged
+    if not isinstance(scripts, dict):
+        return []
+    return sorted(
+        (str(name), str(command))
+        for name, command in scripts.items()
+        if str(name) in {"preinstall", "install", "postinstall"} and str(command).strip()
+    )
+
+
+def _entity_nodes_and_edges(record: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    ecosystem = str(record.get("ecosystem") or "").lower()
+    package = str(record.get("package") or "").lower()
+    if ecosystem not in {"npm", "pypi"} or not package:
+        return [], []
+    package_id = _package_id(ecosystem, package)
+    nodes: list[dict[str, Any]] = [
+        {"id": f"ecosystem:{ecosystem}", "type": "ecosystem", "name": ecosystem}
+    ]
+    edges: list[dict[str, Any]] = []
+
+    for signal in _risk_signals(_record_text(record)):
+        signal_id = f"signal:{signal}"
+        nodes.append({"id": signal_id, "type": "risk_signal", "name": signal})
+
+    for evidence_source in _as_list(record.get("evidence_sources")):
+        source_text = str(evidence_source or "").strip()
+        source_kind = _source_signal(source_text)
+        if not source_text or source_kind is None:
+            continue
+        nodes.append({"id": f"source:{source_kind}", "type": "evidence_source", "name": source_kind})
+        project_id = _entity_id("project", source_text)
+        nodes.append({"id": project_id, "type": "project", "path": source_text, "source_kind": source_kind})
+        edges.extend(
+            [
+                {"source": package_id, "target": project_id, "type": "observed_in", "weight": 0.75},
+                {"source": project_id, "target": package_id, "type": "declares_dependency", "weight": 1.0},
+            ]
+        )
+
+    for maintainer in _maintainer_values(record.get("maintainers")):
+        maintainer_id = _entity_id("maintainer", maintainer)
+        nodes.append({"id": maintainer_id, "type": "maintainer", **maintainer})
+        edges.append({"source": package_id, "target": maintainer_id, "type": "maintained_by", "weight": 0.75})
+
+    repository = _repository_value(record.get("repository"))
+    if repository:
+        repository_id = _entity_id("repository", repository)
+        nodes.append({"id": repository_id, "type": "repository", "url": repository})
+        edges.append({"source": package_id, "target": repository_id, "type": "sourced_from", "weight": 0.75})
+
+    for script_name, command in _install_script_values(record):
+        script_id = _entity_id("install_script", {"package": package_id, "name": script_name, "command": command})
+        nodes.append({"id": script_id, "type": "install_script", "name": script_name, "command": command})
+        edges.append({"source": package_id, "target": script_id, "type": "runs_install_script", "weight": 1.0})
+
+    return nodes, edges
 
 
 def _merge_records(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -371,16 +490,39 @@ def build_graph_features(
     negatives = _read_many_jsonl(negative_paths)
     records = _merge_records([*positives, *negatives])
 
-    nodes = [node for record in records if (node := _node_from_record(record))]
+    package_nodes = [node for record in records if (node := _node_from_record(record))]
+    package_ids = {str(node["id"]) for node in package_nodes}
+    entity_nodes: dict[str, dict[str, Any]] = {}
     edges: list[dict[str, Any]] = []
     seen_edges: set[tuple[str, str, str]] = set()
     for record in records:
-        for edge in _edges_from_record(record):
+        record_entity_nodes, record_entity_edges = _entity_nodes_and_edges(record)
+        for entity_node in record_entity_nodes:
+            entity_nodes.setdefault(str(entity_node["id"]), entity_node)
+        for edge in [*_edges_from_record(record), *record_entity_edges]:
             key = (edge["source"], edge["target"], edge["type"])
             if key in seen_edges:
                 continue
             seen_edges.add(key)
             edges.append(edge)
+
+    for edge in edges:
+        if edge.get("type") != "depends_on":
+            continue
+        target = str(edge.get("target") or "")
+        if target and target not in package_ids:
+            _, ecosystem, package = target.split(":", 2)
+            entity_nodes.setdefault(
+                target,
+                {
+                    "id": target,
+                    "type": "dependency_package",
+                    "ecosystem": ecosystem,
+                    "package": package,
+                },
+            )
+
+    nodes = [*package_nodes, *entity_nodes.values()]
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -394,18 +536,38 @@ def build_graph_features(
             handle.write("\n")
 
     schema = {
-        "schema_version": 2,
+        "schema_version": 3,
         "task": "malicious_package",
         "label_definition": "1=经可信来源确认的恶意或高风险包，0=独立来源确认的正常包",
         "features": FEATURE_NAMES,
         "risk_keywords": RISK_KEYWORDS,
-        "edge_types": ["depends_on", "has_risk_signal", "observed_in"],
+        "node_types": [
+            "package",
+            "dependency_package",
+            "project",
+            "maintainer",
+            "repository",
+            "install_script",
+            "risk_signal",
+            "evidence_source",
+            "ecosystem",
+        ],
+        "edge_types": [
+            "depends_on",
+            "in_ecosystem",
+            "has_risk_signal",
+            "observed_in",
+            "declares_dependency",
+            "maintained_by",
+            "sourced_from",
+            "runs_install_script",
+        ],
+        "training_projection": "relation-aware package projection",
     }
     (output_path / "feature_schema.json").write_text(
         json.dumps(schema, ensure_ascii=True, indent=2),
         encoding="utf-8",
     )
-    package_nodes = [node for node in nodes if node.get("type") == "package"]
     splits = grouped_time_train_val_test_split(package_nodes)
     split_strategy = "label_stratified_chronological"
     if splits is None:
@@ -423,16 +585,26 @@ def build_graph_features(
     }
     dependency_edge_count = sum(1 for edge in edges if edge.get("type") == "depends_on")
     dataset_card = {
-        "schema_version": 2,
+        "schema_version": 3,
         "task": "malicious_package",
         "label_definition": "1=经可信来源确认的恶意或高风险包，0=独立来源确认的正常包",
         "positive_records": len(positives),
         "negative_records": len(negatives),
         "label_counts": label_counts,
         "positive_ratio": round(label_counts["positive"] / max(1, len(package_nodes)), 6),
-        "node_count": len(nodes),
+        "node_count": len(package_nodes),
+        "total_node_count": len(nodes),
+        "package_node_count": len(package_nodes),
+        "node_type_counts": dict(Counter(str(node.get("type") or "unknown") for node in nodes)),
         "edge_count": len(edges),
+        "edge_type_counts": dict(Counter(str(edge.get("type") or "unknown") for edge in edges)),
         "dependency_edge_count": dependency_edge_count,
+        "hard_negative_count": sum(bool(node.get("hard_negative")) for node in package_nodes),
+        "trusted_hard_negative_count": sum(
+            bool(node.get("hard_negative"))
+            and float(node.get("label_confidence") or 0.0) >= 0.7
+            for node in package_nodes
+        ),
         "negative_sources": negative_sources,
         "split_counts": split_counts,
         "split_strategy": split_strategy,
@@ -445,10 +617,13 @@ def build_graph_features(
     stats = {
         "positive_records": len(positives),
         "negative_records": len(negatives),
-        "package_nodes": len(nodes),
+        "package_nodes": len(package_nodes),
         "edges": len(edges),
-        "node_count": len(nodes),
+        "node_count": len(package_nodes),
+        "total_node_count": len(nodes),
+        "node_type_counts": dict(Counter(str(node.get("type") or "unknown") for node in nodes)),
         "edge_count": len(edges),
+        "edge_type_counts": dict(Counter(str(edge.get("type") or "unknown") for edge in edges)),
         "negative_sources": negative_sources,
         "split_counts": split_counts,
     }

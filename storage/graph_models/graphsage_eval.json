@@ -10,10 +10,22 @@
   "dataset_audit": {
     "dependency_edge_count": 1311,
     "edge_counts": {
+      "declares_dependency": 1248,
       "depends_on": 1311,
-      "has_risk_signal": 3491,
+      "has_risk_signal": 3497,
       "in_ecosystem": 2624,
-      "observed_in": 624
+      "maintained_by": 1498,
+      "observed_in": 1872,
+      "runs_install_script": 4,
+      "sourced_from": 622
+    },
+    "hard_negative_count": 18,
+    "heterogeneous_relation_coverage": {
+      "declares_dependency": 1248,
+      "has_risk_signal": 3497,
+      "maintained_by": 1498,
+      "runs_install_script": 4,
+      "sourced_from": 622
     },
     "label_counts": {
       "negative": 624,
@@ -24,10 +36,21 @@
       "npm_registry_explicit_curated_review": 624
     },
     "low_confidence_label_count": 0,
+    "node_type_counts": {
+      "dependency_package": 327,
+      "ecosystem": 1,
+      "evidence_source": 1,
+      "install_script": 4,
+      "maintainer": 540,
+      "package": 2624,
+      "project": 2,
+      "repository": 371,
+      "risk_signal": 11
+    },
     "positive_ratio": 0.762195,
     "ready_for_training": true,
     "samples": 2624,
-    "schema_version": 2,
+    "schema_version": 3,
     "split_overlap_groups": [],
     "split_overlap_ids": [],
     "split_stats": {
@@ -51,6 +74,7 @@
       }
     },
     "task": "malicious_package",
+    "trusted_hard_negative_count": 18,
     "trusted_negative_count": 624,
     "warnings": []
   },
@@ -58,7 +82,7 @@
   "device": "cuda",
   "dropout": 0.3,
   "early_stopping_patience": 12,
-  "edge_count": 698076,
+  "edge_count": 700298,
   "edge_split_policy": "inductive",
   "epochs": 80,
   "feature_mean": [
@@ -70,9 +94,9 @@
     0.5179738402366638,
     4.4466233253479,
     0.30119824409484863,
-    0.7124183177947998,
-    0.5245097875595093,
-    401.9667663574219
+    0.7194989323616028,
+    0.5266884565353394,
+    407.7178649902344
   ],
   "feature_scale": [
     1.0,
@@ -83,11 +107,13 @@
     0.4996814727783203,
     7.595544815063477,
     0.48643994331359863,
-    1.2766016721725464,
-    0.7879470586776733,
-    350.0639953613281
+    1.291954517364502,
+    0.7878661751747131,
+    350.434326171875
   ],
-  "final_loss": 0.0013722580624744296,
+  "final_loss": 0.0020930333994328976,
+  "hard_negative_count": 18,
+  "hard_negative_weighting": true,
   "hidden_dim": 64,
   "label_confidence_weighting": true,
   "learning_rate": 0.01,
@@ -96,19 +122,33 @@
   "min_delta": 0.0001,
   "model_type": "pyg_graphsage_package_risk",
   "negative_samples": 624,
+  "numpy_fallback": {
+    "accuracy": 0.9329268292682927,
+    "epochs": 80,
+    "evaluation": "holdout",
+    "f1": 0.9539748953974896,
+    "hidden_dim": 64,
+    "model_type": "numpy_graphsage_mean_aggregator",
+    "negative_samples": 624,
+    "positive_samples": 2000,
+    "precision": 1.0,
+    "recall": 0.912,
+    "roc_auc": 1.0,
+    "samples": 2624
+  },
   "online_loss_weight": 0.0,
   "online_no_edge": {
     "benign_high_score_rate": 0.0,
-    "benign_mean_score": 0.4513097107410431,
+    "benign_mean_score": 0.446408212184906,
     "malicious_high_score_rate": 0.0,
-    "malicious_mean_score": 0.5285964608192444,
+    "malicious_mean_score": 0.5257387757301331,
     "sanity_cases": {
-      "flask": 0.448647,
-      "left-pad": 0.456319,
-      "numpy": 0.448671,
-      "react": 0.451299,
-      "requests": 0.449111,
-      "x-trader-codec": 0.457973
+      "flask": 0.445368,
+      "left-pad": 0.454585,
+      "numpy": 0.445393,
+      "react": 0.448207,
+      "requests": 0.445838,
+      "x-trader-codec": 0.456269
     }
   },
   "positive_samples": 2000,
@@ -117,63 +157,63 @@
   "splits": {
     "test": {
       "accuracy": 1.0,
-      "brier": 0.04851172615864312,
+      "brier": 0.059388862444171124,
       "confusion_matrix": {
         "fn": 0,
         "fp": 0,
         "tn": 95,
         "tp": 300
       },
-      "ece": 0.18726119494324997,
+      "ece": 0.20813399284630074,
       "f1": 1.0,
       "negative_samples": 95,
       "positive_samples": 300,
       "pr_auc": 1.0,
       "precision": 1.0,
       "recall": 1.0,
-      "roc_auc": 0.9999999999999999,
+      "roc_auc": 1.0,
       "samples": 395,
       "temperature": 0.25,
       "threshold": 0.4
     },
     "train": {
-      "accuracy": 0.9629629629629629,
-      "brier": 0.1330467340650622,
+      "accuracy": 0.9575163398692811,
+      "brier": 0.13955901729179343,
       "confusion_matrix": {
-        "fn": 68,
+        "fn": 78,
         "fp": 0,
         "tn": 436,
-        "tp": 1332
+        "tp": 1322
       },
-      "ece": 0.3045089889415651,
-      "f1": 0.9751098096632503,
+      "ece": 0.31093627162945253,
+      "f1": 0.9713445995591476,
       "negative_samples": 436,
       "positive_samples": 1400,
-      "pr_auc": 1.0,
+      "pr_auc": 0.9999989810474832,
       "precision": 1.0,
-      "recall": 0.9514285714285714,
-      "roc_auc": 1.0,
+      "recall": 0.9442857142857143,
+      "roc_auc": 0.9999967234600262,
       "samples": 1836,
       "temperature": 0.25,
       "threshold": 0.4
     },
     "val": {
       "accuracy": 1.0,
-      "brier": 0.11623851277642037,
+      "brier": 0.13300465102923206,
       "confusion_matrix": {
         "fn": 0,
         "fp": 0,
         "tn": 93,
         "tp": 300
       },
-      "ece": 0.2848377018454828,
+      "ece": 0.3051679187404518,
       "f1": 1.0,
       "negative_samples": 93,
       "positive_samples": 300,
       "pr_auc": 1.0,
       "precision": 1.0,
       "recall": 1.0,
-      "roc_auc": 1.0,
+      "roc_auc": 0.9999999999999999,
       "samples": 393,
       "temperature": 0.25,
       "threshold": 0.4
@@ -183,5 +223,6 @@
   "torch_cuda_version": "12.8",
   "torch_version": "2.7.0+cu128",
   "trained_epochs": 13,
-  "training_status": "trained"
+  "training_status": "trained",
+  "trusted_hard_negative_count": 18
 }

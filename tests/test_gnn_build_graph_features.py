@@ -213,8 +213,18 @@ class GraphFeatureBuilderTests(unittest.TestCase):
             self.assertEqual(app["install_scripts"], {"postinstall": "node install.js"})
             self.assertIn(("pkg:npm:app", "pkg:npm:@scope/core", "depends_on"), edge_keys)
             self.assertIn(("pkg:npm:app", "pkg:npm:left-pad", "depends_on"), edge_keys)
+            node_types = {node["type"] for node in nodes}
+            self.assertIn("dependency_package", node_types)
+            self.assertIn("maintainer", node_types)
+            self.assertIn("repository", node_types)
+            self.assertIn("install_script", node_types)
+            self.assertTrue(any(edge["type"] == "maintained_by" for edge in edges))
+            self.assertTrue(any(edge["type"] == "sourced_from" for edge in edges))
+            self.assertTrue(any(edge["type"] == "runs_install_script" for edge in edges))
             schema = json.loads((output / "feature_schema.json").read_text(encoding="utf-8"))
             self.assertIn("depends_on", schema["edge_types"])
+            self.assertEqual(schema["schema_version"], 3)
+            self.assertEqual(schema["training_projection"], "relation-aware package projection")
 
     def test_missing_positive_path_raises_file_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:

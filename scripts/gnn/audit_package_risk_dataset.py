@@ -48,7 +48,12 @@ def audit_dataset(
     edges_path = data_path / "train_edges.jsonl"
     edges = _read_jsonl(edges_path) if edges_path.exists() else []
 
-    package_nodes = [node for node in nodes if str(node.get("id") or "").startswith("pkg:")]
+    package_nodes = [
+        node
+        for node in nodes
+        if node.get("type") in {None, "package"}
+        and str(node.get("id") or "").startswith("pkg:")
+    ]
     labels = [int(node.get("label") or 0) for node in package_nodes]
     label_counts = Counter(labels)
     ids = [str(node.get("id") or "") for node in package_nodes]
@@ -136,6 +141,23 @@ def audit_dataset(
     if not dependency_edges:
         warnings.append("没有 depends_on 真实依赖边，图模型只能学习共享信号关系")
 
+    node_type_counts = Counter(str(node.get("type") or "unknown") for node in nodes)
+    edge_type_counts = Counter(str(edge.get("type") or "unknown") for edge in edges)
+    hard_negative_nodes = [node for node in package_nodes if bool(node.get("hard_negative"))]
+    trusted_hard_negative_nodes = [
+        node
+        for node in hard_negative_nodes
+        if float(node.get("label_confidence") or 0.0) >= float(min_label_confidence)
+        and str(node.get("hard_negative_verification") or "") == "trusted_normal_source"
+    ]
+    heterogeneous_relations = {
+        "declares_dependency",
+        "maintained_by",
+        "sourced_from",
+        "runs_install_script",
+        "has_risk_signal",
+    }
+
     return {
         "task": str(schema.get("task") or "unknown"),
         "schema_version": schema.get("schema_version"),
@@ -150,7 +172,14 @@ def audit_dataset(
         ),
         "low_confidence_label_count": low_confidence_labels,
         "trusted_negative_count": len(trusted_negative_nodes),
-        "edge_counts": dict(Counter(str(edge.get("type") or "unknown") for edge in edges)),
+        "hard_negative_count": len(hard_negative_nodes),
+        "trusted_hard_negative_count": len(trusted_hard_negative_nodes),
+        "node_type_counts": dict(node_type_counts),
+        "edge_counts": dict(edge_type_counts),
+        "heterogeneous_relation_coverage": {
+            relation: edge_type_counts.get(relation, 0)
+            for relation in sorted(heterogeneous_relations)
+        },
         "dependency_edge_count": len(dependency_edges),
         "warnings": warnings,
         "ready_for_training": not warnings,

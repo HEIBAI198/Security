@@ -41,6 +41,10 @@
 
 真实图使用 manifest/lockfile 构建 `depends_on` 边。同一规范化包名及其版本不得跨 train/val/test，优先按发布时间做时间外推切分。数据审计有警告时不得覆盖运行模型。
 
+难负样本从独立审核正常包的完整元数据中筛选，匹配描述、关键词、仓库和安装脚本等高风险特征。样本保留原始正常包标签来源和置信度，并记录命中原因；可信难负样本使用较高训练权重，未复核候选保持低置信度并不会进入可信概率训练。
+
+图数据采用异构实体清单：监督包节点之外，显式保存项目、下游依赖包、维护者、仓库、安装脚本、风险信号和生态节点，并生成 `depends_on`、`declares_dependency`、`maintained_by`、`sourced_from`、`runs_install_script`、`has_risk_signal` 等关系。GraphSAGE 训练仍使用兼容在线推理的包节点投影，但投影按关系类型隔离共享目标，避免不同证据关系混连。
+
 正式训练使用 PyTorch Geometric GraphSAGE、归纳式边隔离、验证集早停、阈值选择和温度校准。PyG、NumPy fallback、embedding 和元数据必须来自同一数据版本。部署时先归档旧模型，再一次性替换产物并重启 API。
 
 ## 验收标准

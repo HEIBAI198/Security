@@ -5,7 +5,7 @@
     "metrics": "graphsage_eval.json",
     "model": "package_risk_graphsage.pt"
   },
-  "artifact_id": "pyg_graphsage_package_risk:67fd7e160a06:2026-08-08T135336.438493+0000",
+  "artifact_id": "pyg_graphsage_package_risk:1a14bfdecb3f:2026-08-08T162809.889351+0000",
   "best_epoch": 1,
   "calibration": {
     "fit_split": "val",
@@ -19,10 +19,22 @@
   "dataset_audit": {
     "dependency_edge_count": 1311,
     "edge_counts": {
+      "declares_dependency": 1248,
       "depends_on": 1311,
-      "has_risk_signal": 3491,
+      "has_risk_signal": 3497,
       "in_ecosystem": 2624,
-      "observed_in": 624
+      "maintained_by": 1498,
+      "observed_in": 1872,
+      "runs_install_script": 4,
+      "sourced_from": 622
+    },
+    "hard_negative_count": 18,
+    "heterogeneous_relation_coverage": {
+      "declares_dependency": 1248,
+      "has_risk_signal": 3497,
+      "maintained_by": 1498,
+      "runs_install_script": 4,
+      "sourced_from": 622
     },
     "label_counts": {
       "negative": 624,
@@ -33,10 +45,21 @@
       "npm_registry_explicit_curated_review": 624
     },
     "low_confidence_label_count": 0,
+    "node_type_counts": {
+      "dependency_package": 327,
+      "ecosystem": 1,
+      "evidence_source": 1,
+      "install_script": 4,
+      "maintainer": 540,
+      "package": 2624,
+      "project": 2,
+      "repository": 371,
+      "risk_signal": 11
+    },
     "positive_ratio": 0.762195,
     "ready_for_training": true,
     "samples": 2624,
-    "schema_version": 2,
+    "schema_version": 3,
     "split_overlap_groups": [],
     "split_overlap_ids": [],
     "split_stats": {
@@ -60,11 +83,12 @@
       }
     },
     "task": "malicious_package",
+    "trusted_hard_negative_count": 18,
     "trusted_negative_count": 624,
     "warnings": []
   },
-  "dataset_hash": "67fd7e160a06e4780c5452f5d87a36f46b8e0dad054213f68265629f5d505730",
-  "dataset_version": "67fd7e160a06",
+  "dataset_hash": "1a14bfdecb3f56ef71538ed8b9f0f0152e1fd1278d87a951949ad54f903b8097",
+  "dataset_version": "1a14bfdecb3f",
   "decision_threshold": 0.4,
   "device": "cuda",
   "dropout": 0.3,
@@ -73,12 +97,15 @@
     "edge_types": [
       "depends_on",
       "has_risk_signal",
-      "observed_in"
+      "observed_in",
+      "maintained_by",
+      "sourced_from",
+      "runs_install_script"
     ],
     "max_group_size": null,
-    "method": "package-package edges by shared targets"
+    "method": "relation-aware package projection from heterogeneous entity graph"
   },
-  "edge_count": 698076,
+  "edge_count": 700298,
   "edge_split_policy": "inductive",
   "epochs": 80,
   "feature_mean": [
@@ -90,9 +117,9 @@
     0.5179738402366638,
     4.4466233253479,
     0.30119824409484863,
-    0.7124183177947998,
-    0.5245097875595093,
-    401.9667663574219
+    0.7194989323616028,
+    0.5266884565353394,
+    407.7178649902344
   ],
   "feature_names": [
     "ecosystem_npm",
@@ -116,10 +143,12 @@
     0.4996814727783203,
     7.595544815063477,
     0.48643994331359863,
-    1.2766016721725464,
-    0.7879470586776733,
-    350.0639953613281
+    1.291954517364502,
+    0.7878661751747131,
+    350.434326171875
   ],
+  "hard_negative_count": 18,
+  "hard_negative_weighting": true,
   "hidden_dim": 64,
   "input_dim": 11,
   "label_confidence_weighting": true,
@@ -145,7 +174,8 @@
   "task": "malicious_package",
   "torch_cuda_version": "12.8",
   "torch_version": "2.7.0+cu128",
-  "trained_at": "2026-08-08T13:53:36.438493+00:00",
+  "trained_at": "2026-08-08T16:28:09.889351+00:00",
   "trained_epochs": 13,
-  "training_status": "trained"
+  "training_status": "trained",
+  "trusted_hard_negative_count": 18
 }

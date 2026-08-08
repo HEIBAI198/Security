@@ -28,14 +28,33 @@ DEFAULT_KEYWORDS = [
     "credential",
     "password",
     "secret",
+    "postinstall",
+    "preinstall",
+    "eval",
+    "obfuscat",
+    "binary",
 ]
 
 
 def _match_text(record: dict[str, Any]) -> str:
     ecosystem = normalize_ecosystem(record.get("ecosystem"))
     package = normalize_package_name(record.get("package") or record.get("name"), ecosystem)
-    text = str(record.get("text") or "")
-    return f"{package} {text}".casefold()
+    values = [
+        package,
+        record.get("text"),
+        record.get("description"),
+        record.get("homepage"),
+        record.get("repository"),
+        record.get("keywords"),
+        record.get("install_scripts"),
+        record.get("scripts"),
+    ]
+    return " ".join(
+        json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if isinstance(value, (dict, list))
+        else str(value or "")
+        for value in values
+    ).casefold()
 
 
 def _evidence_sources(value: Any) -> list[Any]:
@@ -46,15 +65,35 @@ def _evidence_sources(value: Any) -> list[Any]:
     return [value]
 
 
-def _with_hard_negative_source(record: dict[str, Any]) -> dict[str, Any]:
+def _is_trusted_negative(record: dict[str, Any]) -> bool:
+    label_source = str(record.get("label_source") or record.get("source") or "").casefold()
+    return (
+        int(record.get("label") or 0) == 0
+        and float(record.get("label_confidence") or 0.0) >= 0.7
+        and not any(marker in label_source for marker in ("unverified", "weak", "local_dependency_baseline"))
+    )
+
+
+def _with_hard_negative_source(
+    record: dict[str, Any],
+    *,
+    matched_keywords: list[str],
+) -> dict[str, Any]:
     output = dict(record)
     evidence_sources = _evidence_sources(output.get("evidence_sources"))
     if "hard_negative" not in evidence_sources:
         evidence_sources.append("hard_negative")
     output["evidence_sources"] = evidence_sources
     output["source"] = "hard_negative_keyword_filter"
-    output["label_source"] = "hard_negative_heuristic_unverified"
-    output["label_confidence"] = 0.2
+    output["hard_negative"] = True
+    output["hard_negative_reasons"] = [f"keyword:{keyword}" for keyword in matched_keywords]
+    output["hard_negative_weight"] = 1.5 if _is_trusted_negative(record) else 0.5
+    if _is_trusted_negative(record):
+        output["hard_negative_verification"] = "trusted_normal_source"
+    else:
+        output["hard_negative_verification"] = "heuristic_unverified"
+        output["label_source"] = "hard_negative_heuristic_unverified"
+        output["label_confidence"] = min(float(record.get("label_confidence") or 0.2), 0.2)
     return output
 
 
@@ -79,17 +118,24 @@ def build_hard_negatives(
 
     normalized_keywords = _normalize_keywords(keywords)
     records: list[dict[str, Any]] = []
-    summary = {"read": 0, "written": 0, "skipped_limit": 0}
+    summary = {"read": 0, "written": 0, "trusted_written": 0, "skipped_limit": 0}
 
     for record in read_jsonl(negative_path):
         summary["read"] += 1
         haystack = _match_text(record)
-        if not any(keyword in haystack for keyword in normalized_keywords):
+        matched_keywords = [keyword for keyword in normalized_keywords if keyword in haystack]
+        if not matched_keywords:
             continue
         if len(records) >= limit:
             summary["skipped_limit"] += 1
             continue
-        records.append(_with_hard_negative_source(record))
+        hard_negative = _with_hard_negative_source(
+            record,
+            matched_keywords=matched_keywords,
+        )
+        records.append(hard_negative)
+        if hard_negative["hard_negative_verification"] == "trusted_normal_source":
+            summary["trusted_written"] += 1
 
     write_jsonl(output_path, records)
     summary["written"] = len(records)

@@ -74,6 +74,8 @@ class PackageRiskDatasetAuditTests(unittest.TestCase):
             self.assertTrue(report["ready_for_training"])
             self.assertEqual(report["dependency_edge_count"], 1)
             self.assertEqual(report["trusted_negative_count"], 3)
+            self.assertEqual(report["hard_negative_count"], 0)
+            self.assertIn("heterogeneous_relation_coverage", report)
             self.assertEqual(report["warnings"], [])
 
 
