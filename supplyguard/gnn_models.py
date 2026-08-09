@@ -528,6 +528,7 @@ class PackageRiskModelRegistry:
         audit = metadata.get("dataset_audit")
         if not isinstance(calibration, dict) or "temperature" not in calibration:
             raise ValueError("artifact calibration temperature is required")
+        calibration_verified = bool(calibration.get("verified"))
         if not isinstance(audit, dict):
             raise ValueError("artifact dataset_audit must be an object")
         acceptance = metadata.get("runtime_acceptance")
@@ -545,7 +546,7 @@ class PackageRiskModelRegistry:
             and str(acceptance.get("status") or "") == "passed"
         )
         self.artifact_status = "passed" if trusted else "warning"
-        self.score_kind = "probability" if trusted else "similarity"
+        self.score_kind = "probability" if trusted and calibration_verified else "similarity"
         self.artifact_id = str(metadata.get("artifact_id") or "")
         self.dataset_version = str(metadata.get("dataset_version") or "")
         self.dataset_hash = str(metadata.get("dataset_hash") or "")

@@ -1,0 +1,46 @@
+[
+  {
+    "name": "frontend-package-lock",
+    "manifest": "frontend/package-lock.json",
+    "ecosystem": "npm",
+    "min_graph_packages": 50,
+    "must_not_be_malicious": [
+      "axios",
+      "typescript",
+      "lodash",
+      "@babel/core",
+      "vite",
+      "eslint",
+      "prettier"
+    ],
+    "must_be_malicious": [
+      {
+        "name": "event-stream",
+        "version": "3.3.6",
+        "signals": ["backdoor", "download payload"]
+      },
+      {
+        "name": "x-trader-codec",
+        "version": "4.7.1",
+        "signals": ["install script: postinstall", "credential exfiltration"]
+      }
+    ]
+  },
+  {
+    "name": "3cx-supply-chain-sample",
+    "manifest": "cases/3cx-supply-chain/sample-repo/package-lock.json",
+    "ecosystem": "npm",
+    "min_graph_packages": 0,
+    "must_not_be_malicious": [
+      "electron",
+      "axios"
+    ],
+    "must_be_malicious": [
+      {
+        "name": "x-trader-codec",
+        "version": "4.7.1",
+        "signals": ["install script: postinstall", "credential exfiltration"]
+      }
+    ]
+  }
+]

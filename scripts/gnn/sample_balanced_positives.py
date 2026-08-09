@@ -18,6 +18,15 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.gnn.dataset_utils import read_jsonl, write_jsonl
+from scripts.gnn.held_out_packages import HELD_OUT_DEMO_PACKAGES
+
+
+def _key(record: dict) -> str:
+    ecosystem = str(record.get("ecosystem") or "").strip().lower()
+    package = str(record.get("package") or record.get("raw_package") or "").strip().lower()
+    if ecosystem == "pypi":
+        package = package.replace("_", "-").replace(".", "-")
+    return f"{ecosystem}:{package}"
 
 
 def sample_balanced_positives(
@@ -29,8 +38,13 @@ def sample_balanced_positives(
 ) -> dict[str, int]:
     records = read_jsonl(source)
     by_ecosystem: dict[str, list[dict]] = {}
+    held_out = {str(key).strip().casefold() for key in HELD_OUT_DEMO_PACKAGES}
+    excluded_held_out = 0
     for record in records:
         ecosystem = str(record.get("ecosystem") or "").strip().lower()
+        if _key(record) in held_out:
+            excluded_held_out += 1
+            continue
         by_ecosystem.setdefault(ecosystem, []).append(record)
 
     rng = random.Random(random_state)
@@ -54,6 +68,7 @@ def sample_balanced_positives(
         "npm": int(per_ecosystem),
         "pypi": int(per_ecosystem),
         "total": len(selected),
+        "excluded_held_out": excluded_held_out,
     }
 
 

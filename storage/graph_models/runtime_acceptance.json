@@ -1,5 +1,5 @@
 {
-  "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
+  "artifact_id": "pyg_graphsage_package_risk:fdf1d54dcc23:2026-08-09T085723.210195+0000",
   "backends": {
     "numpy": {
       "backend": "numpy",
@@ -14,16 +14,16 @@
       "status": "disabled"
     },
     "pyg": {
-      "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
+      "artifact_id": "pyg_graphsage_package_risk:fdf1d54dcc23:2026-08-09T085723.210195+0000",
       "backend": "pyg",
       "checks": [
         {
           "detail": {
-            "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
-            "calibration_temperature": 2.5,
+            "artifact_id": "pyg_graphsage_package_risk:fdf1d54dcc23:2026-08-09T085723.210195+0000",
+            "calibration_temperature": 2.375,
             "data_quality_status": "passed",
-            "dataset_hash": "fc8d1e9246ce2b73dce52e855d6bc3386f9ee59533d03afa8c344f166d969a9a",
-            "dataset_version": "fc8d1e9246ce",
+            "dataset_hash": "fdf1d54dcc2390b93bea7979340603f38d25d2aed1d8578eeb2087ea3e408b11",
+            "dataset_version": "fdf1d54dcc23",
             "decision_threshold": 0.9,
             "load_error": null,
             "model_available": true,
@@ -31,14 +31,23 @@
             "online_decision_threshold": 0.9,
             "ood_distance_threshold": 6.0,
             "score_kind": "probability",
-            "trained_at": "2026-08-09T08:30:34.250907+00:00"
+            "trained_at": "2026-08-09T08:57:23.210195+00:00"
           },
           "name": "artifact_load",
           "passed": true
         },
         {
-          "benign_max": 0.6458,
-          "malicious_min": 0.5906,
+          "detail": {
+            "ece_val": 0.066911,
+            "threshold": 0.1,
+            "verified": true
+          },
+          "name": "calibration_verified",
+          "passed": true
+        },
+        {
+          "benign_max": 0.6652,
+          "malicious_min": 0.6286,
           "name": "runtime_threshold_separation",
           "online_decision_threshold": 0.9,
           "passed": true
@@ -49,7 +58,7 @@
           "name": "case:react",
           "passed": true,
           "reliability": "limited",
-          "score": 0.0766
+          "score": 0.0726
         },
         {
           "actual": "abstain",
@@ -57,7 +66,7 @@
           "name": "case:requests",
           "passed": true,
           "reliability": "limited",
-          "score": 0.6458
+          "score": 0.6652
         },
         {
           "actual": "malicious",
@@ -65,7 +74,7 @@
           "name": "case:x-trader-codec",
           "passed": true,
           "reliability": "demo_calibrated",
-          "score": 0.9889
+          "score": 0.9963
         },
         {
           "actual": "malicious",
@@ -73,7 +82,7 @@
           "name": "case:event-stream",
           "passed": true,
           "reliability": "demo_calibrated",
-          "score": 0.9156
+          "score": 0.953
         },
         {
           "details": [
@@ -81,13 +90,13 @@
               "decision_status": "benign",
               "inference_mode": "dependency_graph",
               "neighbor_count": 1,
-              "score": 0.0766
+              "score": 0.0726
             },
             {
               "decision_status": "malicious",
               "inference_mode": "dependency_graph",
               "neighbor_count": 1,
-              "score": 0.9156
+              "score": 0.953
             }
           ],
           "name": "dependency_graph_batch",
@@ -99,20 +108,20 @@
               "decision_status": "malicious",
               "name": "event-stream",
               "neighbor_count": 1,
-              "score": 0.9156
+              "score": 0.953
             },
             {
               "decision_status": "abstain",
               "name": "flatmap-stream",
               "neighbor_count": 1,
-              "score": 0.5906
+              "score": 0.6286
             }
           ],
           "name": "event_stream_dependency_graph",
           "passed": true
         }
       ],
-      "dataset_version": "fc8d1e9246ce",
+      "dataset_version": "fdf1d54dcc23",
       "model_type": "pyg_graphsage_package_risk",
       "online_decision_threshold": 0.9,
       "required": true,
@@ -122,11 +131,11 @@
   "checks": [
     {
       "detail": {
-        "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
-        "calibration_temperature": 2.5,
+        "artifact_id": "pyg_graphsage_package_risk:fdf1d54dcc23:2026-08-09T085723.210195+0000",
+        "calibration_temperature": 2.375,
         "data_quality_status": "passed",
-        "dataset_hash": "fc8d1e9246ce2b73dce52e855d6bc3386f9ee59533d03afa8c344f166d969a9a",
-        "dataset_version": "fc8d1e9246ce",
+        "dataset_hash": "fdf1d54dcc2390b93bea7979340603f38d25d2aed1d8578eeb2087ea3e408b11",
+        "dataset_version": "fdf1d54dcc23",
         "decision_threshold": 0.9,
         "load_error": null,
         "model_available": true,
@@ -134,14 +143,23 @@
         "online_decision_threshold": 0.9,
         "ood_distance_threshold": 6.0,
         "score_kind": "probability",
-        "trained_at": "2026-08-09T08:30:34.250907+00:00"
+        "trained_at": "2026-08-09T08:57:23.210195+00:00"
       },
       "name": "pyg/artifact_load",
       "passed": true
     },
     {
-      "benign_max": 0.6458,
-      "malicious_min": 0.5906,
+      "detail": {
+        "ece_val": 0.066911,
+        "threshold": 0.1,
+        "verified": true
+      },
+      "name": "pyg/calibration_verified",
+      "passed": true
+    },
+    {
+      "benign_max": 0.6652,
+      "malicious_min": 0.6286,
       "name": "pyg/runtime_threshold_separation",
       "online_decision_threshold": 0.9,
       "passed": true
@@ -152,7 +170,7 @@
       "name": "pyg/case:react",
       "passed": true,
       "reliability": "limited",
-      "score": 0.0766
+      "score": 0.0726
     },
     {
       "actual": "abstain",
@@ -160,7 +178,7 @@
       "name": "pyg/case:requests",
       "passed": true,
       "reliability": "limited",
-      "score": 0.6458
+      "score": 0.6652
     },
     {
       "actual": "malicious",
@@ -168,7 +186,7 @@
       "name": "pyg/case:x-trader-codec",
       "passed": true,
       "reliability": "demo_calibrated",
-      "score": 0.9889
+      "score": 0.9963
     },
     {
       "actual": "malicious",
@@ -176,7 +194,7 @@
       "name": "pyg/case:event-stream",
       "passed": true,
       "reliability": "demo_calibrated",
-      "score": 0.9156
+      "score": 0.953
     },
     {
       "details": [
@@ -184,13 +202,13 @@
           "decision_status": "benign",
           "inference_mode": "dependency_graph",
           "neighbor_count": 1,
-          "score": 0.0766
+          "score": 0.0726
         },
         {
           "decision_status": "malicious",
           "inference_mode": "dependency_graph",
           "neighbor_count": 1,
-          "score": 0.9156
+          "score": 0.953
         }
       ],
       "name": "pyg/dependency_graph_batch",
@@ -202,13 +220,13 @@
           "decision_status": "malicious",
           "name": "event-stream",
           "neighbor_count": 1,
-          "score": 0.9156
+          "score": 0.953
         },
         {
           "decision_status": "abstain",
           "name": "flatmap-stream",
           "neighbor_count": 1,
-          "score": 0.5906
+          "score": 0.6286
         }
       ],
       "name": "pyg/event_stream_dependency_graph",
@@ -220,7 +238,7 @@
       "passed": true
     }
   ],
-  "dataset_version": "fc8d1e9246ce",
+  "dataset_version": "fdf1d54dcc23",
   "model_type": "pyg_graphsage_package_risk",
   "status": "passed"
 }

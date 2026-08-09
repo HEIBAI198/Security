@@ -14,6 +14,7 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.gnn.dataset_utils import package_group_key
+from scripts.gnn.held_out_packages import HELD_OUT_DEMO_PACKAGES
 from supplyguard.gnn_features import LABEL_PROXY_KEYWORDS
 
 
@@ -161,6 +162,36 @@ def audit_dataset(
     ]
     if label_counts.get(0, 0) and not trusted_negative_nodes:
         warnings.append("没有独立来源或人工复核的高置信正常包，禁止用弱负样本替代 ecosystem negatives")
+    negative_review_tiers = Counter(
+        str(node.get("review_tier") or "unreviewed").strip().lower()
+        for node in package_nodes
+        if int(node.get("label") or 0) == 0
+    )
+    unreviewed_negatives = sum(
+        int(node.get("label") or 0) == 0
+        and str(node.get("review_tier") or "").strip().lower()
+        not in {"explicit_curated", "dependency_closure"}
+        for node in package_nodes
+    )
+    if unreviewed_negatives:
+        warnings.append(
+            f"{unreviewed_negatives} 个负样本缺少 review_tier，正常包标签来源不可审计"
+        )
+    held_out_keys = {str(key).strip().casefold() for key in HELD_OUT_DEMO_PACKAGES}
+    held_out_overlap = sorted(
+        f"{str(node.get('ecosystem') or '')}:{str(node.get('package') or '')}"
+        for node in package_nodes
+        if (
+            f"{str(node.get('ecosystem') or '').strip().lower()}:"
+            f"{str(node.get('package') or '').strip().lower()}".casefold()
+            in held_out_keys
+        )
+    )
+    if held_out_overlap:
+        warnings.append(
+            "演示/验收包出现在训练数据中，验收存在循环验证: "
+            + ", ".join(held_out_overlap)
+        )
     missing_timestamp = sum(
         not str(
             node.get("published")
@@ -256,6 +287,8 @@ def audit_dataset(
         ),
         "low_confidence_label_count": low_confidence_labels,
         "trusted_negative_count": len(trusted_negative_nodes),
+        "negative_review_tiers": dict(negative_review_tiers),
+        "held_out_package_overlap": held_out_overlap,
         "hard_negative_count": len(hard_negative_nodes),
         "trusted_hard_negative_count": len(trusted_hard_negative_nodes),
         "node_type_counts": dict(node_type_counts),

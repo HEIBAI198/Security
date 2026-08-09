@@ -57,6 +57,8 @@ def build_artifact_metadata(
     edge_split_policy: str,
     decision_threshold: float,
     calibration_temperature: float,
+    calibration_ece: float | None = None,
+    calibration_verified: bool | None = None,
     ood_distance_threshold: float = 6.0,
 ) -> dict[str, Any]:
     data_path = Path(data_dir)
@@ -65,6 +67,15 @@ def build_artifact_metadata(
     trained_at = datetime.now(timezone.utc).isoformat()
     dataset_version = _dataset_version(data_path, fingerprint)
     artifact_id = f"{model_type}:{fingerprint[:12]}:{trained_at.replace(':', '').replace('+00:00', 'Z')}"
+    calibration = {
+        "method": "temperature",
+        "temperature": float(calibration_temperature),
+        "fit_split": "val" if edge_split_policy == "inductive" else "training",
+    }
+    if calibration_ece is not None:
+        calibration["ece_val"] = round(float(calibration_ece), 6)
+    if calibration_verified is not None:
+        calibration["verified"] = bool(calibration_verified)
     return {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
         "feature_contract": FEATURE_CONTRACT,
@@ -73,11 +84,7 @@ def build_artifact_metadata(
         "data_quality_status": "passed" if audit.get("ready_for_training") else "warning",
         "edge_split_policy": edge_split_policy,
         "decision_threshold": float(decision_threshold),
-        "calibration": {
-            "method": "temperature",
-            "temperature": float(calibration_temperature),
-            "fit_split": "val" if edge_split_policy == "inductive" else "training",
-        },
+        "calibration": calibration,
         "dataset_audit": audit,
         "artifact_id": artifact_id,
         "dataset_version": dataset_version,

@@ -217,6 +217,7 @@ def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
         "install_scripts",
         "scripts",
         "metadata_source",
+        "review_tier",
         "hard_negative_reasons",
         "hard_negative_verification",
     ):

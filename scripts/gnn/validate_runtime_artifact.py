@@ -92,6 +92,19 @@ def run_runtime_acceptance(model_dir: str | Path, *, backend: str = "pyg") -> di
             "detail": scorer.registry.artifact_info(),
         }
     )
+    calibration = (scorer.registry.artifact_metadata or {}).get("calibration") or {}
+    calibration_verified = bool(calibration.get("verified"))
+    checks.append(
+        {
+            "name": "calibration_verified",
+            "passed": calibration_verified,
+            "detail": {
+                "ece_val": calibration.get("ece_val"),
+                "verified": calibration_verified,
+                "threshold": 0.10,
+            },
+        }
+    )
     payloads = [
         {
             "ecosystem": case["ecosystem"],

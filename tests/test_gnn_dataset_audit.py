@@ -102,7 +102,7 @@ class PackageRiskDatasetAuditTests(unittest.TestCase):
             nodes = []
             for index, label in enumerate([1, 0, 1, 0, 1, 0]):
                 ecosystem = "pypi" if index == 3 else "npm"
-                package = "requests" if index == 3 else f"pkg-{index}"
+                package = "example-safe" if index == 3 else f"pkg-{index}"
                 nodes.append(
                     {
                         "id": f"pkg:{ecosystem}:{package}",
@@ -112,6 +112,7 @@ class PackageRiskDatasetAuditTests(unittest.TestCase):
                         "label": label,
                         "label_source": "人工复核",
                         "label_confidence": 1.0,
+                        "review_tier": "explicit_curated",
                         "published": f"2026-01-0{index + 1}T00:00:00Z",
                         "maintainers": [{"name": "maintainer"}],
                         "repository": "https://github.com/example/pkg",

@@ -23,14 +23,16 @@
 
 负样本：
 
-- 独立注册表人工审核正常包：npm 1784 + pypi 1785 = 3569 条，来自 PyPI/npm JSON API + 仓库锁文件 + 两层依赖闭包（`scripts/gnn/fetch_curated_normal_packages.py`、`scripts/gnn/merge_negative_packages.py`），`label_confidence=0.85`。
+- 独立注册表审核正常包：npm 1770 + pypi 1782 = 3552 条，来自 PyPI/npm JSON API + 仓库锁文件 + 两层依赖闭包（`scripts/gnn/fetch_curated_normal_packages.py`、`scripts/gnn/merge_negative_packages.py`）。
+- 标签可信度分层：`review_tier=explicit_curated`（种子名单/原 curated 锁文件列表，置信度 0.85）1054 条；`review_tier=dependency_closure`（依赖闭包自动加入，置信度 0.75）2498 条。两者均 >= 0.7 可进可信训练，且来源可审计。
+- 与全量 OpenSSF 恶意池（20000 条）按规范化 `ecosystem:name` 去重（排除 14 条重叠记录），演示/验收包（`HELD_OUT_DEMO_PACKAGES`）从训练数据剔除（排除 17 条），验收与业务测试真正 held-out。
 - hard negatives：244 条（`build_hard_negatives.py`），全部保留可信正常来源和人工筛选依据。
 
 图数据：
 
-- 包节点 5969，总节点 12174，异构事实边 44718。
-- 真实 `depends_on` 边 16679 条；归纳式切分后训练边 15162 条，仅使用 `depends_on`。
-- split：train 4178 / val 895 / test 896，按发布时间 70/15/15 时间外推，时间戳覆盖率 100%。
+- 有标签包节点 5952，总节点 12154，异构事实边 44471。
+- 真实 `depends_on` 边 16583 条；归纳式切分后训练边 14768 条，仅使用 `depends_on`。
+- split：train 4166 / val 892 / test 894，按发布时间 70/15/15 时间外推，时间戳覆盖率 100%。
 - 数据卡：`dataset_card.json`；固定切分：`splits.json`；审计结果：`dataset_audit.json`。
 
 ## 数据流水线命令
@@ -76,7 +78,8 @@ D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_p
 
 - schema v6，`feature_contract=runtime_package_features_v3`，`task=malicious_package`，归纳式边隔离。
 - 训练集拟合均值/方差，验证集早停 + 温度校准 + 阈值选择，测试集不参与调参。
-- 阈值按“验证集良包误报率上限”选择：图模式 FPR <= 2%，无邻居模式 FPR <= 1%；当前 `decision_threshold=0.9`、`online_decision_threshold=0.9`、温度 `2.5`。
+- 阈值按“验证集良包误报率上限”选择：图模式 FPR <= 2%，无邻居模式 FPR <= 1%；当前 `decision_threshold=0.9`、`online_decision_threshold=0.9`、温度 `2.375`。
+- 校准验证门禁：验证集 10-bin ECE <= 0.10 才写入 `calibration.verified=true`；`score_kind=probability` 仅在校准已验证且验收通过时生效，否则降级为 `similarity`。当前 val ECE 0.0669（verified=true）。
 - 评估新增 `recall_at_fpr_0.01` / `recall_at_fpr_0.05` / `fpr_at_threshold`。
 
 当前产物（`storage\graph_models`）：
@@ -101,6 +104,13 @@ D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_p
 - 图模式（`dependency_graph`）：分数 >= 图阈值判恶意；有关键词证据但分数低于阈值且 >= 0.5 时 abstain（不放行可疑包）；否则良性。
 - 分布外（OOD）：`gnn_decision_status=abstain`；内置演示校准包（`DEMO_CALIBRATED_PACKAGES`）保留原始分数并按阈值判定，避免演示案例被误拒。
 - 模型低分与漏洞/综合风险强证据冲突时返回 `conflict`，任何 GNN 结果不得降低综合风险。
+- 单包详情可传入项目子图：`serialize_dependency(dependency, subgraph=[...])` 在子图内批量评分（`dependency_graph` 模式），不再孤立推理。
+
+## 独立业务测试集
+
+- 用例：`scripts/gnn/business_cases.json`，基于真实 manifest：`frontend/package-lock.json`（597 个包）与 `cases/3cx-supply-chain/sample-repo/package-lock.json`（供应链演示）。
+- 评测：`scripts/gnn/evaluate_business_cases.py` 从 lockfile 树构建真实 `depends_on` 子图，断言知名正常包不判恶意、演示恶意包判恶意、图模式覆盖达标。
+- 当前结果：frontend 案例 86 条边、67 个包进入 `dependency_graph` 模式，axios/typescript/lodash/vite/eslint/prettier 良性、@babel/core abstain、event-stream/x-trader-codec 恶意；3cx 案例 electron/axios 良性、x-trader-codec 恶意。`storage/eval/business_eval.json` 状态 passed。
 
 ## GraphRAG 检索
 
@@ -115,13 +125,14 @@ embedding channel 已启用：`PackageEmbeddingIndex` 读取 `package_embeddings
 ```powershell
 D:\Anaconda3\python.exe -m unittest discover -s tests
 D:\Anaconda3\envs\supplyguard-gnn\python.exe scripts\gnn\validate_runtime_artifact.py --model-dir storage\graph_models
+D:\Anaconda3\envs\supplyguard-gnn\python.exe scripts\gnn\evaluate_business_cases.py --cases scripts\gnn\business_cases.json --model-dir storage\graph_models --output storage\eval\business_eval.json
 ```
 
-`validate_runtime_artifact.py` 把验收结果写回 `runtime_acceptance.json` 并回填到模型元数据。当前 pyg 验收 passed：react 0.0766/良性、requests 0.6458/不判恶意、x-trader-codec 0.9889/恶意（演示校准）、event-stream 0.9156/恶意、flatmap-stream 0.5906/abstain（证据门控）、numpy disabled。
+`validate_runtime_artifact.py` 把验收结果写回 `runtime_acceptance.json` 并回填到模型元数据。当前 pyg 验收 passed（含 `calibration_verified` 检查）：react 0.0726/良性、requests 0.6652/不判恶意、x-trader-codec 0.9963/恶意（演示校准）、event-stream 0.953/恶意、flatmap-stream 0.6286/abstain（证据门控）、numpy disabled。
 
 ## 后续增强
 
 - 扩充正样本注册表元数据覆盖率，使生态特征可安全加入契约。
 - 引入下载量、发布时间分布等外部生态特征，替换当前以名字/关键词为主的弱特征。
-- 在真实 manifest/lockfile 上验证 `depends_on` 边方向和批量图推理收益。
+- 对 `dependency_closure` 层级的负样本做抽样人工复核，逐步提高显式审核比例。
 - 用时间外推测试集持续报告 PR-AUC、固定 FPR 召回、Brier、ECE 和拒判率。

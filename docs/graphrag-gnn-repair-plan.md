@@ -53,5 +53,16 @@
 
 ## 已知限制
 
-- 时间外推测试召回有限（test recall@0.9 约 0.23），这是 7 个名字/关键词特征对“未来恶意包”泛化能力的真实反映，不应当作缺陷隐藏。
+- 时间外推测试召回有限（test recall@0.9 约 0.30），这是 7 个名字/关键词特征对“未来恶意包”泛化能力的真实反映，不应当作缺陷隐藏。
 - 正样本元数据覆盖率 41.6%，生态特征暂不能安全加入；待数据完善后按 v4 契约重训。
+
+## 四项补强（2026-08-09 第二轮，已完成）
+
+上一轮遗留的四个“部分解决”问题本轮已处理：
+
+1. **正常包标签可靠度**：负样本与全量 OpenSSF 恶意池（20000 条）按规范化 `ecosystem:name` 去重（重叠 0）；新增 `review_tier` 分层（explicit_curated 1054 / dependency_closure 2498，置信度 0.85 / 0.75），审计对缺失 review_tier 和 held-out 重叠直接告警。
+2. **在线推理图不完整**：`serialize_dependency(dependency, subgraph=[...])` 支持在项目子图内批量评分；独立业务测试集在真实 lockfile 上验证图路径（frontend 案例 86 条边、67 个包进入 `dependency_graph` 模式）。
+3. **概率充分验证**：训练时计算验证集 10-bin ECE 并写入 `calibration.verified`（当前 val ECE 0.0669，门禁阈值 0.10）；`score_kind=probability` 仅在校准已验证且验收通过时生效，否则降级 similarity；验收新增 `calibration_verified` 检查。
+4. **独立业务测试集**：`scripts/gnn/business_cases.json` 基于真实 manifest（frontend package-lock 597 包、3cx 供应链演示），`evaluate_business_cases.py` 断言正常包不判恶意、演示恶意包判恶意、图模式覆盖达标；演示/验收包已从训练数据剔除（held-out 重叠 0）。
+
+当前验收（`runtime_acceptance.json`）：pyg passed（react 0.0726 良性、requests 0.6652 不判恶意、x-trader-codec 0.9963 恶意、event-stream 0.953 恶意、flatmap-stream 0.6286 abstain、calibration_verified true），numpy disabled；业务评测 `storage/eval/business_eval.json` status passed。

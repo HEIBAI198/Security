@@ -3584,7 +3584,29 @@ def serialize_dependencies(dependencies: list[DependencyRecord]) -> list[dict[st
     return payloads
 
 
-def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
+def serialize_dependency(
+    dependency: DependencyRecord,
+    *,
+    subgraph: list[DependencyRecord] | None = None,
+) -> dict[str, Any]:
+    """Serialize one dependency, optionally scoring it inside a project subgraph."""
+    if not subgraph:
+        return serialize_dependencies([dependency])[0]
+    payloads = [_serialize_dependency_base(item) for item in subgraph]
+    edges = _dependency_graph_edges(subgraph)
+    gnn_results = score_dependency_payloads(payloads, edges, scorer=dependency_gnn_scorer())
+    target = (
+        normalize_ecosystem(dependency.ecosystem),
+        canonical_dependency_name(dependency.ecosystem, dependency.name),
+    )
+    for item, payload, gnn_result in zip(subgraph, payloads, gnn_results):
+        key = (
+            normalize_ecosystem(item.ecosystem),
+            canonical_dependency_name(item.ecosystem, item.name),
+        )
+        if key == target:
+            _apply_gnn_result(payload, gnn_result)
+            return payload
     return serialize_dependencies([dependency])[0]
 
 

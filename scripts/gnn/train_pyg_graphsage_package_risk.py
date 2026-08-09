@@ -406,6 +406,25 @@ def _fit_temperature(labels: list[int], scores: list[float]) -> float:
     return best_temperature
 
 
+def _calibration_ece(labels: list[int], scores: list[float]) -> float:
+    """10-bin expected calibration error on a validation label/score pair."""
+    if not labels:
+        return 1.0
+    score_array = np.asarray(scores, dtype=np.float64)
+    label_array = np.asarray(labels, dtype=np.float64)
+    ece = 0.0
+    for lower in np.linspace(0.0, 1.0, 11)[:-1]:
+        upper = lower + 0.1
+        bucket = (score_array >= lower) & (
+            score_array < upper if upper < 1.0 else score_array <= upper
+        )
+        if np.any(bucket):
+            ece += float(np.sum(bucket) / len(score_array)) * abs(
+                float(np.mean(score_array[bucket])) - float(np.mean(label_array[bucket]))
+            )
+    return float(ece)
+
+
 def _split_metrics(
     torch: Any,
     logits: Any,
@@ -818,6 +837,8 @@ def train_pyg_graphsage_package_risk(
         float(1.0 / (1.0 + np.exp(-np.clip(np.log(np.clip(score, 1e-6, 1 - 1e-6) / np.clip(1 - score, 1e-6, 1)) / calibration_temperature, -40, 40))))
         for score in validation_scores
     ]
+    calibration_ece_val = _calibration_ece(validation_labels_list, calibrated_validation_scores)
+    calibration_verified = calibration_ece_val <= 0.10
     decision_threshold = _threshold_at_fpr_cap(
         validation_labels_list,
         calibrated_validation_scores,
@@ -885,7 +906,13 @@ def train_pyg_graphsage_package_risk(
         "min_delta": float(min_delta),
         "best_epoch": int(best_epoch or trained_epochs),
         "decision_threshold": float(decision_threshold),
-        "calibration": {"method": "temperature", "temperature": float(calibration_temperature), "fit_split": "val"},
+        "calibration": {
+            "method": "temperature",
+            "temperature": float(calibration_temperature),
+            "fit_split": "val",
+            "ece_val": round(calibration_ece_val, 6),
+            "verified": bool(calibration_verified),
+        },
         "task": "malicious_package",
         "dataset_audit": dataset_audit,
         "label_confidence_weighting": True,
@@ -921,6 +948,8 @@ def train_pyg_graphsage_package_risk(
         edge_split_policy=edge_split_policy,
         decision_threshold=decision_threshold,
         calibration_temperature=calibration_temperature,
+        calibration_ece=calibration_ece_val,
+        calibration_verified=calibration_verified,
     )
     metadata = {
         **artifact_metadata,
@@ -953,7 +982,15 @@ def train_pyg_graphsage_package_risk(
         "min_delta": float(min_delta),
         "best_epoch": int(best_epoch or trained_epochs),
         "decision_threshold": float(decision_threshold),
-        "calibration": {"method": "temperature", "temperature": float(calibration_temperature), "fit_split": "val"},
+        "calibration": {
+            "method": "temperature",
+            "temperature": float(calibration_temperature),
+            "fit_split": "val",
+            "ece_val": round(calibration_ece_val, 6),
+            "verified": bool(calibration_verified),
+        },
+        "calibration_ece_val": round(calibration_ece_val, 6),
+        "calibration_verified": bool(calibration_verified),
         "data_quality_warnings": dataset_audit["warnings"],
         "label_confidence_weighting": True,
         "hard_negative_weighting": True,
