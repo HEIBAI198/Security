@@ -44,31 +44,44 @@ RUN sed -i \
   && pip install --no-cache-dir -r requirements.txt semgrep bandit checkov cyclonedx-bom \
   && (pip install --no-cache-dir zizmor || echo "WARNING: zizmor install failed; CI/CD audit will use built-in checks and actionlint if available.") \
   && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
-  && pip install --no-cache-dir -r requirements-gnn-pyg.txt \
-  && if curl -sSfL --connect-timeout 20 --retry 2 \
-      "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
-      -o /tmp/gitleaks.tar.gz; then \
-        tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks \
-        && chmod +x /usr/local/bin/gitleaks; \
-     else \
-        echo "WARNING: gitleaks download failed; code audit will use the built-in secret scan fallback."; \
-     fi \
-  && if curl -sSfL --connect-timeout 20 --retry 2 \
-      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
-      -o /tmp/actionlint.tar.gz; then \
-        tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint \
-        && chmod +x /usr/local/bin/actionlint; \
-     else \
-        echo "WARNING: actionlint download failed; CI/CD audit will use built-in checks and zizmor if available."; \
-     fi \
-  && if curl -sSfL --connect-timeout 20 --retry 2 \
-      "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
-      -o /usr/local/bin/osv-scanner; then \
-        chmod +x /usr/local/bin/osv-scanner; \
-     else \
-        echo "WARNING: osv-scanner download failed; dependency audit will use built-in advisory enrichment."; \
-     fi \
-  && rm -f /tmp/gitleaks.tar.gz /tmp/actionlint.tar.gz
+  && pip install --no-cache-dir -r requirements-gnn-pyg.txt
+
+# These scanners improve audit coverage but are not required for the API to run.
+# Treat download, archive validation, and extraction failures as one fallback path.
+RUN set -eu; \
+    install_tar_tool() { \
+      tool_name="$1"; \
+      tool_url="$2"; \
+      archive_path="/tmp/${tool_name}.tar.gz"; \
+      if curl -sSfL --connect-timeout 20 --retry 3 --retry-delay 2 --retry-all-errors \
+          "$tool_url" -o "$archive_path" \
+        && tar -tzf "$archive_path" "$tool_name" >/dev/null 2>&1 \
+        && tar -xzf "$archive_path" -C /usr/local/bin "$tool_name" \
+        && chmod +x "/usr/local/bin/${tool_name}"; then \
+          echo "Installed ${tool_name}."; \
+      else \
+          rm -f "/usr/local/bin/${tool_name}"; \
+          echo "WARNING: ${tool_name} install failed; the corresponding built-in audit fallback will be used."; \
+      fi; \
+      rm -f "$archive_path"; \
+    }; \
+    install_tar_tool \
+      gitleaks \
+      "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"; \
+    install_tar_tool \
+      actionlint \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"; \
+    if curl -sSfL --connect-timeout 20 --retry 3 --retry-delay 2 --retry-all-errors \
+        "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
+        -o /tmp/osv-scanner \
+      && test -s /tmp/osv-scanner \
+      && chmod +x /tmp/osv-scanner \
+      && mv /tmp/osv-scanner /usr/local/bin/osv-scanner; then \
+        echo "Installed osv-scanner."; \
+    else \
+        rm -f /tmp/osv-scanner /usr/local/bin/osv-scanner; \
+        echo "WARNING: osv-scanner install failed; dependency audit will use built-in advisory enrichment."; \
+    fi
 
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
