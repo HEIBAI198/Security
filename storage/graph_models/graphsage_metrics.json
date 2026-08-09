@@ -1,14 +1,15 @@
 {
-  "accuracy": 0.9329268292682927,
+  "accuracy": 0.5565974547890155,
   "epochs": 80,
   "evaluation": "holdout",
-  "f1": 0.9539748953974896,
+  "f1": 0.5673202614379085,
   "hidden_dim": 64,
   "model_type": "numpy_graphsage_mean_aggregator",
-  "negative_samples": 624,
-  "positive_samples": 2000,
-  "precision": 1.0,
-  "recall": 0.912,
-  "roc_auc": 1.0,
-  "samples": 2624
+  "negative_samples": 3569,
+  "online_decision_threshold": 0.5,
+  "positive_samples": 2400,
+  "precision": 0.4666666666666667,
+  "recall": 0.7233333333333334,
+  "roc_auc": 0.6436188876446435,
+  "samples": 5969
 }

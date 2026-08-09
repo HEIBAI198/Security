@@ -6,6 +6,7 @@ import json
 import numpy as np
 
 from supplyguard.package_embeddings import PackageEmbeddingIndex
+from supplyguard.graph_rag import graph_rag_retrieve
 from supplyguard.graph_rag_retrievers import retrieve_channels
 
 
@@ -133,6 +134,50 @@ class GraphRagRetrieverTests(unittest.TestCase):
         self.assertEqual(channels["embedding"][0]["id"], "pkg:npm:near")
         self.assertEqual(channels["embedding"][0]["reason"], "embedding_similarity")
         self.assertGreater(channels["embedding"][0]["similarity"], 0.9)
+
+    def test_graph_rag_retrieve_forwards_embedding_index_to_channels(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            np.save(
+                root / "package_embeddings.npy",
+                np.asarray([[1.0, 0.0], [0.95, 0.05]], dtype=np.float32),
+            )
+            (root / "package_embedding_index.json").write_text(
+                json.dumps(
+                    [
+                        {"index": 0, "id": "pkg:npm:evil", "ecosystem": "npm", "package": "evil"},
+                        {"index": 1, "id": "pkg:npm:near", "ecosystem": "npm", "package": "near"},
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            graph = {
+                "nodes": [
+                    {
+                        "id": "pkg:npm:evil",
+                        "label": "npm:evil",
+                        "type": "DependencyPackage",
+                        "risk": "critical",
+                        "properties": {"properties": {"gnn_score": 0.9}},
+                    },
+                    {
+                        "id": "pkg:npm:near",
+                        "label": "npm:near",
+                        "type": "DependencyPackage",
+                        "risk": "low",
+                    },
+                ],
+                "attack_paths": [],
+            }
+
+            result = graph_rag_retrieve(
+                graph,
+                "evil dependency",
+                embedding_index=PackageEmbeddingIndex(root),
+            )
+
+        self.assertTrue(result["channels"]["embedding"])
+        self.assertEqual(result["channels"]["embedding"][0]["id"], "pkg:npm:near")
 
 
 if __name__ == "__main__":

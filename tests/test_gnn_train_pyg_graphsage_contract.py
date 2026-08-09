@@ -26,21 +26,24 @@ class PyGGraphSageContractTests(unittest.TestCase):
         data = root / "features"
         data.mkdir()
         (data / "feature_schema.json").write_text(
-            json.dumps({"features": ["ecosystem_npm", "ecosystem_pypi", "risk_keyword_count", "text_length"]}),
+            json.dumps(
+                {
+                    "features": ["ecosystem_npm", "ecosystem_pypi", "name_length", "risk_keyword_count"],
+                    "training_edge_types": ["depends_on"],
+                }
+            ),
             encoding="utf-8",
         )
         node_labels = labels or [1, 1, 0, 0]
         nodes = [
-            {"id": "pkg:npm:evil", "ecosystem": "npm", "package": "evil", "label": node_labels[0], "features": {"ecosystem_npm": 1, "ecosystem_pypi": 0, "risk_keyword_count": 2, "text_length": 20}},
-            {"id": "pkg:npm:stealer", "ecosystem": "npm", "package": "stealer", "label": node_labels[1], "features": {"ecosystem_npm": 1, "ecosystem_pypi": 0, "risk_keyword_count": 2, "text_length": 22}},
-            {"id": "pkg:pypi:requests", "ecosystem": "pypi", "package": "requests", "label": node_labels[2], "features": {"ecosystem_npm": 0, "ecosystem_pypi": 1, "risk_keyword_count": 0, "text_length": 10}},
-            {"id": "pkg:pypi:flask", "ecosystem": "pypi", "package": "flask", "label": node_labels[3], "features": {"ecosystem_npm": 0, "ecosystem_pypi": 1, "risk_keyword_count": 0, "text_length": 8}},
+            {"id": "pkg:npm:evil", "ecosystem": "npm", "package": "evil", "label": node_labels[0], "features": {"ecosystem_npm": 1, "ecosystem_pypi": 0, "name_length": 4, "risk_keyword_count": 2}},
+            {"id": "pkg:npm:stealer", "ecosystem": "npm", "package": "stealer", "label": node_labels[1], "features": {"ecosystem_npm": 1, "ecosystem_pypi": 0, "name_length": 7, "risk_keyword_count": 2}},
+            {"id": "pkg:pypi:requests", "ecosystem": "pypi", "package": "requests", "label": node_labels[2], "features": {"ecosystem_npm": 0, "ecosystem_pypi": 1, "name_length": 8, "risk_keyword_count": 0}},
+            {"id": "pkg:pypi:flask", "ecosystem": "pypi", "package": "flask", "label": node_labels[3], "features": {"ecosystem_npm": 0, "ecosystem_pypi": 1, "name_length": 5, "risk_keyword_count": 0}},
         ]
         edges = [
-            {"source": "pkg:npm:evil", "target": "signal:token", "type": "has_risk_signal"},
-            {"source": "pkg:npm:stealer", "target": "signal:token", "type": "has_risk_signal"},
-            {"source": "pkg:pypi:requests", "target": "source:requirements", "type": "observed_in"},
-            {"source": "pkg:pypi:flask", "target": "source:requirements", "type": "observed_in"},
+            {"source": "pkg:npm:evil", "target": "pkg:pypi:requests", "type": "depends_on"},
+            {"source": "pkg:npm:stealer", "target": "pkg:pypi:flask", "type": "depends_on"},
         ]
         default_splits = {
             "train": ["pkg:npm:evil", "pkg:pypi:requests"],
@@ -235,8 +238,38 @@ class PyGGraphSageContractTests(unittest.TestCase):
                 "precision": None,
                 "recall": None,
                 "f1": None,
+                "recall_at_fpr_0_01": None,
+                "recall_at_fpr_0_05": None,
+                "fpr_at_threshold": None,
             },
         )
+
+    def test_threshold_at_fpr_cap_keeps_benign_fpr_below_cap(self):
+        labels = [0, 0, 0, 1, 1, 1]
+        scores = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4]
+
+        threshold = trainer._threshold_at_fpr_cap(labels, scores, 0.5)
+
+        predictions = [1 if score >= threshold else 0 for score in scores]
+        fpr = sum(pred == 1 and label == 0 for pred, label in zip(predictions, labels)) / 3
+        self.assertLessEqual(fpr, 0.5)
+
+    def test_threshold_at_fpr_cap_falls_back_when_no_threshold_meets_cap(self):
+        labels = [0, 0, 1, 1]
+        scores = [0.95, 0.9, 0.8, 0.7]
+
+        threshold = trainer._threshold_at_fpr_cap(labels, scores, 0.05)
+
+        self.assertEqual(threshold, 0.9)
+
+    def test_recall_at_fpr_reports_positive_recall_under_fpr_cap(self):
+        labels = [0, 0, 0, 0, 1, 1, 1, 1]
+        scores = [0.9, 0.85, 0.8, 0.1, 0.95, 0.9, 0.7, 0.2]
+
+        recall = trainer._recall_at_fpr(labels, scores, 0.25)
+
+        self.assertIsNotNone(recall)
+        self.assertGreaterEqual(recall, 0.5)
 
     def test_training_mask_can_limit_positive_ratio(self):
         class FakeTorch:
@@ -260,7 +293,7 @@ class PyGGraphSageContractTests(unittest.TestCase):
         self.assertEqual(int(((mask == True) & (labels == 1)).sum()), 2)
         self.assertEqual(int(((mask == True) & (labels == 0)).sum()), 2)
 
-    def test_package_edges_can_skip_large_shared_target_groups(self):
+    def test_label_and_source_proxy_relations_are_not_projected(self):
         node_ids = ["pkg:npm:a", "pkg:npm:b", "pkg:npm:c", "pkg:npm:d"]
         edges = [
             {"source": "pkg:npm:a", "target": "signal:token", "type": "has_risk_signal"},
@@ -272,7 +305,7 @@ class PyGGraphSageContractTests(unittest.TestCase):
 
         package_edges = trainer._package_package_edges(node_ids, edges, max_group_size=2)
 
-        self.assertEqual(package_edges, [(0, 3), (3, 0)])
+        self.assertEqual(package_edges, [])
 
     def test_dependency_edges_are_bidirectional_for_message_passing(self):
         node_ids = ["pkg:npm:app", "pkg:npm:dependency"]
@@ -369,7 +402,7 @@ class PyGGraphSageContractTests(unittest.TestCase):
 
             self.assertEqual(metadata["input_dim"], 4)
             self.assertEqual(metadata["label_mapping"], {"benign": 0, "malicious": 1})
-            self.assertEqual(metadata["edge_construction"]["edge_types"], ["depends_on", "has_risk_signal", "observed_in"])
+            self.assertEqual(metadata["edge_construction"]["edge_types"], ["depends_on"])
             self.assertEqual(metadata["split_counts"], {"train": 2, "val": 1, "test": 1})
             self.assertEqual(metadata["trained_epochs"], 3)
             self.assertEqual(metadata["training_status"], "trained")

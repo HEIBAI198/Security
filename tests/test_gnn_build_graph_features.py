@@ -223,8 +223,10 @@ class GraphFeatureBuilderTests(unittest.TestCase):
             self.assertTrue(any(edge["type"] == "runs_install_script" for edge in edges))
             schema = json.loads((output / "feature_schema.json").read_text(encoding="utf-8"))
             self.assertIn("depends_on", schema["edge_types"])
-            self.assertEqual(schema["schema_version"], 3)
-            self.assertEqual(schema["training_projection"], "relation-aware package projection")
+            self.assertEqual(schema["schema_version"], 5)
+            self.assertEqual(schema["feature_contract"], "runtime_package_features_v3")
+            self.assertEqual(schema["training_edge_types"], ["depends_on"])
+            self.assertEqual(schema["training_projection"], "direct dependency edges only")
 
     def test_missing_positive_path_raises_file_not_found(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,7 +297,7 @@ class GraphFeatureBuilderTests(unittest.TestCase):
             safe_nodes = [node for node in nodes if node["id"] == "pkg:npm:safe"]
             self.assertEqual(len(safe_nodes), 1)
             self.assertGreater(safe_nodes[0]["features"]["risk_keyword_count"], 0)
-            self.assertEqual(safe_nodes[0]["features"]["evidence_source_count"], 2)
+            self.assertNotIn("evidence_source_count", safe_nodes[0]["features"])
 
             edge_keys = {(edge["source"], edge["target"], edge["type"]) for edge in edges}
             self.assertIn(

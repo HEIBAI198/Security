@@ -16,6 +16,7 @@ if __package__ in {None, ""}:
 
 from scripts.gnn.audit_package_risk_dataset import audit_dataset
 from scripts.gnn.artifact_metadata import build_artifact_metadata
+from supplyguard.gnn_features import dependency_payload_feature_values
 
 
 PYG_MODEL_TYPE = "pyg_graphsage_package_risk"
@@ -25,29 +26,9 @@ MISSING_DEPENDENCY_MESSAGE = (
 )
 PACKAGE_EDGE_TYPES = [
     "depends_on",
-    "has_risk_signal",
-    "observed_in",
-    "maintained_by",
-    "sourced_from",
-    "runs_install_script",
 ]
+DEFAULT_MAX_EDGE_GROUP_SIZE = 32
 REQUIRED_SPLIT_KEYS = {"train", "val", "test"}
-RISK_KEYWORDS = (
-    "postinstall",
-    "preinstall",
-    "install script",
-    "exfiltrat",
-    "token",
-    "credential",
-    "backdoor",
-    "malware",
-    "download",
-    "powershell",
-    "eval",
-    "obfuscat",
-)
-
-
 def _load_torch_pyg() -> tuple[Any, type[Any], type[Any]]:
     try:
         import torch
@@ -344,6 +325,9 @@ def _empty_split_metrics() -> dict[str, float | int | None]:
         "precision": None,
         "recall": None,
         "f1": None,
+        "recall_at_fpr_0_01": None,
+        "recall_at_fpr_0_05": None,
+        "fpr_at_threshold": None,
     }
 
 
@@ -363,23 +347,46 @@ def _auc_metrics(labels: list[int], scores: list[float]) -> tuple[float | None, 
         return None, None
 
 
-def _best_threshold(labels: list[int], scores: list[float]) -> float:
+def _threshold_at_fpr_cap(
+    labels: list[int],
+    scores: list[float],
+    fpr_cap: float,
+    *,
+    fallback: float = 0.9,
+) -> float:
+    """在验证集良包误报率不超过 fpr_cap 的前提下选最低阈值，即召回最大。"""
     if not labels or len(set(labels)) < 2:
-        return 0.5
-    candidates = [index / 100 for index in range(5, 96, 5)]
-    best = (0.0, 0.5, 0.0, 0.0)
-    for threshold in candidates:
-        predictions = [1 if score >= threshold else 0 for score in scores]
-        tp = sum(prediction == label == 1 for prediction, label in zip(predictions, labels))
-        fp = sum(prediction == 1 and label == 0 for prediction, label in zip(predictions, labels))
-        fn = sum(prediction == 0 and label == 1 for prediction, label in zip(predictions, labels))
-        precision = tp / max(1, tp + fp)
-        recall = tp / max(1, tp + fn)
-        f1 = 2 * precision * recall / max(1e-12, precision + recall)
-        candidate = (f1, threshold, precision, -abs(threshold - 0.5))
-        if (candidate[0], candidate[2], candidate[3]) > (best[0], best[2], best[3]):
-            best = candidate
-    return float(best[1])
+        return fallback
+    negative_count = max(1, sum(label == 0 for label in labels))
+    for threshold in [index / 100 for index in range(5, 96, 5)]:
+        false_positives = sum(
+            (score >= threshold) and (label == 0)
+            for score, label in zip(scores, labels)
+        )
+        if false_positives / negative_count <= float(fpr_cap):
+            return float(threshold)
+    return float(fallback)
+
+
+def _recall_at_fpr(labels: list[int], scores: list[float], fpr_cap: float) -> float | None:
+    if not labels or len(set(labels)) < 2:
+        return None
+    negative_count = max(1, sum(label == 0 for label in labels))
+    positive_count = max(1, sum(label == 1 for label in labels))
+    best_recall = 0.0
+    for threshold in [index / 100 for index in range(5, 96, 5)]:
+        false_positives = sum(
+            (score >= threshold) and (label == 0)
+            for score, label in zip(scores, labels)
+        )
+        if false_positives / negative_count > float(fpr_cap):
+            continue
+        true_positives = sum(
+            (score >= threshold) and (label == 1)
+            for score, label in zip(scores, labels)
+        )
+        best_recall = max(best_recall, true_positives / positive_count)
+    return float(best_recall)
 
 
 def _fit_temperature(labels: list[int], scores: list[float]) -> float:
@@ -438,6 +445,10 @@ def _split_metrics(
         bucket = (score_array >= lower) & (score_array < upper if upper < 1.0 else score_array <= upper)
         if np.any(bucket):
             ece += float(np.sum(bucket) / len(score_values)) * abs(float(np.mean(score_array[bucket])) - float(np.mean(label_array[bucket])))
+    fpr_at_threshold = (
+        false_positive / max(1, negative_samples)
+        if negative_samples else None
+    )
     return {
         "samples": sample_count,
         "positive_samples": positive_samples,
@@ -450,6 +461,9 @@ def _split_metrics(
         "pr_auc": pr_auc,
         "brier": brier,
         "ece": ece,
+        "recall_at_fpr_0_01": _recall_at_fpr(label_values, score_values, 0.01),
+        "recall_at_fpr_0_05": _recall_at_fpr(label_values, score_values, 0.05),
+        "fpr_at_threshold": fpr_at_threshold,
         "threshold": float(threshold),
         "temperature": float(temperature),
         "confusion_matrix": {
@@ -480,49 +494,15 @@ def _online_case_feature_values(
     signals: list[str] | None = None,
     vulnerabilities: list[dict[str, Any]] | None = None,
 ) -> list[float]:
-    normalized_ecosystem = ecosystem.strip().lower()
-    normalized_package = package.strip().lower()
-    if normalized_ecosystem == "pypi":
-        normalized_package = normalized_package.replace("_", "-").replace(".", "-")
-    signal_values = signals or []
-    vulnerability_values = vulnerabilities or []
-    signal_text = " ".join(str(item) for item in signal_values)
-    vulnerability_text = " ".join(
-        " ".join(str(value) for value in item.values())
-        for item in vulnerability_values
-        if isinstance(item, dict)
+    values = dependency_payload_feature_values(
+        {
+            "ecosystem": ecosystem,
+            "name": package,
+            "version": version,
+            "signals": signals or [],
+            "vulnerabilities": vulnerabilities or [],
+        }
     )
-    text = f"{normalized_package} {version} {signal_text} {vulnerability_text}"
-    lowered = text.lower()
-    aliases = {
-        str(alias).strip()
-        for item in vulnerability_values
-        if isinstance(item, dict)
-        for alias in item.get("aliases", [])
-        if str(alias).strip()
-    }
-    vulnerability_sources = {
-        str(item.get("source") or "").strip().lower()
-        for item in vulnerability_values
-        if isinstance(item, dict) and str(item.get("source") or "").strip()
-    }
-    values = {
-        "ecosystem_npm": 1.0 if normalized_ecosystem == "npm" else 0.0,
-        "ecosystem_pypi": 1.0 if normalized_ecosystem == "pypi" else 0.0,
-        "name_length": float(len(normalized_package)),
-        "name_separator_count": float(
-            normalized_package.count("-")
-            + normalized_package.count("_")
-            + normalized_package.count(".")
-        ),
-        "has_scope": 1.0 if normalized_package.startswith("@") else 0.0,
-        "has_digits": 1.0 if any(char.isdigit() for char in normalized_package) else 0.0,
-        "version_count": 1.0 if version else 0.0,
-        "alias_count": float(len(aliases)),
-        "evidence_source_count": float(1 + len(vulnerability_sources)),
-        "risk_keyword_count": float(sum(1 for keyword in RISK_KEYWORDS if keyword in lowered)),
-        "text_length": float(len(text)),
-    }
     return [float(values.get(name, 0.0)) for name in feature_names]
 
 
@@ -534,6 +514,7 @@ def _online_sanity_case_scores(
     device: str,
     feature_mean: np.ndarray,
     feature_scale: np.ndarray,
+    temperature: float = 1.0,
 ) -> dict[str, float]:
     cases = {
         "react": {"ecosystem": "npm", "package": "react", "version": "18.2.0"},
@@ -559,7 +540,11 @@ def _online_sanity_case_scores(
     )
     with torch.no_grad():
         logits = model(case_data)
-        probabilities = torch.softmax(logits, dim=1)[:, 1].detach().cpu().numpy()
+        probabilities = _positive_probabilities(
+            torch,
+            logits,
+            temperature=temperature,
+        ).detach().cpu().numpy()
     return {
         case_name: round(float(probability), 6)
         for case_name, probability in zip(cases, probabilities)
@@ -576,12 +561,18 @@ def _online_no_edge_metrics(
     device: str,
     feature_mean: np.ndarray,
     feature_scale: np.ndarray,
+    temperature: float = 1.0,
+    high_score_threshold: float = 0.75,
 ) -> dict[str, Any]:
     empty_edge_index = torch.empty((2, 0), dtype=torch.long, device=device)
     no_edge_data = Data(x=x, edge_index=empty_edge_index, y=labels)
     with torch.no_grad():
         logits = model(no_edge_data)
-        probabilities = torch.softmax(logits, dim=1)[:, 1]
+        probabilities = _positive_probabilities(
+            torch,
+            logits,
+            temperature=temperature,
+        )
 
     benign_mask = labels == 0
     malicious_mask = labels == 1
@@ -594,13 +585,21 @@ def _online_no_edge_metrics(
     def _high_rate(mask: Any) -> float | None:
         if int(mask.sum().item()) == 0:
             return None
-        return float((probabilities[mask] >= 0.75).to(dtype=torch.float32).mean().detach().cpu().item())
+        return float(
+            (probabilities[mask] >= float(high_score_threshold))
+            .to(dtype=torch.float32)
+            .mean()
+            .detach()
+            .cpu()
+            .item()
+        )
 
     return {
         "benign_mean_score": _mean(benign_mask),
         "malicious_mean_score": _mean(malicious_mask),
         "benign_high_score_rate": _high_rate(benign_mask),
         "malicious_high_score_rate": _high_rate(malicious_mask),
+        "high_score_threshold": float(high_score_threshold),
         "sanity_cases": _online_sanity_case_scores(
             torch,
             Data,
@@ -609,6 +608,7 @@ def _online_no_edge_metrics(
             device,
             feature_mean,
             feature_scale,
+            temperature=temperature,
         ),
     }
 
@@ -665,9 +665,9 @@ def train_pyg_graphsage_package_risk(
     dropout: float = 0.3,
     random_state: int = 42,
     max_train_positive_ratio: float | None = None,
-    online_loss_weight: float = 0.0,
+    online_loss_weight: float = 0.5,
     device: str = "auto",
-    max_edge_group_size: int | None = None,
+    max_edge_group_size: int | None = DEFAULT_MAX_EDGE_GROUP_SIZE,
     early_stopping_patience: int = 12,
     min_delta: float = 1e-4,
     edge_split_policy: str = "inductive",
@@ -747,7 +747,6 @@ def train_pyg_graphsage_package_risk(
         edge_index = torch.empty((2, 0), dtype=torch.long, device=selected_device)
     data = Data(x=x, edge_index=edge_index, y=y)
     online_data = Data(x=x, edge_index=torch.empty((2, 0), dtype=torch.long, device=selected_device), y=y)
-
     model = _build_model(torch, SAGEConv, x.shape[1], int(hidden_dim), float(dropout)).to(selected_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=float(learning_rate))
     criterion = torch.nn.CrossEntropyLoss(weight=_class_weights(torch, y, train_mask), reduction="none")
@@ -819,7 +818,28 @@ def train_pyg_graphsage_package_risk(
         float(1.0 / (1.0 + np.exp(-np.clip(np.log(np.clip(score, 1e-6, 1 - 1e-6) / np.clip(1 - score, 1e-6, 1)) / calibration_temperature, -40, 40))))
         for score in validation_scores
     ]
-    decision_threshold = _best_threshold(validation_labels_list, calibrated_validation_scores)
+    decision_threshold = _threshold_at_fpr_cap(
+        validation_labels_list,
+        calibrated_validation_scores,
+        0.02,
+        fallback=0.9,
+    )
+    with torch.no_grad():
+        online_validation_logits = model(online_data)[val_mask]
+        calibrated_online_validation_scores = [
+            float(value)
+            for value in _positive_probabilities(
+                torch,
+                online_validation_logits,
+                temperature=calibration_temperature,
+            ).detach().cpu().tolist()
+        ]
+    online_decision_threshold = _threshold_at_fpr_cap(
+        validation_labels_list,
+        calibrated_online_validation_scores,
+        0.01,
+        fallback=0.9,
+    )
     split_metrics = {
         "train": _split_metrics(torch, logits, y, train_mask, threshold=decision_threshold, temperature=calibration_temperature),
         "val": _split_metrics(torch, logits, y, val_mask, threshold=decision_threshold, temperature=calibration_temperature),
@@ -835,6 +855,8 @@ def train_pyg_graphsage_package_risk(
         selected_device,
         feature_mean,
         feature_scale,
+        temperature=calibration_temperature,
+        high_score_threshold=online_decision_threshold,
     )
     cuda_device_name = None
     if torch.cuda.is_available():
@@ -886,6 +908,7 @@ def train_pyg_graphsage_package_risk(
         "final_loss": final_loss,
         "splits": split_metrics,
         "online_no_edge": online_metrics,
+        "online_decision_threshold": float(online_decision_threshold),
     }
 
     output_path.mkdir(parents=True, exist_ok=True)
@@ -923,6 +946,7 @@ def train_pyg_graphsage_package_risk(
         "random_state": int(random_state),
         "max_train_positive_ratio": max_train_positive_ratio,
         "online_loss_weight": online_weight,
+        "online_decision_threshold": float(online_decision_threshold),
         "max_edge_group_size": max_edge_group_size,
         "edge_split_policy": edge_split_policy,
         "early_stopping_patience": int(early_stopping_patience),
@@ -991,7 +1015,6 @@ def train_pyg_graphsage_package_risk(
             epochs=epochs,
             learning_rate=learning_rate,
             random_state=random_state,
-            model_card_filename="numpy_graphsage_model_card.json",
         )
         (output_path / "graphsage_eval.json").write_text(
             json.dumps(metrics, ensure_ascii=False, indent=2, sort_keys=True),
@@ -1010,9 +1033,9 @@ def main() -> int:
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--random-state", type=int, default=42)
     parser.add_argument("--max-train-positive-ratio", type=float, default=None)
-    parser.add_argument("--online-loss-weight", type=float, default=0.0)
+    parser.add_argument("--online-loss-weight", type=float, default=0.5)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
-    parser.add_argument("--max-edge-group-size", type=int, default=None)
+    parser.add_argument("--max-edge-group-size", type=int, default=DEFAULT_MAX_EDGE_GROUP_SIZE)
     parser.add_argument("--early-stopping-patience", type=int, default=12)
     parser.add_argument("--min-delta", type=float, default=1e-4)
     parser.add_argument("--edge-split-policy", choices=["inductive", "transductive"], default="inductive")

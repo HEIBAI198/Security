@@ -73,6 +73,7 @@ from ..dependency_audit import (
     run_dependency_audit,
     serialize_dependency,
     serialize_dependency_audit,
+    serialize_dependencies,
 )
 from ..evidence_discovery import infer_case_evidence_paths
 from ..log_audit import (
@@ -2464,7 +2465,7 @@ def code_audit_to_workspace_findings(result: CodeAuditResult) -> list[dict[str, 
 
 
 def dependency_audit_to_workspace_dependencies(result: DependencyAuditResult) -> list[dict[str, Any]]:
-    return [serialize_dependency(dependency) for dependency in result.dependencies]
+    return serialize_dependencies(result.dependencies)
 
 
 def dependency_audit_to_workspace_findings(result: DependencyAuditResult) -> list[dict[str, Any]]:

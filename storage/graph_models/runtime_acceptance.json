@@ -1,0 +1,226 @@
+{
+  "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
+  "backends": {
+    "numpy": {
+      "backend": "numpy",
+      "checks": [
+        {
+          "detail": "NumPy fallback intentionally disabled; PyG is the only trusted GNN backend.",
+          "name": "numpy_backend",
+          "passed": true
+        }
+      ],
+      "required": false,
+      "status": "disabled"
+    },
+    "pyg": {
+      "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
+      "backend": "pyg",
+      "checks": [
+        {
+          "detail": {
+            "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
+            "calibration_temperature": 2.5,
+            "data_quality_status": "passed",
+            "dataset_hash": "fc8d1e9246ce2b73dce52e855d6bc3386f9ee59533d03afa8c344f166d969a9a",
+            "dataset_version": "fc8d1e9246ce",
+            "decision_threshold": 0.9,
+            "load_error": null,
+            "model_available": true,
+            "model_type": "pyg_graphsage_package_risk",
+            "online_decision_threshold": 0.9,
+            "ood_distance_threshold": 6.0,
+            "score_kind": "probability",
+            "trained_at": "2026-08-09T08:30:34.250907+00:00"
+          },
+          "name": "artifact_load",
+          "passed": true
+        },
+        {
+          "benign_max": 0.6458,
+          "malicious_min": 0.5906,
+          "name": "runtime_threshold_separation",
+          "online_decision_threshold": 0.9,
+          "passed": true
+        },
+        {
+          "actual": "benign",
+          "expected": "benign",
+          "name": "case:react",
+          "passed": true,
+          "reliability": "limited",
+          "score": 0.0766
+        },
+        {
+          "actual": "abstain",
+          "expected": "benign_or_abstain",
+          "name": "case:requests",
+          "passed": true,
+          "reliability": "limited",
+          "score": 0.6458
+        },
+        {
+          "actual": "malicious",
+          "expected": "malicious",
+          "name": "case:x-trader-codec",
+          "passed": true,
+          "reliability": "demo_calibrated",
+          "score": 0.9889
+        },
+        {
+          "actual": "malicious",
+          "expected": "malicious",
+          "name": "case:event-stream",
+          "passed": true,
+          "reliability": "demo_calibrated",
+          "score": 0.9156
+        },
+        {
+          "details": [
+            {
+              "decision_status": "benign",
+              "inference_mode": "dependency_graph",
+              "neighbor_count": 1,
+              "score": 0.0766
+            },
+            {
+              "decision_status": "malicious",
+              "inference_mode": "dependency_graph",
+              "neighbor_count": 1,
+              "score": 0.9156
+            }
+          ],
+          "name": "dependency_graph_batch",
+          "passed": true
+        },
+        {
+          "details": [
+            {
+              "decision_status": "malicious",
+              "name": "event-stream",
+              "neighbor_count": 1,
+              "score": 0.9156
+            },
+            {
+              "decision_status": "abstain",
+              "name": "flatmap-stream",
+              "neighbor_count": 1,
+              "score": 0.5906
+            }
+          ],
+          "name": "event_stream_dependency_graph",
+          "passed": true
+        }
+      ],
+      "dataset_version": "fc8d1e9246ce",
+      "model_type": "pyg_graphsage_package_risk",
+      "online_decision_threshold": 0.9,
+      "required": true,
+      "status": "passed"
+    }
+  },
+  "checks": [
+    {
+      "detail": {
+        "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
+        "calibration_temperature": 2.5,
+        "data_quality_status": "passed",
+        "dataset_hash": "fc8d1e9246ce2b73dce52e855d6bc3386f9ee59533d03afa8c344f166d969a9a",
+        "dataset_version": "fc8d1e9246ce",
+        "decision_threshold": 0.9,
+        "load_error": null,
+        "model_available": true,
+        "model_type": "pyg_graphsage_package_risk",
+        "online_decision_threshold": 0.9,
+        "ood_distance_threshold": 6.0,
+        "score_kind": "probability",
+        "trained_at": "2026-08-09T08:30:34.250907+00:00"
+      },
+      "name": "pyg/artifact_load",
+      "passed": true
+    },
+    {
+      "benign_max": 0.6458,
+      "malicious_min": 0.5906,
+      "name": "pyg/runtime_threshold_separation",
+      "online_decision_threshold": 0.9,
+      "passed": true
+    },
+    {
+      "actual": "benign",
+      "expected": "benign",
+      "name": "pyg/case:react",
+      "passed": true,
+      "reliability": "limited",
+      "score": 0.0766
+    },
+    {
+      "actual": "abstain",
+      "expected": "benign_or_abstain",
+      "name": "pyg/case:requests",
+      "passed": true,
+      "reliability": "limited",
+      "score": 0.6458
+    },
+    {
+      "actual": "malicious",
+      "expected": "malicious",
+      "name": "pyg/case:x-trader-codec",
+      "passed": true,
+      "reliability": "demo_calibrated",
+      "score": 0.9889
+    },
+    {
+      "actual": "malicious",
+      "expected": "malicious",
+      "name": "pyg/case:event-stream",
+      "passed": true,
+      "reliability": "demo_calibrated",
+      "score": 0.9156
+    },
+    {
+      "details": [
+        {
+          "decision_status": "benign",
+          "inference_mode": "dependency_graph",
+          "neighbor_count": 1,
+          "score": 0.0766
+        },
+        {
+          "decision_status": "malicious",
+          "inference_mode": "dependency_graph",
+          "neighbor_count": 1,
+          "score": 0.9156
+        }
+      ],
+      "name": "pyg/dependency_graph_batch",
+      "passed": true
+    },
+    {
+      "details": [
+        {
+          "decision_status": "malicious",
+          "name": "event-stream",
+          "neighbor_count": 1,
+          "score": 0.9156
+        },
+        {
+          "decision_status": "abstain",
+          "name": "flatmap-stream",
+          "neighbor_count": 1,
+          "score": 0.5906
+        }
+      ],
+      "name": "pyg/event_stream_dependency_graph",
+      "passed": true
+    },
+    {
+      "detail": "NumPy fallback intentionally disabled; PyG is the only trusted GNN backend.",
+      "name": "numpy/numpy_backend",
+      "passed": true
+    }
+  ],
+  "dataset_version": "fc8d1e9246ce",
+  "model_type": "pyg_graphsage_package_risk",
+  "status": "passed"
+}

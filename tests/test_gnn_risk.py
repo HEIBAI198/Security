@@ -65,7 +65,7 @@ class PackageRiskScorerTests(unittest.TestCase):
         self.assertEqual(_risk_keyword_count("pure-eval 0.2.3"), 0)
         self.assertGreaterEqual(suspicious["risk_keyword_count"], 1.0)
 
-    def test_online_features_keep_aliases_and_sources_semantics(self):
+    def test_online_features_exclude_alias_and_source_proxies(self):
         scorer = PackageRiskScorer(Path("definitely-missing-model-dir"))
         values = scorer._feature_values(
             "npm",
@@ -76,8 +76,8 @@ class PackageRiskScorerTests(unittest.TestCase):
             "axios 1.6.8 OSV: GHSA-test",
         )
 
-        self.assertEqual(values["alias_count"], 1.0)
-        self.assertEqual(values["evidence_source_count"], 2.0)
+        self.assertNotIn("alias_count", values)
+        self.assertNotIn("evidence_source_count", values)
 
     def test_low_gnn_score_conflicts_with_active_vulnerability_evidence(self):
         self.assertTrue(
@@ -121,6 +121,121 @@ class PackageRiskScorerTests(unittest.TestCase):
         self.assertEqual(result["gnn_score_kind"], "similarity")
         self.assertTrue(result["gnn_evidence_conflict"])
         self.assertLessEqual(result["gnn_confidence"], 0.25)
+
+    @staticmethod
+    def _prediction(
+        score: float,
+        *,
+        inference_mode: str = "package_features_only",
+        threshold: float = 0.6,
+        reliability: str = "limited",
+    ) -> dict:
+        return {
+            "score": score,
+            "model_available": True,
+            "model_type": "pyg_graphsage_package_risk",
+            "confidence": 0.8,
+            "raw_confidence": 0.8,
+            "inference_mode": inference_mode,
+            "reliability": reliability,
+            "decision_threshold": threshold,
+            "calibration_temperature": 0.75,
+            "explanations": [],
+            "score_kind": "probability",
+            "data_quality_status": "passed",
+            "artifact_id": "test",
+            "dataset_version": "test",
+            "dataset_hash": "test",
+            "trained_at": "2026-01-01T00:00:00Z",
+            "graph_neighbor_count": 0,
+        }
+
+    def _score_with_prediction(
+        self,
+        prediction: dict,
+        *,
+        signals: list[str] | None = None,
+    ) -> dict:
+        scorer = PackageRiskScorer(Path("definitely-missing-model-dir"))
+        with mock.patch.object(scorer.registry, "predict", return_value=prediction):
+            return scorer.score_package(
+                "npm",
+                "example",
+                "1.0.0",
+                signals or [],
+                [],
+            )
+
+    def test_no_edge_low_score_is_benign(self):
+        result = self._score_with_prediction(self._prediction(0.0006))
+
+        self.assertEqual(result["gnn_decision_status"], "benign")
+
+    def test_no_edge_keyword_gated_score_is_malicious(self):
+        result = self._score_with_prediction(
+            self._prediction(0.6),
+            signals=["install script: postinstall"],
+        )
+
+        self.assertEqual(result["gnn_decision_status"], "malicious")
+
+    def test_no_edge_mid_score_without_evidence_abstains(self):
+        result = self._score_with_prediction(self._prediction(0.8))
+
+        self.assertEqual(result["gnn_decision_status"], "abstain")
+
+    def test_no_edge_extreme_score_is_malicious_without_evidence(self):
+        result = self._score_with_prediction(self._prediction(0.95))
+
+        self.assertEqual(result["gnn_decision_status"], "malicious")
+
+    def test_graph_mode_uses_threshold_without_keyword_gate(self):
+        result = self._score_with_prediction(
+            self._prediction(0.7, inference_mode="dependency_graph", reliability="model"),
+        )
+
+        self.assertEqual(result["gnn_decision_status"], "malicious")
+
+    def test_graph_mode_abstains_on_keyword_evidence_below_threshold(self):
+        result = self._score_with_prediction(
+            self._prediction(0.55, inference_mode="dependency_graph", reliability="model"),
+            signals=["install script: postinstall"],
+        )
+
+        self.assertEqual(result["gnn_decision_status"], "abstain")
+
+    def test_graph_mode_benign_without_keywords_below_threshold(self):
+        result = self._score_with_prediction(
+            self._prediction(0.55, inference_mode="dependency_graph", reliability="model"),
+        )
+
+        self.assertEqual(result["gnn_decision_status"], "benign")
+
+    def test_no_edge_decision_boundary_uses_0_35_floor(self):
+        from supplyguard.gnn_risk import _decision_status
+
+        self.assertEqual(
+            _decision_status(
+                0.34,
+                0.6,
+                reliability="limited",
+                evidence_conflict=False,
+                inference_mode="package_features_only",
+                risk_keyword_count=0.0,
+            ),
+            "benign",
+        )
+        self.assertEqual(
+            _decision_status(
+                0.5,
+                0.6,
+                reliability="limited",
+                evidence_conflict=False,
+                inference_mode="package_features_only",
+                risk_keyword_count=0.0,
+            ),
+            "abstain",
+        )
 
     def _write_graphsage_fixture(self, data_dir: Path):
         (data_dir / "feature_schema.json").write_text(
@@ -387,7 +502,7 @@ class PackageRiskScorerTests(unittest.TestCase):
             self.assertEqual(result["gnn_model_type"], "sklearn_logistic_regression_graph_features")
             self.assertNotEqual(result["gnn_model_type"], "rule_fallback")
 
-    def test_prefers_graphsage_model_when_available(self):
+    def test_numpy_graphsage_artifact_is_not_loaded_as_a_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data_dir = root / "features"
@@ -411,15 +526,12 @@ class PackageRiskScorerTests(unittest.TestCase):
             )
 
             self._assert_common_fields(result)
-            self.assertTrue(result["model_available"])
-            self.assertEqual(result["model_type"], "numpy_graphsage_mean_aggregator")
-            self.assertEqual(result["gnn_model_type"], "numpy_graphsage_mean_aggregator")
-            self.assertGreaterEqual(result["gnn_score"], 0.0)
-            self.assertLessEqual(result["gnn_score"], 1.0)
-            self.assertLessEqual(result["gnn_confidence"], 0.6)
-            self.assertEqual(result["gnn_inference_mode"], "package_features_only")
+            self.assertFalse(result["model_available"])
+            self.assertEqual(result["model_type"], "rule_fallback")
+            self.assertEqual(result["gnn_model_type"], "rule_fallback")
+            self.assertEqual(result["gnn_decision_status"], "unavailable")
 
-    def test_legacy_graphsage_artifact_is_loaded_only_as_heuristic(self):
+    def test_legacy_numpy_artifact_is_never_loaded(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data_dir = root / "features"
@@ -435,13 +547,11 @@ class PackageRiskScorerTests(unittest.TestCase):
             scorer = PackageRiskScorer(model_dir)
             result = scorer.score_package("npm", "axios", "1.6.8", [], [], existing_risk=100)
 
-            self.assertTrue(result["gnn_model_available"])
-            self.assertEqual(result["gnn_score_kind"], "heuristic")
-            self.assertEqual(result["gnn_data_quality_status"], "legacy")
-            self.assertTrue(result["gnn_artifact_id"].startswith("legacy:numpy_graphsage:"))
-            self.assertIn("schema_version", result["model_error"])
+            self.assertFalse(result["gnn_model_available"])
+            self.assertEqual(result["gnn_model_type"], "rule_fallback")
+            self.assertEqual(result["gnn_decision_status"], "unavailable")
 
-    def test_pyg_artifact_failure_falls_back_to_numpy_model(self):
+    def test_pyg_artifact_failure_falls_back_to_rule_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             model_dir = root / "model"
@@ -460,11 +570,9 @@ class PackageRiskScorerTests(unittest.TestCase):
             result = scorer.score_package("npm", "evil", "1.0.0", ["postinstall token"], [])
 
             self._assert_common_fields(result)
-            self.assertTrue(result["model_available"])
-            self.assertEqual(result["gnn_model_type"], "numpy_graphsage_mean_aggregator")
-            self.assertIn("gnn_confidence", result)
-            self.assertIn("gnn_explanations", result)
-            self.assertIn("similar_malicious_packages", result)
+            self.assertFalse(result["model_available"])
+            self.assertEqual(result["gnn_model_type"], "rule_fallback")
+            self.assertEqual(result["gnn_decision_status"], "unavailable")
 
     @unittest.skipUnless(HAS_TORCH_PYG, "torch/PyG not installed")
     def test_valid_pyg_artifact_wins_loader_priority(self):
@@ -511,10 +619,28 @@ class PackageRiskScorerTests(unittest.TestCase):
             )
 
             scorer = PackageRiskScorer(model_dir)
-            result = scorer.score_package("npm", "evil", "1.0.0", ["postinstall token"], [])
+            base_prediction = scorer.registry.predict(
+                scorer._feature_values(
+                    "npm",
+                    "evil",
+                    "1.0.0",
+                    ["postinstall token"],
+                    [],
+                    "evil 1.0.0 postinstall token",
+                )
+            )
+            base_prediction["score"] = 0.95
+            base_prediction["reliability"] = "limited"
+            with mock.patch.object(
+                scorer.registry,
+                "predict",
+                return_value=base_prediction,
+            ):
+                result = scorer.score_package("npm", "evil", "1.0.0", ["postinstall token"], [])
 
             self._assert_common_fields(result)
             self.assertEqual(result["gnn_model_type"], "pyg_graphsage_package_risk")
+            self.assertEqual(result["gnn_decision_status"], "malicious")
             self.assertTrue(result["similar_malicious_packages"])
             similar = result["similar_malicious_packages"][0]
             self.assertIn("package", similar)
@@ -583,7 +709,11 @@ class PackageRiskScorerTests(unittest.TestCase):
             registry._pyg_model = object()
             registry._pyg_torch = object()
             registry._pyg_data_cls = object()
-            with mock.patch.object(registry, "_predict_pyg_score", return_value=0.98):
+            with mock.patch.object(
+                registry,
+                "_predict_pyg_batch",
+                return_value=(np.asarray([0.98], dtype=np.float32), np.asarray([[1.0]], dtype=np.float32)),
+            ):
                 prediction = registry.predict({"risk_keyword_count": 0.0})
 
             self.assertLess(prediction["score"], 0.75)
@@ -602,7 +732,11 @@ class PackageRiskScorerTests(unittest.TestCase):
             registry._pyg_feature_mean = np.asarray([0.0], dtype=np.float32)
             registry._pyg_feature_scale = np.asarray([1.0], dtype=np.float32)
             registry._pyg_ood_threshold = 6.0
-            with mock.patch.object(registry, "_predict_pyg_score", return_value=0.99):
+            with mock.patch.object(
+                registry,
+                "_predict_pyg_batch",
+                return_value=(np.asarray([0.99], dtype=np.float32), np.asarray([[1.0]], dtype=np.float32)),
+            ):
                 prediction = registry.predict({"risk_keyword_count": 20.0})
 
             self.assertEqual(prediction["reliability"], "out_of_distribution")

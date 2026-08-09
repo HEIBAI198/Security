@@ -1,21 +1,11 @@
 {
-  "artifact_files": {
-    "embedding_index": "package_embedding_index.json",
-    "embeddings": "package_embeddings.npy",
-    "metrics": "graphsage_eval.json",
-    "model": "package_risk_graphsage.pt"
-  },
-  "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
-  "best_epoch": 12,
+  "artifact_id": "numpy_graphsage_mean_aggregator:fc8d1e9246ce:2026-08-09T083035.699923+0000",
   "calibration": {
-    "fit_split": "val",
+    "fit_split": "training",
     "method": "temperature",
-    "temperature": 2.5
+    "temperature": 1.0
   },
-  "cuda_available": true,
-  "cuda_device_name": "NVIDIA GeForce RTX 4060 Laptop GPU",
   "data_quality_status": "passed",
-  "data_quality_warnings": [],
   "dataset_audit": {
     "dependency_edge_count": 16679,
     "edge_counts": {
@@ -102,67 +92,21 @@
   },
   "dataset_hash": "fc8d1e9246ce2b73dce52e855d6bc3386f9ee59533d03afa8c344f166d969a9a",
   "dataset_version": "fc8d1e9246ce",
-  "decision_threshold": 0.9,
-  "device": "cuda",
-  "dropout": 0.3,
-  "early_stopping_patience": 12,
-  "edge_construction": {
-    "edge_types": [
-      "depends_on"
-    ],
-    "max_group_size": 32,
-    "method": "relation-aware package projection from heterogeneous entity graph"
-  },
-  "edge_count": 15162,
-  "edge_split_policy": "inductive",
-  "epochs": 80,
+  "decision_threshold": 0.5,
+  "description": "Two-layer NumPy neural network over package features concatenated with mean neighbor features.",
+  "edge_split_policy": "transductive",
   "feature_contract": "runtime_package_features_v3",
-  "feature_mean": [
-    0.4413594901561737,
-    0.5586404800415039,
-    16.16132164001465,
-    1.000478744506836,
-    0.20943035185337067,
-    0.12206797301769257,
-    0.008137864992022514
+  "feature_source": "self package features + mean aggregated graph-neighbor features",
+  "model_type": "numpy_graphsage_mean_aggregator",
+  "negative_samples": 3569,
+  "notes": [
+    "This is a lightweight GraphSAGE-style neural baseline for environments without torch.",
+    "It uses graph neighborhood aggregation, but is not a PyTorch Geometric implementation.",
+    "Use as a competition demo risk-ranking signal, not a production malicious package detector."
   ],
-  "feature_names": [
-    "ecosystem_npm",
-    "ecosystem_pypi",
-    "name_length",
-    "name_separator_count",
-    "has_scope",
-    "has_digits",
-    "risk_keyword_count"
-  ],
-  "feature_scale": [
-    0.49656185507774353,
-    0.49656185507774353,
-    11.728363037109375,
-    1.53684663772583,
-    0.4069243371486664,
-    0.3273578882217407,
-    0.09750669449567795
-  ],
-  "hard_negative_count": 244,
-  "hard_negative_weighting": true,
-  "hidden_dim": 64,
-  "input_dim": 7,
-  "label_confidence_weighting": true,
-  "label_mapping": {
-    "benign": 0,
-    "malicious": 1
-  },
-  "learning_rate": 0.01,
-  "max_edge_group_size": 32,
-  "max_train_positive_ratio": 1.0,
-  "min_delta": 0.0001,
-  "model_type": "pyg_graphsage_package_risk",
-  "node_count": 5969,
-  "online_decision_threshold": 0.9,
-  "online_loss_weight": 0.5,
+  "online_decision_threshold": 0.5,
   "ood_distance_threshold": 6.0,
-  "random_state": 42,
+  "positive_samples": 2400,
   "runtime_acceptance": {
     "artifact_id": "pyg_graphsage_package_risk:fc8d1e9246ce:2026-08-09T083034.250907+0000",
     "backends": {
@@ -390,16 +334,8 @@
     "status": "passed"
   },
   "schema_version": 6,
-  "split_counts": {
-    "test": 896,
-    "train": 4178,
-    "val": 895
-  },
   "task": "malicious_package",
-  "torch_cuda_version": "12.8",
-  "torch_version": "2.7.0+cu128",
-  "trained_at": "2026-08-09T08:30:34.250907+00:00",
-  "trained_epochs": 24,
-  "training_status": "trained",
-  "trusted_hard_negative_count": 244
+  "trained_at": "2026-08-09T08:30:35.699923+00:00",
+  "training_samples": 5969,
+  "training_status": "trained"
 }

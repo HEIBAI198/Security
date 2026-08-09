@@ -1,33 +1,18 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
+from .gnn_features import (
+    dependency_payload_feature_values,
+    normalize_ecosystem,
+    normalize_package_name,
+    risk_signals,
+)
 from .gnn_models import PackageRiskModelRegistry
 
 
 DEFAULT_MODEL_DIR = Path("storage/graph_models")
-RISK_KEYWORDS = (
-    "postinstall",
-    "preinstall",
-    "install script",
-    "download",
-    "exfiltrat",
-    "token",
-    "credential",
-    "backdoor",
-    "malware",
-    "powershell",
-    "eval",
-    "obfuscat",
-)
-
-RISK_KEYWORD_PATTERNS = tuple(
-    re.compile(rf"(?<![a-z0-9-]){re.escape(keyword)}(?![a-z0-9-])", re.IGNORECASE)
-    for keyword in RISK_KEYWORDS
-)
-
 # Built-in defensive replay packages are reviewed scenario fixtures. Their
 # online evidence can be intentionally extreme, so retain a bounded similarity
 # result instead of treating the fixture as an unknown production package.
@@ -49,22 +34,6 @@ DEMO_CALIBRATED_PACKAGES = {
 }
 
 
-def normalize_ecosystem(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    if text == "pypi":
-        return "pypi"
-    if text == "npm":
-        return "npm"
-    return text or "generic"
-
-
-def normalize_package_name(name: Any, ecosystem: str) -> str:
-    package = str(name or "").strip().lower()
-    if ecosystem == "pypi":
-        package = re.sub(r"[-_.]+", "-", package)
-    return package
-
-
 def risk_label(score: float) -> str:
     if score >= 0.75:
         return "high"
@@ -74,9 +43,14 @@ def risk_label(score: float) -> str:
 
 
 class PackageRiskScorer:
-    def __init__(self, model_dir: str | Path = DEFAULT_MODEL_DIR) -> None:
+    def __init__(
+        self,
+        model_dir: str | Path = DEFAULT_MODEL_DIR,
+        *,
+        prefer_pyg: bool = True,
+    ) -> None:
         self.model_dir = Path(model_dir)
-        self.registry = PackageRiskModelRegistry(self.model_dir)
+        self.registry = PackageRiskModelRegistry(self.model_dir, prefer_pyg=prefer_pyg)
         self.model_available = self.registry.model_available
         self.load_error = self.registry.load_error
         self.model_type = self.registry.model_type
@@ -90,42 +64,64 @@ class PackageRiskScorer:
         vulnerabilities: list[dict[str, Any]] | None = None,
         existing_risk: int | float = 0,
     ) -> dict[str, Any]:
-        normalized_ecosystem = normalize_ecosystem(ecosystem)
-        normalized_name = normalize_package_name(name, normalized_ecosystem)
-        signal_text = " ".join(str(item) for item in (signals or []))
-        vulnerability_text = " ".join(
-            " ".join(str(value) for value in vuln.values())
-            for vuln in (vulnerabilities or [])
-            if isinstance(vuln, dict)
-        )
-        text = f"{normalized_name} {version} {signal_text} {vulnerability_text}"
-        evidence_text = f"{signal_text} {vulnerability_text}"
+        payload = {
+            "ecosystem": ecosystem,
+            "name": name,
+            "version": version,
+            "signals": signals or [],
+            "vulnerabilities": vulnerabilities or [],
+            "risk": existing_risk,
+        }
+        feature_values = dependency_payload_feature_values(payload)
+        return self._result_from_prediction(payload, feature_values, self.registry.predict(feature_values))
 
-        feature_values = self._feature_values(
-            normalized_ecosystem,
-            normalized_name,
-            version,
-            signals or [],
-            vulnerabilities or [],
-            text,
-            evidence_text=evidence_text,
-        )
+    def score_dependencies(
+        self,
+        dependencies: list[dict[str, Any]],
+        dependency_edges: list[tuple[int, int]] | None = None,
+    ) -> list[dict[str, Any]]:
+        if not dependencies:
+            return []
+        edges = dependency_edges or []
+        features = []
+        for dependency in dependencies:
+            values = dependency_payload_feature_values(dependency)
+            features.append(values)
+        predictions = self.registry.predict_many(features, edges)
+        return [
+            self._result_from_prediction(dependency, feature_values, prediction)
+            for dependency, feature_values, prediction in zip(dependencies, features, predictions)
+        ]
 
-        prediction = self.registry.predict(feature_values)
+    def _result_from_prediction(
+        self,
+        dependency: dict[str, Any],
+        feature_values: dict[str, float],
+        prediction: dict[str, Any],
+    ) -> dict[str, Any]:
+        ecosystem = normalize_ecosystem(dependency.get("ecosystem"))
+        name = normalize_package_name(dependency.get("name") or dependency.get("package"), ecosystem)
+        version = str(dependency.get("version") or "")
+        signals = list(dependency.get("signals") or [])
+        vulnerabilities = list(dependency.get("vulnerabilities") or [])
+        existing_risk = dependency.get("risk") or 0
+        text = f"{name} {version} {signals} {vulnerabilities}"
         if prediction.get("model_available"):
             score = float(prediction.get("score", 0.0))
+            decision_threshold = prediction.get("decision_threshold")
             evidence_conflict = self._has_evidence_conflict(
                 score,
-                vulnerabilities or [],
+                vulnerabilities,
                 existing_risk,
+                decision_threshold=decision_threshold,
             )
             confidence = float(prediction.get("confidence", 0.0) or 0.0)
             inference_mode = str(prediction.get("inference_mode") or "package_features_only")
             prediction_reliability = str(prediction.get("reliability") or "")
             demo_calibrated = (
                 prediction_reliability == "out_of_distribution"
-                and normalized_ecosystem == "npm"
-                and normalized_name in DEMO_CALIBRATED_PACKAGES
+                and ecosystem == "npm"
+                and name in DEMO_CALIBRATED_PACKAGES
             )
             reliability = (
                 "demo_calibrated"
@@ -138,9 +134,11 @@ class PackageRiskScorer:
             score_kind = str(prediction.get("score_kind") or self.registry.score_kind or "similarity")
             decision_status = _decision_status(
                 score,
-                prediction.get("decision_threshold"),
+                decision_threshold,
                 reliability=reliability,
                 evidence_conflict=evidence_conflict,
+                inference_mode=inference_mode,
+                risk_keyword_count=float(feature_values.get("risk_keyword_count", 0.0) or 0.0),
             )
             explanations = list(prediction.get("explanations") or [])
             if demo_calibrated:
@@ -150,9 +148,15 @@ class PackageRiskScorer:
             if evidence_conflict:
                 confidence = min(confidence, 0.25)
                 explanations.append("模型低风险输出与漏洞或综合风险强证据冲突；不得据此降低总体风险")
+            similar_packages = []
+            if decision_status == "malicious":
+                similar_packages = self.registry.similar_packages(
+                    feature_values,
+                    embedding=prediction.get("_embedding"),
+                )
             return self._result(
                 score=score,
-                reasons=self._reasons(score, signals or [], vulnerabilities or [], model=True),
+                reasons=self._reasons(score, signals, vulnerabilities, model=True),
                 model_available=True,
                 model_type=str(prediction.get("model_type") or self.registry.model_type),
                 confidence=confidence,
@@ -161,7 +165,7 @@ class PackageRiskScorer:
                 reliability=reliability,
                 evidence_conflict=evidence_conflict,
                 explanations=explanations,
-                similar_packages=self.registry.similar_packages(feature_values),
+                similar_packages=similar_packages,
                 model_error=prediction.get("model_error"),
                 decision_threshold=prediction.get("decision_threshold"),
                 calibration_temperature=prediction.get("calibration_temperature"),
@@ -173,15 +177,16 @@ class PackageRiskScorer:
                 dataset_version=prediction.get("dataset_version") or self.registry.dataset_version,
                 dataset_hash=prediction.get("dataset_hash") or self.registry.dataset_hash,
                 trained_at=prediction.get("trained_at") or self.registry.trained_at,
+                graph_neighbor_count=prediction.get("graph_neighbor_count"),
             )
 
         if prediction.get("model_error"):
             self.load_error = str(prediction.get("model_error"))
 
-        score = self._fallback_score(text, signals or [], vulnerabilities or [], existing_risk)
+        score = self._fallback_score(text, signals, vulnerabilities, existing_risk)
         return self._result(
             score=score,
-            reasons=self._reasons(score, signals or [], vulnerabilities or [], model=False),
+            reasons=self._reasons(score, signals, vulnerabilities, model=False),
             model_available=False,
             model_type="rule_fallback",
             confidence=0.0,
@@ -211,54 +216,29 @@ class PackageRiskScorer:
         text: str,
         evidence_text: str | None = None,
     ) -> dict[str, float]:
-        keyword_text = evidence_text
-        if keyword_text is None:
-            keyword_text = " ".join(str(item) for item in signals)
-            keyword_text = f"{keyword_text} " + " ".join(
-                " ".join(str(value) for value in vuln.values())
-                for vuln in vulnerabilities
-                if isinstance(vuln, dict)
-            )
-        risk_keyword_count = float(_risk_keyword_count(keyword_text))
-        signal_count = float(len(signals))
-        vulnerability_count = float(len(vulnerabilities))
-        aliases = {
-            str(alias).strip()
-            for vulnerability in vulnerabilities
-            if isinstance(vulnerability, dict)
-            for alias in vulnerability.get("aliases", [])
-            if str(alias).strip()
+        payload = {
+            "ecosystem": ecosystem,
+            "name": package,
+            "version": version,
+            "signals": signals,
+            "vulnerabilities": vulnerabilities,
         }
-        vulnerability_sources = {
-            str(vulnerability.get("source") or "").strip().lower()
-            for vulnerability in vulnerabilities
-            if isinstance(vulnerability, dict) and str(vulnerability.get("source") or "").strip()
-        }
-        return {
-            "ecosystem_npm": 1.0 if ecosystem == "npm" else 0.0,
-            "ecosystem_pypi": 1.0 if ecosystem == "pypi" else 0.0,
-            "name_length": float(len(package)),
-            "name_separator_count": float(package.count("-") + package.count("_") + package.count(".")),
-            "has_scope": 1.0 if package.startswith("@") else 0.0,
-            "has_digits": 1.0 if any(char.isdigit() for char in package) else 0.0,
-            "version_count": 1.0 if version else 0.0,
-            "alias_count": float(len(aliases)),
-            "evidence_source_count": float(1 + len(vulnerability_sources)),
-            "risk_keyword_count": risk_keyword_count,
-            "text_length": float(len(text)),
-            "graph_degree": 1.0 + signal_count + vulnerability_count,
-            "graph_risk_signal_degree": risk_keyword_count,
-            "graph_observed_in_degree": 1.0,
-            "graph_ecosystem_degree": 1.0,
-        }
+        values = dependency_payload_feature_values(payload)
+        return values
 
     @staticmethod
     def _has_evidence_conflict(
         score: float,
         vulnerabilities: list[dict[str, Any]],
         existing_risk: int | float,
+        *,
+        decision_threshold: Any = 0.35,
     ) -> bool:
-        if score >= 0.35:
+        try:
+            threshold = float(decision_threshold)
+        except (TypeError, ValueError):
+            threshold = 0.35
+        if score >= threshold:
             return False
         active_vulnerability = any(
             str(
@@ -339,6 +319,7 @@ class PackageRiskScorer:
         dataset_version: Any = None,
         dataset_hash: Any = None,
         trained_at: Any = None,
+        graph_neighbor_count: Any = None,
     ) -> dict[str, Any]:
         bounded_score = max(0.0, min(1.0, float(score)))
         result = {
@@ -376,6 +357,8 @@ class PackageRiskScorer:
             result["gnn_dataset_hash"] = str(dataset_hash)
         if trained_at:
             result["gnn_trained_at"] = str(trained_at)
+        if graph_neighbor_count is not None:
+            result["gnn_graph_neighbor_count"] = int(graph_neighbor_count)
         return result
 
 
@@ -394,8 +377,17 @@ def score_dependency_payload(
     )
 
 
+def score_dependency_payloads(
+    dependencies: list[dict[str, Any]],
+    dependency_edges: list[tuple[int, int]] | None = None,
+    scorer: PackageRiskScorer | None = None,
+) -> list[dict[str, Any]]:
+    active_scorer = scorer or PackageRiskScorer()
+    return active_scorer.score_dependencies(dependencies, dependency_edges)
+
+
 def _risk_keyword_count(text: str) -> int:
-    return sum(1 for pattern in RISK_KEYWORD_PATTERNS if pattern.search(text or ""))
+    return len(risk_signals(text))
 
 
 def _decision_status(
@@ -404,6 +396,8 @@ def _decision_status(
     *,
     reliability: str,
     evidence_conflict: bool,
+    inference_mode: str,
+    risk_keyword_count: float,
 ) -> str:
     if reliability == "out_of_distribution":
         return "abstain"
@@ -413,4 +407,16 @@ def _decision_status(
         threshold_value = float(threshold)
     except (TypeError, ValueError):
         threshold_value = 0.5
-    return "malicious" if float(score) >= threshold_value else "benign"
+    if inference_mode == "package_features_only":
+        if float(score) >= 0.9:
+            return "malicious"
+        if float(score) >= threshold_value and risk_keyword_count >= 1.0:
+            return "malicious"
+        if float(score) < 0.35:
+            return "benign"
+        return "abstain"
+    if float(score) >= threshold_value:
+        return "malicious"
+    if risk_keyword_count >= 1.0 and float(score) >= 0.5:
+        return "abstain"
+    return "benign"

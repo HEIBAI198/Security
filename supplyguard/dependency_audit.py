@@ -29,7 +29,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import ROOT
-from .gnn_risk import PackageRiskScorer, score_dependency_payload
+from .gnn_risk import PackageRiskScorer, score_dependency_payloads
 from .project_imports import ImportErrorDetail, load_import, load_latest_import
 
 try:
@@ -415,6 +415,7 @@ class DependencyRecord:
     version_source: str = "manifest"
     dependency_type: str = "direct"
     resolved: bool = False
+    dependencies: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -836,6 +837,9 @@ def parse_package_lock_packages(
             version_source="lockfile",
             dependency_type="direct" if name in direct_names else "transitive",
             resolved=True,
+            dependencies=[str(name) for name in (info.get("dependencies") or {})]
+            if isinstance(info.get("dependencies"), dict)
+            else [],
         )
         if isinstance(info.get("hasInstallScript"), bool) and info["hasInstallScript"]:
             dependency.signals.append("install script")
@@ -868,6 +872,9 @@ def parse_package_lock_dependencies(
             version_source="lockfile",
             dependency_type="direct" if direct else "transitive",
             resolved=True,
+            dependencies=[str(child_name) for child_name in (info.get("dependencies") or {})]
+            if isinstance(info.get("dependencies"), dict)
+            else [],
         )
         records.append(dependency)
         nested = info.get("dependencies")
@@ -1842,6 +1849,8 @@ def merge_record_into(existing: DependencyRecord, candidate: DependencyRecord) -
         add_unique(existing.signals, signal)
     for vuln in candidate.vulnerabilities:
         add_unique_vulnerability(existing, vuln)
+    for dependency_name in candidate.dependencies:
+        add_unique(existing.dependencies, dependency_name)
 
 
 def normalize_record(record: DependencyRecord) -> None:
@@ -3275,13 +3284,32 @@ def build_cyclonedx_sbom(
             ],
         },
         "components": components,
-        "dependencies": [
-            {
-                "ref": root_ref,
-                "dependsOn": [component["bom-ref"] for component in components],
-            }
-        ],
+        "dependencies": [],
     }
+    component_ref_by_identity = {
+        (dependency.ecosystem, canonical_dependency_name(dependency.ecosystem, dependency.name)): component["bom-ref"]
+        for dependency, component in zip(dependencies, components)
+    }
+    root_dependencies = [
+        component_ref_by_identity[(dependency.ecosystem, canonical_dependency_name(dependency.ecosystem, dependency.name))]
+        for dependency in dependencies
+        if dependency.dependency_type == "direct"
+        and (dependency.ecosystem, canonical_dependency_name(dependency.ecosystem, dependency.name)) in component_ref_by_identity
+    ]
+    payload["dependencies"].append({"ref": root_ref, "dependsOn": sorted(set(root_dependencies))})
+    for dependency in dependencies:
+        ref = component_ref_by_identity.get(
+            (dependency.ecosystem, canonical_dependency_name(dependency.ecosystem, dependency.name))
+        )
+        if not ref:
+            continue
+        child_refs = [
+            component_ref_by_identity.get((dependency.ecosystem, canonical_dependency_name(dependency.ecosystem, name)))
+            for name in dependency.dependencies
+        ]
+        payload["dependencies"].append(
+            {"ref": ref, "dependsOn": sorted({item for item in child_refs if item})}
+        )
     vulnerabilities = build_cyclonedx_vulnerabilities(dependencies, bom_refs_by_dependency_id)
     if vulnerabilities:
         payload["vulnerabilities"] = vulnerabilities
@@ -3521,7 +3549,7 @@ def serialize_dependency_audit(result: DependencyAuditResult | None) -> dict[str
         "target_path": result.target_path,
         "target": result.target,
         "summary": result.summary,
-        "dependencies": [serialize_dependency(dependency) for dependency in result.dependencies],
+        "dependencies": serialize_dependencies(result.dependencies),
         "findings": [
             {
                 "id": finding.id,
@@ -3545,8 +3573,23 @@ def serialize_dependency_audit(result: DependencyAuditResult | None) -> dict[str
     }
 
 
+def serialize_dependencies(dependencies: list[DependencyRecord]) -> list[dict[str, Any]]:
+    payloads = [_serialize_dependency_base(dependency) for dependency in dependencies]
+    if not payloads:
+        return []
+    edges = _dependency_graph_edges(dependencies)
+    gnn_results = score_dependency_payloads(payloads, edges, scorer=dependency_gnn_scorer())
+    for payload, gnn_risk in zip(payloads, gnn_results):
+        _apply_gnn_result(payload, gnn_risk)
+    return payloads
+
+
 def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
-    payload = {
+    return serialize_dependencies([dependency])[0]
+
+
+def _serialize_dependency_base(dependency: DependencyRecord) -> dict[str, Any]:
+    return {
         "name": dependency.name,
         "version": dependency.version,
         "ecosystem": dependency.ecosystem,
@@ -3565,8 +3608,30 @@ def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
         "version_source": dependency.version_source,
         "dependency_type": dependency.dependency_type,
         "resolved": dependency.resolved,
+        "dependency_names": list(dependency.dependencies),
     }
-    gnn_risk = score_dependency_payload(payload, scorer=dependency_gnn_scorer())
+
+
+def _dependency_graph_edges(dependencies: list[DependencyRecord]) -> list[tuple[int, int]]:
+    indices: dict[tuple[str, str], list[int]] = {}
+    for index, dependency in enumerate(dependencies):
+        key = (
+            normalize_ecosystem(dependency.ecosystem),
+            canonical_dependency_name(dependency.ecosystem, dependency.name),
+        )
+        indices.setdefault(key, []).append(index)
+    edges: set[tuple[int, int]] = set()
+    for source_index, dependency in enumerate(dependencies):
+        ecosystem = normalize_ecosystem(dependency.ecosystem)
+        for child_name in dependency.dependencies:
+            key = (ecosystem, canonical_dependency_name(ecosystem, child_name))
+            for target_index in indices.get(key, []):
+                if source_index != target_index:
+                    edges.add((source_index, target_index))
+    return sorted(edges)
+
+
+def _apply_gnn_result(payload: dict[str, Any], gnn_risk: dict[str, Any]) -> None:
     payload.update(
         {
             "gnn_score": gnn_risk["gnn_score"],
@@ -3590,11 +3655,11 @@ def serialize_dependency(dependency: DependencyRecord) -> dict[str, Any]:
             "gnn_decision_threshold": gnn_risk.get("gnn_decision_threshold"),
             "gnn_calibration_temperature": gnn_risk.get("gnn_calibration_temperature"),
             "gnn_ood_distance": gnn_risk.get("gnn_ood_distance"),
+            "gnn_graph_neighbor_count": gnn_risk.get("gnn_graph_neighbor_count", 0),
             "gnn_explanations": gnn_risk.get("gnn_explanations", []),
             "similar_malicious_packages": gnn_risk.get("similar_malicious_packages", []),
         }
     )
-    return payload
 
 
 def serialize_tool_status(status: ToolStatus) -> dict[str, Any]:

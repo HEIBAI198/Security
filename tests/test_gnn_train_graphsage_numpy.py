@@ -72,23 +72,13 @@ class NumpyGraphSageTrainingTests(unittest.TestCase):
             edges = [
                 {
                     "source": "pkg:npm:evil-one",
-                    "target": "signal:postinstall",
-                    "type": "has_risk_signal",
+                    "target": "pkg:pypi:requests",
+                    "type": "depends_on",
                 },
                 {
                     "source": "pkg:npm:evil-two",
-                    "target": "signal:token",
-                    "type": "has_risk_signal",
-                },
-                {
-                    "source": "pkg:pypi:requests",
-                    "target": "source:requirements",
-                    "type": "observed_in",
-                },
-                {
-                    "source": "pkg:pypi:django",
-                    "target": "source:requirements",
-                    "type": "observed_in",
+                    "target": "pkg:pypi:django",
+                    "type": "depends_on",
                 },
             ]
             (data_dir / "train_nodes.jsonl").write_text(
@@ -113,7 +103,7 @@ class NumpyGraphSageTrainingTests(unittest.TestCase):
             self.assertIn("f1", metrics)
             self.assertTrue((output_dir / "package_risk_gnn.npz").exists())
             model_card = json.loads((output_dir / "graphsage_model_card.json").read_text(encoding="utf-8"))
-            self.assertEqual(model_card["schema_version"], 3)
+            self.assertEqual(model_card["schema_version"], 6)
             self.assertEqual(model_card["task"], "malicious_package")
             self.assertTrue(model_card["artifact_id"])
             self.assertTrue(model_card["dataset_hash"])

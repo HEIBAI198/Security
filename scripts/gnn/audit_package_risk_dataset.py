@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,29 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.gnn.dataset_utils import package_group_key
+from supplyguard.gnn_features import LABEL_PROXY_KEYWORDS
+
+
+PROVENANCE_PROXY_FEATURES = {
+    "alias_count",
+    "evidence_source_count",
+    "evidence_text_length",
+    "has_version",
+    "text_length",
+    "version_count",
+}
+FORBIDDEN_TRAINING_EDGE_TYPES = {"has_risk_signal", "in_ecosystem", "observed_in"}
+
+
+def _parses_timestamp(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -86,6 +110,18 @@ def audit_dataset(
             split_group_owner[group] = split_name
 
     warnings: list[str] = []
+    schema_features = {str(item) for item in schema.get("features", [])}
+    schema_risk_keywords = {str(item).strip().lower() for item in schema.get("risk_keywords", [])}
+    training_edge_types = {str(item) for item in schema.get("training_edge_types", [])}
+    proxy_features = sorted(schema_features.intersection(PROVENANCE_PROXY_FEATURES))
+    proxy_keywords = sorted(schema_risk_keywords.intersection(LABEL_PROXY_KEYWORDS))
+    forbidden_training_edges = sorted(training_edge_types.intersection(FORBIDDEN_TRAINING_EDGE_TYPES))
+    if proxy_features:
+        warnings.append(f"训练特征包含数据来源或标注格式代理变量: {', '.join(proxy_features)}")
+    if proxy_keywords:
+        warnings.append(f"风险关键词包含标签同义词: {', '.join(proxy_keywords)}")
+    if forbidden_training_edges:
+        warnings.append(f"训练投影包含标签或来源代理关系: {', '.join(forbidden_training_edges)}")
     positive_ratio = label_counts.get(1, 0) / max(1, len(package_nodes))
     if positive_ratio > float(max_positive_ratio):
         warnings.append(
@@ -140,6 +176,48 @@ def audit_dataset(
     dependency_edges = [edge for edge in edges if edge.get("type") == "depends_on"]
     if not dependency_edges:
         warnings.append("没有 depends_on 真实依赖边，图模型只能学习共享信号关系")
+    negative_nodes = [node for node in package_nodes if int(node.get("label") or 0) == 0]
+    pypi_negative_count = sum(
+        str(node.get("ecosystem") or "").strip().lower() == "pypi"
+        for node in negative_nodes
+    )
+    pypi_negative_coverage = pypi_negative_count / max(1, len(negative_nodes))
+    negative_positive_ratio = label_counts.get(0, 0) / max(1, label_counts.get(1, 0))
+    timestamped = sum(
+        _parses_timestamp(
+            node.get("published")
+            or node.get("modified")
+            or node.get("created")
+            or node.get("timestamp")
+        )
+        for node in package_nodes
+    )
+    timestamp_coverage = timestamped / max(1, len(package_nodes))
+    split_policy = str(schema.get("split_policy") or "").strip().lower()
+    if negative_positive_ratio < 1.0:
+        warnings.append(f"负/正样本比 {negative_positive_ratio:.2f} 低于 1.0，需要补充更多独立正常包")
+    if pypi_negative_coverage < 0.25:
+        warnings.append(f"PyPI 负样本占比 {pypi_negative_coverage:.1%} 低于 25%，缺少独立 PyPI 正常包")
+    if timestamp_coverage < 0.95:
+        warnings.append(f"时间戳覆盖率 {timestamp_coverage:.1%} 低于 95%，无法进行可靠的时间外推评估")
+    if split_policy != "time":
+        warnings.append("切分策略不是时间外推（split_policy != time），评估可能泄漏未来信息")
+    positive_nodes = [node for node in package_nodes if int(node.get("label") or 0) == 1]
+    positive_metadata_present = sum(
+        bool(
+            node.get("maintainers")
+            or node.get("repository")
+            or node.get("license")
+            or node.get("dependencies")
+        )
+        for node in positive_nodes
+    )
+    positive_metadata_coverage = positive_metadata_present / max(1, len(positive_nodes))
+    if positive_metadata_coverage < 0.3:
+        warnings.append(
+            f"正样本元数据覆盖率 {positive_metadata_coverage:.1%} 低于 30%，"
+            "生态特征可能退化为来源代理"
+        )
 
     node_type_counts = Counter(str(node.get("type") or "unknown") for node in nodes)
     edge_type_counts = Counter(str(edge.get("type") or "unknown") for edge in edges)
@@ -164,6 +242,12 @@ def audit_dataset(
         "samples": len(package_nodes),
         "label_counts": {"positive": label_counts.get(1, 0), "negative": label_counts.get(0, 0)},
         "positive_ratio": round(positive_ratio, 6),
+        "negative_positive_ratio": round(negative_positive_ratio, 6),
+        "pypi_negative_count": pypi_negative_count,
+        "pypi_negative_coverage": round(pypi_negative_coverage, 6),
+        "timestamp_coverage": round(timestamp_coverage, 6),
+        "positive_metadata_coverage": round(positive_metadata_coverage, 6),
+        "split_policy": split_policy,
         "split_stats": split_stats,
         "split_overlap_ids": sorted(set(overlaps)),
         "split_overlap_groups": sorted(set(group_overlaps)),
@@ -181,6 +265,12 @@ def audit_dataset(
             for relation in sorted(heterogeneous_relations)
         },
         "dependency_edge_count": len(dependency_edges),
+        "label_leakage_checks": {
+            "proxy_features": proxy_features,
+            "proxy_keywords": proxy_keywords,
+            "forbidden_training_edge_types": forbidden_training_edges,
+            "passed": not proxy_features and not proxy_keywords and not forbidden_training_edges,
+        },
         "warnings": warnings,
         "ready_for_training": not warnings,
     }

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +15,7 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.gnn.artifact_metadata import build_artifact_metadata
-
-
-GRAPH_FEATURES = [
-    "graph_degree",
-    "graph_risk_signal_degree",
-    "graph_observed_in_degree",
-    "graph_ecosystem_degree",
-]
+GRAPH_FEATURES: list[str] = []
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -45,23 +38,7 @@ def _package_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _graph_feature_map(edges: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
-    counters: dict[str, Counter[str]] = defaultdict(Counter)
-    for edge in edges:
-        source = str(edge.get("source") or "")
-        edge_type = str(edge.get("type") or "")
-        if not source.startswith("pkg:"):
-            continue
-        counters[source]["graph_degree"] += 1
-        if edge_type == "has_risk_signal":
-            counters[source]["graph_risk_signal_degree"] += 1
-        elif edge_type == "observed_in":
-            counters[source]["graph_observed_in_degree"] += 1
-        elif edge_type == "in_ecosystem":
-            counters[source]["graph_ecosystem_degree"] += 1
-    return {
-        node_id: {name: float(counter.get(name, 0)) for name in GRAPH_FEATURES}
-        for node_id, counter in counters.items()
-    }
+    return {}
 
 
 def _feature_matrix(
@@ -91,26 +68,17 @@ def _feature_matrix(
 
 def _adjacency(node_ids: list[str], edges: list[dict[str, Any]]) -> list[list[int]]:
     index = {node_id: idx for idx, node_id in enumerate(node_ids)}
-    signal_neighbors: dict[str, list[int]] = defaultdict(list)
-    source_neighbors: dict[str, list[int]] = defaultdict(list)
-
+    adjacency: list[set[int]] = [set() for _ in node_ids]
     for edge in edges:
         source = str(edge.get("source") or "")
         target = str(edge.get("target") or "")
         edge_type = str(edge.get("type") or "")
-        if source not in index:
+        if edge_type != "depends_on" or source not in index or target not in index:
             continue
-        if edge_type == "has_risk_signal":
-            signal_neighbors[target].append(index[source])
-        elif edge_type == "observed_in":
-            source_neighbors[target].append(index[source])
-
-    adjacency: list[set[int]] = [set() for _ in node_ids]
-    for group in list(signal_neighbors.values()) + list(source_neighbors.values()):
-        for left in group:
-            for right in group:
-                if left != right:
-                    adjacency[left].add(right)
+        left, right = index[source], index[target]
+        if left != right:
+            adjacency[left].add(right)
+            adjacency[right].add(left)
 
     return [sorted(items) for items in adjacency]
 
@@ -255,6 +223,7 @@ def train_graphsage_package_risk(
         random_state=random_state,
     )
     probs = _predict(features[test_idx], weights)
+    online_decision_threshold = 0.5
     metrics = {
         **_metrics(labels[test_idx], probs),
         "samples": int(len(labels)),
@@ -264,6 +233,7 @@ def train_graphsage_package_risk(
         "epochs": int(epochs),
         "hidden_dim": int(hidden_dim),
         "model_type": "numpy_graphsage_mean_aggregator",
+        "online_decision_threshold": online_decision_threshold,
     }
 
     output_path.mkdir(parents=True, exist_ok=True)
@@ -300,6 +270,7 @@ def train_graphsage_package_risk(
         "training_samples": metrics["samples"],
         "positive_samples": metrics["positive_samples"],
         "negative_samples": metrics["negative_samples"],
+        "online_decision_threshold": online_decision_threshold or artifact_metadata["decision_threshold"],
         "notes": [
             "This is a lightweight GraphSAGE-style neural baseline for environments without torch.",
             "It uses graph neighborhood aggregation, but is not a PyTorch Geometric implementation.",

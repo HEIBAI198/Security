@@ -1,233 +1,127 @@
 # GraphRAG + GNN 实现说明
 
-本文记录 Security / SupplyGuard KG 项目中 GraphRAG + GNN 风险增强的落地方案，面向竞赛答辩、复现和后续维护。
+本文记录 Security / SupplyGuard KG 项目中 GraphRAG + GNN 风险增强的落地方案，面向竞赛答辩、复现和后续维护。当前版本为 2026-08-09 的 v3 数据与模型。
 
 ## 总体目标
 
 本轮优化不是替换现有扫描器，而是在依赖审计、知识图谱和安全助手之上增加两层能力：
 
-- 用 OpenSSF malicious-packages 数据训练包级风险模型，为依赖输出 `gnn_score`、`gnn_label`、`gnn_model_type`、`gnn_confidence`、`gnn_explanations` 和相似恶意包证据。
+- 用 OpenSSF malicious-packages 数据训练包级风险模型，为依赖输出 `gnn_score`、`gnn_label`、`gnn_model_type`、`gnn_confidence`、`gnn_explanations`、`gnn_decision_status` 和相似恶意包证据。
 - 用 GraphRAG 从知识图谱中召回相关节点、边和攻击路径，让 Copilot 回答带有结构化证据、召回轨迹和缺失证据提示。
 
 一句话概括：
 
 > GNN 给依赖包提供图风险排序信号，GraphRAG 把依赖、构建、产物、运行日志和攻击路径串成可解释证据链。
 
-## 数据来源
+## 数据来源与规模（v3）
 
 正样本：
 
-- 数据集：OpenSSF malicious-packages
-- 本地路径：`D:\datasets\malicious-packages`
-- 清洗后文件：`storage\gnn_datasets\malicious_packages.jsonl`
-- 当前规模：10000 条正样本
+- 来源：OpenSSF malicious-packages（本地 `D:\datasets\malicious-packages`，格式化文件 `storage\gnn_datasets\candidate\malicious_packages.jsonl`）。
+- 平衡抽样：npm 1200 + pypi 1200 = 2400 条（`scripts/gnn/sample_balanced_positives.py`，seed=42）。旧版本只用 2000 个 npm 正样本，会让模型学到“PyPI 即良性”的错误先验。
+- 已用注册表元数据补齐 999 条（41.6%）的 maintainers/repository/license/dependencies 等字段（`scripts/gnn/enrich_positives_metadata.py`）；其余为已下架恶意包，无法补全，属于正常现象。
 
 负样本：
 
-- weak negatives：从当前项目依赖文件、锁文件和 SBOM 中构造，当前写入 689 条。
-- ecosystem negatives：本机未发现 `D:\datasets\package-metadata\npm_pypi_metadata.jsonl`，因此使用 weak negatives 作为本地种子。
-- hard negatives：从 ecosystem negatives 中筛选近似高风险但未标恶意的样本，当前写入 8 条。
+- 独立注册表人工审核正常包：npm 1784 + pypi 1785 = 3569 条，来自 PyPI/npm JSON API + 仓库锁文件 + 两层依赖闭包（`scripts/gnn/fetch_curated_normal_packages.py`、`scripts/gnn/merge_negative_packages.py`），`label_confidence=0.85`。
+- hard negatives：244 条（`build_hard_negatives.py`），全部保留可信正常来源和人工筛选依据。
 
-图特征数据：
+图数据：
 
-- 输出目录：`storage\gnn_datasets\features`
-- 节点数：10689
-- 原始图边数：20485
-- 训练脚本构造的 package-package 边数：25167052
-- split：train 7482 / val 1603 / test 1604
-- 数据卡：`dataset_card.json`
-- 固定切分：`splits.json`
+- 包节点 5969，总节点 12174，异构事实边 44718。
+- 真实 `depends_on` 边 16679 条；归纳式切分后训练边 15162 条，仅使用 `depends_on`。
+- split：train 4178 / val 895 / test 896，按发布时间 70/15/15 时间外推，时间戳覆盖率 100%。
+- 数据卡：`dataset_card.json`；固定切分：`splits.json`；审计结果：`dataset_audit.json`。
 
 ## 数据流水线命令
 
-### GNN 数据与评估门禁
-
-GNN 当前明确解决的是“恶意包相似度分类”任务，不等同于漏洞是否可达、是否被调用或项目综合风险。正样本和负样本必须分别记录 `label_source`、`label_confidence`；训练节点还应包含 `published`/`modified` 时间和 `dependencies` 依赖列表。
-
-- 正样本应来自可信恶意包情报，例如 OpenSSF malicious-packages。
-- 正常包只能来自独立生态元数据或人工复核，不能把“没有扫描到风险”直接当成高置信安全标签。
-- 本地锁文件提取的包只作为弱负样本，默认标签置信度为 0.2。
-- `depends_on` 边来自 manifest/lockfile 的真实依赖关系；共享风险词仅作为辅助关系。
-
 ```powershell
-D:\Anaconda3\python.exe scripts\gnn\build_weak_negatives.py --root . --output storage\gnn_datasets\weak_negative_packages.jsonl --positive-path storage\gnn_datasets\malicious_packages.jsonl
-Copy-Item storage\gnn_datasets\weak_negative_packages.jsonl storage\gnn_datasets\ecosystem_negative_packages.jsonl
-D:\Anaconda3\python.exe scripts\gnn\build_hard_negatives.py --negative-path storage\gnn_datasets\ecosystem_negative_packages.jsonl --output storage\gnn_datasets\hard_negative_packages.jsonl --limit 5000
-D:\Anaconda3\python.exe scripts\gnn\build_graph_features.py --positive storage\gnn_datasets\malicious_packages.jsonl --negative storage\gnn_datasets\weak_negative_packages.jsonl --negative storage\gnn_datasets\ecosystem_negative_packages.jsonl --negative storage\gnn_datasets\hard_negative_packages.jsonl --output storage\gnn_datasets\features
-
-D:\Anaconda3\python.exe scripts\gnn\audit_package_risk_dataset.py --data storage\gnn_datasets\features --output storage\gnn_datasets\features\dataset_audit.json --fail-on-warning
+D:\Anaconda3\python.exe scripts\gnn\sample_balanced_positives.py --source storage\gnn_datasets\candidate\malicious_packages.jsonl --output storage\gnn_datasets\candidate\malicious_packages_balanced.jsonl --per-ecosystem 1200 --random-state 42
+D:\Anaconda3\python.exe scripts\gnn\enrich_positives_metadata.py --source storage\gnn_datasets\candidate\malicious_packages_balanced.jsonl --output storage\gnn_datasets\candidate\malicious_packages_balanced_enriched.jsonl --max-workers 8
+D:\Anaconda3\python.exe scripts\gnn\fetch_curated_normal_packages.py --ecosystem npm --lockfile frontend\package-lock.json --lockfile cases\3cx-supply-chain\sample-repo\package-lock.json --depth 2 --max-workers 8 --output storage\gnn_datasets\candidate\npm_normal_extra.jsonl
+D:\Anaconda3\python.exe scripts\gnn\fetch_curated_normal_packages.py --ecosystem pypi --depth 2 --max-workers 8 --output storage\gnn_datasets\candidate\pypi_normal_packages.jsonl
+D:\Anaconda3\python.exe scripts\gnn\merge_negative_packages.py --source storage\gnn_datasets\candidate\curated_normal_packages_expanded.jsonl --source storage\gnn_datasets\candidate\npm_normal_extra.jsonl --source storage\gnn_datasets\candidate\pypi_normal_packages.jsonl --positive-path storage\gnn_datasets\candidate\malicious_packages_balanced.jsonl --output storage\gnn_datasets\candidate\ecosystem_negative_packages.jsonl
+D:\Anaconda3\python.exe scripts\gnn\build_hard_negatives.py --negative-path storage\gnn_datasets\candidate\ecosystem_negative_packages.jsonl --output storage\gnn_datasets\candidate\hard_negative_packages.jsonl --limit 5000
+D:\Anaconda3\python.exe scripts\gnn\build_graph_features.py --positive storage\gnn_datasets\candidate\malicious_packages_balanced_enriched.jsonl --negative storage\gnn_datasets\candidate\ecosystem_negative_packages.jsonl --negative storage\gnn_datasets\candidate\hard_negative_packages.jsonl --output storage\gnn_datasets\candidate\features-v3
+D:\Anaconda3\python.exe scripts\gnn\audit_package_risk_dataset.py --data storage\gnn_datasets\candidate\features-v3 --output storage\gnn_datasets\candidate\features-v3\dataset_audit.json --fail-on-warning
 ```
+
+审计门禁（不满足即 warning，`--fail-on-warning` 阻止训练）：
+
+- PyPI 负样本占比 >= 25%（当前 50.0%）。
+- 负/正样本比 >= 1.0（当前 1.49）。
+- 时间戳覆盖率 >= 95%（当前 100%），切分策略必须是时间外推（`split_policy == time`）。
+- 正样本元数据覆盖率 >= 30%（当前 41.6%），防止生态特征退化为来源代理。
+- 特征契约不包含标签同义词、来源计数、文本长度、别名数量、版本完整度等代理变量；训练投影只使用 `depends_on`。
+
+## 特征契约 `runtime_package_features_v3`
+
+模型使用 7 个基础特征（与线上扫描完全一致）：
+
+- `ecosystem_npm` / `ecosystem_pypi`
+- `name_length` / `name_separator_count` / `has_scope` / `has_digits`
+- `risk_keyword_count`（postinstall/preinstall/install script/download/exfiltrate/token/credential/backdoor/powershell/eval/obfuscate 等）
+
+说明：v3 曾尝试加入 `maintainer_count`、`dependency_count`、`has_repository`、`has_homepage`、`has_license`、`has_install_script`、`graph_degree` 等生态/图特征，但实验表明这些“元数据存在性”特征在正样本元数据覆盖率只有 41.6% 的情况下会变成标签来源代理（已下架恶意包天然缺元数据，正常包天然有元数据），并导致 react/requests 等无元数据输入被打成高恶意分。因此最终契约只保留验证过的 7 个基础特征；特征提取器仍会计算生态字段，供后续数据完善后复用。
 
 ## 模型训练
 
-推荐模型：PyTorch Geometric GraphSAGE。
-
-专用环境：
+推荐模型：PyTorch Geometric GraphSAGE。专用环境：`supplyguard-gnn`（torch 2.7.0+cu128，CUDA 可用，RTX 4060 Laptop GPU）。
 
 ```powershell
-conda create -n supplyguard-gnn python=3.11 -y
-conda run -n supplyguard-gnn python -m pip install -r requirements-gnn-pyg.txt
+D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_pyg_graphsage_package_risk.py --data storage\gnn_datasets\candidate\features-v3 --output storage\graph_models --epochs 80 --hidden-dim 64 --learning-rate 0.01 --dropout 0.3 --random-state 42 --require-audit-pass --edge-split-policy inductive --online-loss-weight 0.5 --max-edge-group-size 32 --max-train-positive-ratio 1.0 --device auto
 ```
 
-本次环境验证结果：
+关键训练配置：
 
-- Python：`D:\Anaconda3\envs\supplyguard-gnn\python.exe`
-- torch：`2.12.1+cpu`
-- PyG：`2.8.0`
-- CUDA：不可用。本次训练使用 CPU wheel 完成；如需 GPU 加速，需替换为 CUDA 版 PyTorch wheel。
+- schema v6，`feature_contract=runtime_package_features_v3`，`task=malicious_package`，归纳式边隔离。
+- 训练集拟合均值/方差，验证集早停 + 温度校准 + 阈值选择，测试集不参与调参。
+- 阈值按“验证集良包误报率上限”选择：图模式 FPR <= 2%，无邻居模式 FPR <= 1%；当前 `decision_threshold=0.9`、`online_decision_threshold=0.9`、温度 `2.5`。
+- 评估新增 `recall_at_fpr_0.01` / `recall_at_fpr_0.05` / `fpr_at_threshold`。
 
-训练命令：
+当前产物（`storage\graph_models`）：
 
-```powershell
-D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_pyg_graphsage_package_risk.py --data storage\gnn_datasets\features --output storage\graph_models --epochs 80 --hidden-dim 64 --learning-rate 0.01 --dropout 0.3 --random-state 42
-
-# 正式训练开启门禁；审计有警告时不会覆盖旧模型
-D:\Anaconda3\Scripts\conda.exe run -n supplyguard-gnn python scripts\gnn\train_pyg_graphsage_package_risk.py --data storage\gnn_datasets\features --output storage\graph_models --epochs 80 --hidden-dim 64 --learning-rate 0.01 --dropout 0.3 --random-state 42 --require-audit-pass --edge-split-policy inductive
-```
-
-主要输出：
-
-- `storage\graph_models\package_risk_graphsage.pt`
-- `storage\graph_models\package_risk_graphsage_metadata.json`
-- `storage\graph_models\package_embeddings.npy`
-- `storage\graph_models\package_embedding_index.json`
-- `storage\graph_models\graphsage_eval.json`
-
-旧模型历史测试集指标（仅用于说明当时的运行结果，不代表本轮改造后的真实性能）：
-
-```json
-{
-  "accuracy": 0.9993765586034913,
-  "precision": 1.0,
-  "recall": 0.9993328885923949,
-  "f1": 0.9996663329996663,
-  "samples": 1604
-}
-```
-
-注意：当前负样本仍以项目内弱负样本为主，旧指标只能说明在当时构造数据和固定 split 上模型能学到区分信号，不能宣称真实世界恶意包检测准确率接近 100%。本轮正式训练必须先通过数据审计。
-
-训练器现在只用训练集拟合特征均值/方差，按验证集 PR-AUC 早停，在验证集选择决策阈值并做温度校准；测试集只用于最终报告。元数据会记录 `decision_threshold`、`calibration.temperature`、`edge_split_policy`、`data_quality_warnings` 和 `dataset_audit`。在线输入明显偏离训练分布时会标记 `gnn_reliability=out_of_distribution` 并显示“GNN 暂不判定”。
+- `package_risk_graphsage.pt` / `package_risk_graphsage_metadata.json`
+- `package_embeddings.npy` / `package_embedding_index.json`
+- `graphsage_eval.json` / `runtime_acceptance.json`
 
 ## 模型加载与降级
 
 后端加载优先级：
 
-1. PyG GraphSAGE：`package_risk_graphsage.pt`
-2. NumPy GraphSAGE fallback：`package_risk_gnn.npz`
-3. scikit-learn fallback：`package_risk.pkl`
-4. 规则 fallback：基于 install script、漏洞、关键词和已有风险分
+1. PyG GraphSAGE：`package_risk_graphsage.pt`（唯一可信后端）
+2. scikit-learn：`package_risk.pkl`（仅当元数据可信时）
+3. 规则 fallback
 
-基础运行环境不强依赖 PyTorch/PyG。如果后端环境没有 torch，会稳定降级到 NumPy GraphSAGE 或规则评分。本次验证：
+**NumPy GraphSAGE 已禁用**：`.npz` 产物保留为参考存档，但注册表不再加载它。无 torch 环境直接返回 `gnn_model_available=false`、`gnn_decision_status=unavailable`、`score_kind=heuristic`，避免把近随机分数当真模型展示。实测 base 环境 react 输出 0.05 / unavailable。
 
-- `supplyguard-gnn` 环境能加载 PyG 模型，返回 `gnn_model_type = pyg_graphsage_package_risk`。
-- base 环境无 torch 时能回退，返回 `gnn_model_type = numpy_graphsage_mean_aggregator`，并在 `model_error` 中说明 PyG inference 缺依赖。
+## 在线决策策略
+
+- 无邻居（`package_features_only`）：分数 >= 0.9 判恶意；分数 >= 在线阈值且 `risk_keyword_count >= 1` 判恶意；分数 < 0.35 判良性；其余 abstain（暂不判定）。
+- 图模式（`dependency_graph`）：分数 >= 图阈值判恶意；有关键词证据但分数低于阈值且 >= 0.5 时 abstain（不放行可疑包）；否则良性。
+- 分布外（OOD）：`gnn_decision_status=abstain`；内置演示校准包（`DEMO_CALIBRATED_PACKAGES`）保留原始分数并按阈值判定，避免演示案例被误拒。
+- 模型低分与漏洞/综合风险强证据冲突时返回 `conflict`，任何 GNN 结果不得降低综合风险。
 
 ## GraphRAG 检索
 
-核心函数：
+核心函数：`graph_rag_retrieve(graph_payload, question)`，支持 `embedding_index` 参数注入。
 
-```python
-graph_rag_retrieve(graph_payload, question)
-```
+输出字段：`intent`、`channels`（keyword / risk / attack_path / embedding）、`evidence_table`、`retrieval_trace`、`missing_evidence`、`top_nodes` / `top_edges` / `top_attack_paths`、`why_selected`。
 
-输出保持旧字段兼容，并新增：
-
-- `intent`
-- `channels`
-- `evidence_table`
-- `retrieval_trace`
-- `missing_evidence`
-
-支持的 intent：
-
-- `dependency_risk`
-- `build_risk`
-- `runtime_evidence`
-- `attack_path`
-- `general`
-
-召回通道：
-
-- `keyword`：关键词召回节点和路径。
-- `risk`：高风险/GNN 高分节点召回。
-- `attack_path`：按问题意图或路径文本重合召回攻击路径。
-- `embedding`：为后续 embedding 相似召回预留；未配置时稳定返回空列表。
-
-排序逻辑：
-
-- 多 seed 的 2-hop graph expansion。
-- Personalized PageRank。
-- 节点风险分与 GNN score 加权。
-- intent 边类型偏好，例如 `DEPENDENCY_REACHES_BUILD`、`FINDING_AFFECTS`、`PACKAGE_HAS_VULN`、`BUILD_TO_RUNTIME`。
-- path-aware edge selection，避免返回攻击路径但丢失关键边。
-- nodes / edges / paths 均输出 `why_selected`。
-
-防御性处理：
-
-- `graph_payload=None`、`nodes=None`、`attack_paths=None`、`query=None` 不会导致检索崩溃。
-- 非数值 score、空 `node_ids` / `edge_ids` 会安全降级。
-- 同分节点使用 id/label 做稳定 tie-breaker，便于 UI 和报告复现。
-
-## Assistant 和前端集成
-
-Assistant context 现在会包含：
-
-- GraphRAG 原始 context 文本
-- intent
-- evidence table
-- missing evidence
-- retrieval trace
-- top nodes / edges / attack paths
-
-前端增强：
-
-- 依赖详情显示 GNN 模型类型、置信度、解释和相似恶意包。
-- Copilot 右侧 GraphRAG 证据卡显示 intent、通道命中数、证据压缩表、检索轨迹、证据缺口和 `why_selected`。
-- 不改导航和主布局，只在既有工作台面板中增加可扫描证据。
-
-## 评估脚本
-
-GNN 评估：
-
-```powershell
-D:\Anaconda3\python.exe scripts\gnn\evaluate_package_risk.py --predictions storage\graph_models\...
-```
-
-GraphRAG 检索评估：
-
-```powershell
-D:\Anaconda3\python.exe scripts\graphrag\evaluate_retrieval.py --cases-json storage\eval\graphrag_cases.json --output storage\eval\graphrag_eval.json
-```
-
-指标包括：
-
-- `target_dependency_recall`
-- `target_attack_path_recall`
-- `evidence_coverage`
-- `retrieval_trace_completeness`
+embedding channel 已启用：`PackageEmbeddingIndex` 读取 `package_embeddings.npy`，对图内包节点做余弦相似召回，返回 `embedding_similarity` 命中及 `matched_package`。
 
 ## 验证命令
 
 ```powershell
 D:\Anaconda3\python.exe -m unittest discover -s tests
-D:\Anaconda3\python.exe -m py_compile supplyguard\gnn_models.py supplyguard\gnn_risk.py supplyguard\graph_rag.py supplyguard\graph_rag_intent.py supplyguard\graph_rag_retrievers.py supplyguard\graph_rag_ranker.py supplyguard\graph_rag_context.py supplyguard\llm_assistant.py supplyguard\routes\security.py scripts\gnn\dataset_utils.py scripts\gnn\build_ecosystem_negatives.py scripts\gnn\build_hard_negatives.py scripts\gnn\build_graph_features.py scripts\gnn\train_pyg_graphsage_package_risk.py scripts\gnn\evaluate_package_risk.py scripts\graphrag\evaluate_retrieval.py
-cd frontend
-npm run build
+D:\Anaconda3\envs\supplyguard-gnn\python.exe scripts\gnn\validate_runtime_artifact.py --model-dir storage\graph_models
 ```
 
-## 演示问题
-
-- 哪些依赖与恶意包模式相似？
-- 构建流程有什么风险？
-- 运行期日志有没有异常外联？
-- 解释这条攻击路径为什么高风险。
-- GraphRAG 召回了哪些证据，哪些证据还缺失？
+`validate_runtime_artifact.py` 把验收结果写回 `runtime_acceptance.json` 并回填到模型元数据。当前 pyg 验收 passed：react 0.0766/良性、requests 0.6458/不判恶意、x-trader-codec 0.9889/恶意（演示校准）、event-stream 0.9156/恶意、flatmap-stream 0.5906/abstain（证据门控）、numpy disabled。
 
 ## 后续增强
 
-- 替换为 CUDA 版 PyTorch wheel，减少训练时间。
-- 引入更高质量的 npm/PyPI 正常包元数据作为 ecosystem negatives。
-- 增加维护者、下载量、发布时间、版本发布频率等生态特征。
-- 将 `package_embeddings.npy` 接入 GraphRAG embedding channel。
-- 在报告导出中加入 GraphRAG 证据摘要和 GNN 风险分布图。
+- 扩充正样本注册表元数据覆盖率，使生态特征可安全加入契约。
+- 引入下载量、发布时间分布等外部生态特征，替换当前以名字/关键词为主的弱特征。
+- 在真实 manifest/lockfile 上验证 `depends_on` 边方向和批量图推理收益。
+- 用时间外推测试集持续报告 PR-AUC、固定 FPR 召回、Brier、ECE 和拒判率。

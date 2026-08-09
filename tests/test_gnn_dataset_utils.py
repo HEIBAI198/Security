@@ -150,6 +150,30 @@ class GNNDatasetUtilsTests(unittest.TestCase):
 
         self.assertIsNone(grouped_time_train_val_test_split(nodes))
 
+    def test_time_split_handles_mixed_naive_and_aware_timestamps(self):
+        nodes = []
+        for label, prefix in ((0, "safe"), (1, "evil")):
+            for index in range(5):
+                published = (
+                    f"2026-01-0{index + 1}T00:00:00Z"
+                    if index % 2
+                    else f"2026-01-0{index + 1}T00:00:00"
+                )
+                nodes.append(
+                    {
+                        "id": f"pkg:npm:{prefix}-{index}",
+                        "ecosystem": "npm",
+                        "package": f"{prefix}-{index}",
+                        "label": label,
+                        "published": published,
+                    }
+                )
+
+        splits = grouped_time_train_val_test_split(nodes, train_ratio=0.6, val_ratio=0.2)
+
+        self.assertIsNotNone(splits)
+        self.assertEqual(len(splits["test"]), 2)
+
     def test_jsonl_helpers_create_parent_directories_and_preserve_utf8(self):
         records = [
             {

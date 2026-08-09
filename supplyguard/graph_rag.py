@@ -10,6 +10,7 @@ from .graph_rag_context import (
 from .graph_rag_intent import classify_graph_rag_intent
 from .graph_rag_ranker import rank_graph_rag_candidates
 from .graph_rag_retrievers import retrieve_channels
+from .package_embeddings import PackageEmbeddingIndex
 
 
 def graph_rag_retrieve(
@@ -20,9 +21,15 @@ def graph_rag_retrieve(
     max_edges: int = 12,
     max_paths: int = 3,
     hops: int = 2,
+    embedding_index: PackageEmbeddingIndex | None = None,
 ) -> dict[str, Any]:
     intent = classify_graph_rag_intent(query)
-    channels = retrieve_channels(graph_payload, query, intent=intent)
+    channels = retrieve_channels(
+        graph_payload,
+        query,
+        intent=intent,
+        embedding_index=embedding_index,
+    )
     ranked = rank_graph_rag_candidates(
         graph_payload,
         channels,

@@ -170,6 +170,7 @@ export type SecurityDependency = {
   requested_version?: string | null
   version_source?: 'manifest' | 'lockfile' | 'environment' | 'sbom' | 'osv' | string
   dependency_type?: 'direct' | 'transitive' | string
+  dependency_names?: string[]
   resolved?: boolean
   vulnerabilities?: Array<{
     id: string
@@ -202,6 +203,7 @@ export type SecurityDependency = {
   gnn_decision_threshold?: number
   gnn_calibration_temperature?: number
   gnn_ood_distance?: number
+  gnn_graph_neighbor_count?: number
   gnn_evidence_conflict?: boolean
   gnn_target?: string
   gnn_decision_status?: 'malicious' | 'benign' | 'conflict' | 'abstain' | 'unavailable' | string

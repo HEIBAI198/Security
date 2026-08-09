@@ -12,36 +12,14 @@ if __package__ in {None, ""}:
     sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from scripts.gnn.dataset_utils import grouped_time_train_val_test_split, grouped_train_val_test_split
-
-
-FEATURE_NAMES = [
-    "ecosystem_npm",
-    "ecosystem_pypi",
-    "name_length",
-    "name_separator_count",
-    "has_scope",
-    "has_digits",
-    "version_count",
-    "alias_count",
-    "evidence_source_count",
-    "risk_keyword_count",
-    "text_length",
-]
-
-RISK_KEYWORDS = [
-    "postinstall",
-    "preinstall",
-    "install script",
-    "exfiltrat",
-    "token",
-    "credential",
-    "backdoor",
-    "malware",
-    "download",
-    "powershell",
-    "eval",
-    "obfuscat",
-]
+from supplyguard.gnn_features import (
+    FEATURE_CONTRACT,
+    FEATURE_NAMES,
+    RISK_KEYWORDS,
+    risk_signals,
+    training_record_evidence_text,
+    training_record_feature_values,
+)
 
 
 def _read_jsonl(path: str | Path | None) -> list[dict[str, Any]]:
@@ -182,24 +160,11 @@ def _is_missing_value(value: Any) -> bool:
 
 
 def _risk_signals(text: str) -> list[str]:
-    lowered = text.lower()
-    return sorted({keyword for keyword in RISK_KEYWORDS if keyword in lowered})
+    return risk_signals(text)
 
 
 def _record_text(record: dict[str, Any]) -> str:
-    values = [
-        record.get("text"),
-        record.get("description"),
-        record.get("keywords"),
-        record.get("install_scripts"),
-        record.get("scripts"),
-    ]
-    return " ".join(
-        json.dumps(value, ensure_ascii=False, sort_keys=True)
-        if isinstance(value, (dict, list))
-        else str(value or "")
-        for value in values
-    )
+    return training_record_evidence_text(record)
 
 
 def _source_signal(source: str) -> str | None:
@@ -214,27 +179,7 @@ def _source_signal(source: str) -> str | None:
 
 
 def _features(record: dict[str, Any]) -> dict[str, float]:
-    ecosystem = str(record.get("ecosystem") or "").lower()
-    package = str(record.get("package") or "").lower()
-    versions = _as_list(record.get("affected_versions")) or _as_list(record.get("versions"))
-    aliases = _as_list(record.get("aliases"))
-    evidence_sources = _as_list(record.get("evidence_sources"))
-    text = _record_text(record) or " ".join(str(item) for item in evidence_sources)
-    signals = _risk_signals(text)
-
-    return {
-        "ecosystem_npm": 1.0 if ecosystem == "npm" else 0.0,
-        "ecosystem_pypi": 1.0 if ecosystem == "pypi" else 0.0,
-        "name_length": float(len(package)),
-        "name_separator_count": float(package.count("-") + package.count("_") + package.count(".")),
-        "has_scope": 1.0 if package.startswith("@") else 0.0,
-        "has_digits": 1.0 if any(char.isdigit() for char in package) else 0.0,
-        "version_count": float(len(versions)),
-        "alias_count": float(len(aliases)),
-        "evidence_source_count": float(len(evidence_sources)),
-        "risk_keyword_count": float(len(signals)),
-        "text_length": float(len(text)),
-    }
+    return training_record_feature_values(record)
 
 
 def _node_from_record(record: dict[str, Any]) -> dict[str, Any] | None:
@@ -535,12 +480,22 @@ def build_graph_features(
             handle.write(json.dumps(edge, ensure_ascii=False, sort_keys=True))
             handle.write("\n")
 
+    splits = grouped_time_train_val_test_split(package_nodes)
+    split_strategy = "label_stratified_chronological"
+    split_policy = "time"
+    if splits is None:
+        splits = grouped_train_val_test_split(package_nodes)
+        split_strategy = "normalized_package_group_random"
+        split_policy = "random_fallback"
+
     schema = {
-        "schema_version": 3,
+        "schema_version": 5,
         "task": "malicious_package",
+        "feature_contract": FEATURE_CONTRACT,
         "label_definition": "1=经可信来源确认的恶意或高风险包，0=独立来源确认的正常包",
         "features": FEATURE_NAMES,
         "risk_keywords": RISK_KEYWORDS,
+        "split_policy": split_policy,
         "node_types": [
             "package",
             "dependency_package",
@@ -562,17 +517,20 @@ def build_graph_features(
             "sourced_from",
             "runs_install_script",
         ],
-        "training_projection": "relation-aware package projection",
+        "training_edge_types": ["depends_on"],
+        "excluded_training_edge_types": [
+            "has_risk_signal",
+            "observed_in",
+            "maintained_by",
+            "sourced_from",
+            "runs_install_script",
+        ],
+        "training_projection": "direct dependency edges only",
     }
     (output_path / "feature_schema.json").write_text(
         json.dumps(schema, ensure_ascii=True, indent=2),
         encoding="utf-8",
     )
-    splits = grouped_time_train_val_test_split(package_nodes)
-    split_strategy = "label_stratified_chronological"
-    if splits is None:
-        splits = grouped_train_val_test_split(package_nodes)
-        split_strategy = "normalized_package_group_random"
     (output_path / "splits.json").write_text(
         json.dumps(splits, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -585,7 +543,8 @@ def build_graph_features(
     }
     dependency_edge_count = sum(1 for edge in edges if edge.get("type") == "depends_on")
     dataset_card = {
-        "schema_version": 3,
+        "schema_version": 5,
+        "feature_contract": FEATURE_CONTRACT,
         "task": "malicious_package",
         "label_definition": "1=经可信来源确认的恶意或高风险包，0=独立来源确认的正常包",
         "positive_records": len(positives),
@@ -608,6 +567,7 @@ def build_graph_features(
         "negative_sources": negative_sources,
         "split_counts": split_counts,
         "split_strategy": split_strategy,
+        "split_policy": split_policy,
         "created_by": "scripts/gnn/build_graph_features.py",
     }
     (output_path / "dataset_card.json").write_text(

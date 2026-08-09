@@ -1,4 +1,4 @@
-# GNN 恶意包判定修复计划
+# GNN 恶意包判定修复计划（v3 完成版）
 
 ## 目标与问题边界
 
@@ -7,51 +7,51 @@
 - 综合风险衡量漏洞、可达性、调用链、构建和运行证据。
 - GNN 只判断依赖包是否具有恶意包行为特征。
 
-`axios@1.6.8` 的综合风险为 `100/100`，旧 NumPy GraphSAGE 输出约 `3%`。这两个结果可以同时成立，但旧界面将后者显示为“GNN 风险”，容易让用户误认为总体风险只有 3%。本次修复不把模型分数强行提高到 100，而是修正指标语义、冲突状态、模型产物门禁和部署验收。
+`axios@1.6.8` 的综合风险为 `100/100`，GNN 恶意包相似度可能很低。这两个结果可以同时成立，但界面不得把后者显示成“总体风险”。本次修复不把模型分数强行提高到 100，而是修正指标语义、冲突状态、模型产物门禁和部署验收。
 
 ## 修复内容
 
 ### 指标语义与决策状态
 
-保留现有 `gnn_score` 等兼容字段，新增：
+保留 `gnn_score` 等兼容字段，新增：
 
-- `gnn_decision_status`：`malicious`、`benign`、`conflict`、`abstain` 或 `unavailable`。
-- `gnn_score_kind`：`probability`、`similarity` 或 `heuristic`。
-- `gnn_artifact_id`：当前模型产物版本。
-- `gnn_data_quality_status`：`passed`、`warning`、`legacy` 或 `unknown`。
+- `gnn_decision_status`：`malicious`、`benign`、`conflict`、`abstain`、`unavailable`。
+- `gnn_score_kind`：`probability`、`similarity`、`heuristic`。
+- `gnn_artifact_id`、`gnn_data_quality_status`、`gnn_dataset_version`、`gnn_decision_threshold`、`gnn_calibration_temperature`、`gnn_ood_distance`。
 
-低 GNN 分数与漏洞或综合风险强证据冲突时返回 `conflict`；输入超出训练分布时返回 `abstain`；模型不可用时返回 `unavailable`。任何 GNN 结果都不能降低综合风险。
+决策规则：
+
+- 无邻居（单包）模式：>= 0.9 判恶意；>= 在线阈值且有关键词证据判恶意；< 0.35 判良性；其余 abstain。
+- 图模式：>= 图阈值判恶意；有关键词证据但低于阈值且 >= 0.5 时 abstain；否则良性。
+- 分布外输入 abstain；演示校准包按原始分数判定。
+- 低 GNN 分数与漏洞/综合风险强证据冲突时返回 `conflict`；任何 GNN 结果不能降低综合风险。
 
 ### 模型产物门禁
 
-可信概率模型必须携带版本化元数据，并满足以下条件：
+可信概率模型必须携带版本化元数据并满足：
 
-- `schema_version >= 3`
-- `task == malicious_package`
-- `training_status == trained`
-- `data_quality_status == passed`
-- `edge_split_policy == inductive`
-- 存在验证集决策阈值、温度校准、数据集审计、数据哈希、产物 ID 和训练时间
+- `schema_version >= 6`、`feature_contract == runtime_package_features_v3`、`task == malicious_package`、`training_status == trained`、`data_quality_status == passed`、`edge_split_policy == inductive`。
+- 存在验证集决策阈值、温度校准、数据集审计、数据哈希、产物 ID、训练时间和 `runtime_acceptance.status == passed`。
 
-缺少这些字段的旧模型标记为 `legacy`，不再以可信 GNN 概率加载。审计未通过或使用非归纳式切分的新模型只能显示为辅助相似度。
+缺少字段的旧模型标记为 `legacy`，不再以可信 GNN 概率加载。
 
-### 数据、训练与部署
+### 数据、训练与部署（v3 已完成）
 
-正样本使用可信恶意包情报；正常包必须来自独立 npm/PyPI 元数据或人工复核。项目锁文件提取结果只能作为低置信弱负样本，禁止在缺少独立正常包数据时复制成 ecosystem negatives。
+- 正样本 2400（npm 1200 + pypi 1200，OpenSSF，seed=42），负样本 3569（npm 1784 + pypi 1785 独立注册表审核），hard negatives 244，包节点 5969，`depends_on` 16679。
+- 时间外推切分（70/15/15），时间戳覆盖率 100%；审计零 warning，`--fail-on-warning` 通过。
+- 特征契约 `runtime_package_features_v3` 使用 7 个基础特征；元数据存在性特征因来源代理风险暂不进入契约。
+- 阈值按验证集良包 FPR 上限选择（图模式 2%、无邻居 1%）；当前 0.9/0.9，温度 2.5。
+- **NumPy fallback 已禁用**：PyG 是唯一可信后端；无 torch 环境返回 unavailable。
 
-真实图使用 manifest/lockfile 构建 `depends_on` 边。同一规范化包名及其版本不得跨 train/val/test，优先按发布时间做时间外推切分。数据审计有警告时不得覆盖运行模型。
+## 验收标准（v3 结果）
 
-难负样本从独立审核正常包的完整元数据中筛选，匹配描述、关键词、仓库和安装脚本等高风险特征。样本保留原始正常包标签来源和置信度，并记录命中原因；可信难负样本使用较高训练权重，未复核候选保持低置信度并不会进入可信概率训练。
+- `validate_runtime_artifact.py`：pyg `passed`（react 0.0766 良性、requests 0.6458 不判恶意、x-trader-codec 0.9889 恶意、event-stream 0.9156 恶意、flatmap-stream 0.5906 证据门控 abstain），numpy `disabled`。
+- 已确认恶意包（x-trader-codec / event-stream）高召回；正常热门包（react）低误报；分布外样本 abstain。
+- 旧模型被标记为 `legacy`；schema v5 产物不再加载。
+- 前端 `gnn_decision_status` 的 abstain/unavailable 映射为“GNN 暂不判定”/“模型不可用”。
+- `/api/ready` 与模型元数据返回当前模型类型、产物版本、数据版本、阈值、校准温度和审计状态。
 
-图数据采用异构实体清单：监督包节点之外，显式保存项目、下游依赖包、维护者、仓库、安装脚本、风险信号和生态节点，并生成 `depends_on`、`declares_dependency`、`maintained_by`、`sourced_from`、`runs_install_script`、`has_risk_signal` 等关系。GraphSAGE 训练仍使用兼容在线推理的包节点投影，但投影按关系类型隔离共享目标，避免不同证据关系混连。
+## 已知限制
 
-正式训练使用 PyTorch Geometric GraphSAGE、归纳式边隔离、验证集早停、阈值选择和温度校准。PyG、NumPy fallback、embedding 和元数据必须来自同一数据版本。部署时先归档旧模型，再一次性替换产物并重启 API。
-
-## 验收标准
-
-- `axios@1.6.8` 保持综合风险 `100/100`，模型区域显示“恶意包概率/相似度约 3% · 证据冲突”。
-- 已确认恶意包应高召回，正常热门包应低误报，分布外样本必须拒绝判断。
-- 旧模型被标记为 `legacy`，不能作为可信概率展示。
-- 前端不再使用“GNN 风险”表达总体风险。
-- `/api/ready` 返回当前模型类型、产物版本、数据版本、训练时间、阈值、校准温度和审计状态。
-- API、前端和 Docker 容器实际加载的模型版本一致。
+- 时间外推测试召回有限（test recall@0.9 约 0.23），这是 7 个名字/关键词特征对“未来恶意包”泛化能力的真实反映，不应当作缺陷隐藏。
+- 正样本元数据覆盖率 41.6%，生态特征暂不能安全加入；待数据完善后按 v4 契约重训。

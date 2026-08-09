@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from supplyguard.gnn_features import FEATURE_CONTRACT
 
-ARTIFACT_SCHEMA_VERSION = 3
+
+ARTIFACT_SCHEMA_VERSION = 6
 DATASET_FILES = (
     "feature_schema.json",
     "train_nodes.jsonl",
@@ -65,6 +67,7 @@ def build_artifact_metadata(
     artifact_id = f"{model_type}:{fingerprint[:12]}:{trained_at.replace(':', '').replace('+00:00', 'Z')}"
     return {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "feature_contract": FEATURE_CONTRACT,
         "task": "malicious_package",
         "training_status": "trained",
         "data_quality_status": "passed" if audit.get("ready_for_training") else "warning",
@@ -81,6 +84,7 @@ def build_artifact_metadata(
         "dataset_hash": fingerprint,
         "trained_at": trained_at,
         "ood_distance_threshold": float(ood_distance_threshold),
+        "runtime_acceptance": {"status": "pending"},
     }
 
 

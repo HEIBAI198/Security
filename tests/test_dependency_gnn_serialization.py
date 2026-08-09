@@ -1,6 +1,7 @@
 import unittest
+from unittest import mock
 
-from supplyguard.dependency_audit import DependencyRecord, serialize_dependency
+from supplyguard.dependency_audit import DependencyRecord, serialize_dependencies, serialize_dependency
 
 
 class DependencyGnnSerializationTests(unittest.TestCase):
@@ -26,6 +27,56 @@ class DependencyGnnSerializationTests(unittest.TestCase):
         self.assertLessEqual(payload["gnn_score"], 1.0)
         self.assertIn(payload["gnn_label"], {"low", "elevated", "high"})
         self.assertTrue(payload["gnn_reasons"])
+
+    def test_batch_serialization_passes_real_dependency_edges_to_gnn(self):
+        parent = DependencyRecord(
+            name="parent",
+            ecosystem="npm",
+            version="1.0.0",
+            scope="runtime",
+            source_file="package-lock.json",
+            manifest_type="package-lock.json",
+            dependencies=["child"],
+        )
+        child = DependencyRecord(
+            name="child",
+            ecosystem="npm",
+            version="1.0.0",
+            scope="runtime",
+            source_file="package-lock.json",
+            manifest_type="package-lock.json",
+            dependency_type="transitive",
+        )
+        scorer = mock.Mock()
+        scorer.score_dependencies.return_value = [
+            {
+                "gnn_score": 0.1,
+                "gnn_label": "low",
+                "gnn_reasons": ["ok"],
+                "model_available": True,
+                "model_type": "test",
+                "gnn_inference_mode": "dependency_graph",
+                "gnn_graph_neighbor_count": 1,
+            },
+            {
+                "gnn_score": 0.2,
+                "gnn_label": "low",
+                "gnn_reasons": ["ok"],
+                "model_available": True,
+                "model_type": "test",
+                "gnn_inference_mode": "dependency_graph",
+                "gnn_graph_neighbor_count": 1,
+            },
+        ]
+
+        with mock.patch("supplyguard.dependency_audit.dependency_gnn_scorer", return_value=scorer):
+            payloads = serialize_dependencies([parent, child])
+
+        scorer.score_dependencies.assert_called_once()
+        _, edges = scorer.score_dependencies.call_args.args
+        self.assertEqual(edges, [(0, 1)])
+        self.assertEqual(payloads[0]["dependency_names"], ["child"])
+        self.assertEqual(payloads[0]["gnn_inference_mode"], "dependency_graph")
 
 
 if __name__ == "__main__":
