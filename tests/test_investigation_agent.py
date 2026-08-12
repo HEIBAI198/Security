@@ -11,6 +11,51 @@ from supplyguard.routes import security
 
 
 class InvestigationAgentTests(unittest.TestCase):
+    def test_scan_suite_status_only_marks_modules_completed_in_current_run(self):
+        request = security.ScanSuiteRequest(
+            includeCodeAudit=True,
+            includeDependencyAudit=True,
+            includeCicdAudit=False,
+            includeArtifactTrust=False,
+            includeLogAudit=False,
+        )
+
+        completed, skipped = security.scan_suite_module_status(
+            request,
+            completed_modules=["code_audit", "dependency_audit"],
+            errors=[],
+        )
+
+        self.assertEqual(completed, ["code_audit", "dependency_audit"])
+        skipped_by_module = {item["module"]: item["reason"] for item in skipped}
+        self.assertIn("cicd_audit", skipped_by_module)
+        self.assertIn("artifact_trust", skipped_by_module)
+        self.assertIn("log_audit", skipped_by_module)
+        self.assertNotIn("cicd_audit", completed)
+
+    def test_scan_suite_status_marks_missing_optional_materials_as_skipped(self):
+        request = security.ScanSuiteRequest(
+            includeCodeAudit=False,
+            includeDependencyAudit=False,
+            includeCicdAudit=False,
+            includeArtifactTrust=True,
+            includeLogAudit=True,
+            artifactPath=None,
+            attestationPath=None,
+            logPaths=[],
+        )
+
+        completed, skipped = security.scan_suite_module_status(
+            request,
+            completed_modules=[],
+            errors=[],
+        )
+
+        self.assertEqual(completed, [])
+        skipped_by_module = {item["module"]: item["reason"] for item in skipped}
+        self.assertIn("artifact_path", skipped_by_module["artifact_trust"])
+        self.assertIn("运行日志", skipped_by_module["log_audit"])
+
     def test_build_state_marks_missing_evidence_and_next_actions(self):
         workspace = deepcopy(security.SECURITY_WORKSPACE)
         workspace["code_audit"] = {"scan_id": "code-1", "summary": {"total": 2}}

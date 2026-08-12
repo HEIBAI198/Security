@@ -3244,8 +3244,18 @@ async def security_workspace_scan_suite(workspace_id: str, payload: ScanSuiteReq
     workspace = workspace_or_current(workspace_id)
     for key, result_payload in module_results.items():
         workspace = apply_module_payload_to_workspace(workspace, key, result_payload)
+    completed_modules, skipped_modules = scan_suite_module_status(
+        payload,
+        completed_modules=list(module_results),
+        errors=errors,
+    )
+    # 图谱和报告是在模块结果合并后统一刷新生成的，单独记录其状态，
+    # 避免前端把工作区里历史保存的模块结果误认为本轮已执行。
+    completed_modules.append("workspace_report")
     workspace["scanSuite"] = {
         "status": "partial" if errors else "completed",
+        "completed": completed_modules,
+        "skipped": skipped_modules,
         "errors": errors,
         "completedAt": datetime.now(UTC).isoformat(),
     }
@@ -3258,6 +3268,41 @@ async def security_workspace_scan_suite(workspace_id: str, payload: ScanSuiteReq
         module_payload=workspace["investigationAgent"],
     )
     return workspace
+
+
+def scan_suite_module_status(
+    request: ScanSuiteRequest,
+    *,
+    completed_modules: list[str],
+    errors: list[dict[str, str]],
+) -> tuple[list[str], list[dict[str, str]]]:
+    """返回本轮 scan-suite 的成功和跳过模块，不能依据工作区历史字段推断。"""
+
+    completed = list(dict.fromkeys(str(item) for item in completed_modules if item))
+    error_modules = {str(item.get("module") or "") for item in errors}
+    requested = {
+        "code_audit": request.include_code_audit,
+        "dependency_audit": request.include_dependency_audit,
+        "cicd_audit": request.include_cicd_audit,
+        "artifact_trust": request.include_artifact_trust,
+        "log_audit": request.include_log_audit,
+    }
+    skipped: list[dict[str, str]] = []
+    for module, enabled in requested.items():
+        if module in completed or module in error_modules:
+            continue
+        if not enabled:
+            skipped.append({"module": module, "reason": "请求中未启用该模块"})
+        elif module == "artifact_trust" and not (request.artifact_path and request.attestation_path):
+            skipped.append({"module": module, "reason": "缺少 artifact_path 和 attestation_path"})
+        elif module == "log_audit" and not request.log_paths:
+            skipped.append({"module": module, "reason": "未提供运行日志路径"})
+        else:
+            skipped.append({"module": module, "reason": "本轮未调用"})
+
+    # scan-suite 当前不接收多模态材料，明确告知前端它不是本轮检测模块。
+    skipped.append({"module": "multimodal_evidence", "reason": "scan-suite 未包含多模态证据"})
+    return completed, skipped
 
 
 @router.get("/workspaces/{workspace_id}/investigation")

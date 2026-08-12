@@ -1,9 +1,24 @@
 import unittest
 
-from supplyguard.llm_assistant import build_assistant_context
+from supplyguard.llm_assistant import build_assistant_context, chat_completion_is_incomplete
 
 
 class AssistantGraphRagContextTests(unittest.TestCase):
+    def test_detects_length_truncation(self):
+        payload = {"choices": [{"finish_reason": "length", "message": {"content": "部分回答"}}]}
+
+        self.assertTrue(chat_completion_is_incomplete(payload, "部分回答"))
+
+    def test_detects_unclosed_bold_markdown(self):
+        payload = {"choices": [{"finish_reason": "stop", "message": {"content": "3. **依赖漏洞"}}]}
+
+        self.assertTrue(chat_completion_is_incomplete(payload, "3. **依赖漏洞"))
+
+    def test_accepts_complete_markdown(self):
+        payload = {"choices": [{"finish_reason": "stop", "message": {"content": "3. **依赖漏洞**：待确认。"}}]}
+
+        self.assertFalse(chat_completion_is_incomplete(payload, "3. **依赖漏洞**：待确认。"))
+
     def test_context_includes_graph_rag_summary(self):
         workspace = {"workspace": {"name": "demo"}, "summary": {"risk": "high"}}
         graph_rag = {

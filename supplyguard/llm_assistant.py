@@ -37,7 +37,14 @@ DEEPSEEK_INVESTIGATION_AGENT_PROMPT = (
     "- 如果需要继续调查，只能建议调用这些工具或补充对应材料。\n"
     "- 不要编造工作空间里没有的 CVE、IP、commit、文件路径或扫描结论。\n"
     "- 如果证据不足，要明确说明缺口、缺口作用和下一步补证顺序。\n"
-    "输出要求：先给直接结论，再给规划/解释，最后给可执行下一步。"
+    "- 必须区分模块风险分、证据完整度和攻击路径置信度；它们都不是攻击发生概率。\n"
+    "- 用户询问整个项目、真实供应链攻击、调用模块或证据链时，必须进行全局研判，"
+    "不能仅回答代码、依赖或其他单一模块。\n"
+    "- 只有 attack_paths 和跨模块证据能够闭环时，才能称为已确认或高可信攻击路径；"
+    "否则必须使用疑似、待补证或不能确认。\n"
+    "输出要求：先给直接结论，再按“关键证据、攻击证据链、复用模块、仍需确认、下一步建议”组织；"
+    "证据链应列出路径名称或 ID、关系顺序、置信度及证据数量。\n"
+    "- 控制回答篇幅，确保每个列表项和 Markdown 加粗标记完整闭合；不要输出半句话。"
 )
 
 
@@ -87,7 +94,7 @@ async def ask_deepseek_security_assistant(
 
     data = response.json()
     content = extract_chat_content(data)
-    if not content:
+    if not content or chat_completion_is_incomplete(data, content):
         return None
 
     return {
@@ -130,7 +137,7 @@ async def ask_deepseek_investigation_agent(
         ],
         "thinking": {"type": "disabled"},
         "temperature": 0.2,
-        "max_tokens": 1000,
+        "max_tokens": 1800,
     }
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -147,7 +154,7 @@ async def ask_deepseek_investigation_agent(
 
     data = response.json()
     content = extract_chat_content(data)
-    if not content:
+    if not content or chat_completion_is_incomplete(data, content):
         return None
     return {
         "answer": content,
@@ -251,3 +258,14 @@ def extract_chat_content(data: dict[str, Any]) -> str:
     if isinstance(message, dict):
         return str(message.get("content") or "").strip()
     return str(first.get("text") or "").strip()
+
+
+def chat_completion_is_incomplete(data: dict[str, Any], content: str) -> bool:
+    """识别长度截断或明显未闭合的 Markdown，避免向前端返回半句话。"""
+
+    choices = data.get("choices")
+    first = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
+    if str(first.get("finish_reason") or "").lower() == "length":
+        return True
+
+    return content.count("```") % 2 == 1 or content.count("**") % 2 == 1

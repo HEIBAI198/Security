@@ -85,6 +85,15 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
+  AGENT_FOCUS_LABELS,
+  agentAnswerFocus as agentAnswerFocusFromQuestion,
+  agentEvidenceChainLines,
+  agentTextMatchesFocus,
+  sanitizeAgentAnswerMarkdown,
+  type AgentAnswerFocus,
+  type FocusedAgentModule,
+} from './agent-answer-formatting'
+import {
   analyzeMultimodalRecognizedText,
   askSecurityAgentChat,
   askSecurityAssistant,
@@ -981,42 +990,10 @@ function visibleAgentNextActions(actions?: AgentNextAction[]) {
   return (actions || []).filter((action) => !isDefenseBriefAction(action))
 }
 
-type AgentAnswerFocus = 'global' | 'code_audit' | 'dependency_audit' | 'cicd_audit' | 'artifact_trust' | 'log_audit'
-type FocusedAgentModule = Exclude<AgentAnswerFocus, 'global'>
-
-const AGENT_FOCUS_ORDER: FocusedAgentModule[] = ['log_audit', 'cicd_audit', 'artifact_trust', 'dependency_audit', 'code_audit']
-const AGENT_FOCUS_LABELS: Record<FocusedAgentModule, string> = {
-  code_audit: '代码可达性',
-  dependency_audit: '依赖与供应链组件',
-  cicd_audit: 'CI/CD 构建链',
-  artifact_trust: '发布产物',
-  log_audit: '日志部分',
-}
-const AGENT_FOCUS_PATTERNS: Record<FocusedAgentModule, RegExp> = {
-  code_audit: /代码|可达|import|调用|密钥|配置|source|code/i,
-  dependency_audit: /供应链组件|依赖|sbom|vex|包|dependency|package/i,
-  cicd_audit: /ci\/cd|cicd|构建链|workflow|runner|流水线|action|构建/i,
-  artifact_trust: /产物|artifact|provenance|attestation|签名|可信|发布|builder/i,
-  log_audit: /日志|运行期|运行|外联|回连|异常访问|异常行为|runtime|egress|log/i,
-}
-
-function isAgentModuleFocus(id: string): id is FocusedAgentModule {
-  return AGENT_FOCUS_ORDER.includes(id as FocusedAgentModule)
-}
-
 function agentAnswerFocus(question: string, run?: AgentRunResult): AgentAnswerFocus {
-  const text = question.trim().toLowerCase()
-  const matched = AGENT_FOCUS_ORDER.filter((focus) => AGENT_FOCUS_PATTERNS[focus].test(text))
-  if (matched.length === 1) return matched[0]
-  if (matched.length > 1) return 'global'
   const selectedModules = (run?.plan?.selectedModules || [])
     .map((item) => item.id)
-    .filter(isAgentModuleFocus)
-  return selectedModules.length === 1 ? selectedModules[0] : 'global'
-}
-
-function agentTextMatchesFocus(text: string, focus: AgentAnswerFocus) {
-  return focus === 'global' || AGENT_FOCUS_PATTERNS[focus].test(text)
+  return agentAnswerFocusFromQuestion(question, selectedModules)
 }
 
 function filterAgentLinesByFocus(lines: string[] | undefined, focus: AgentAnswerFocus) {
@@ -1160,7 +1137,11 @@ function compactAgentActionLines(actions: AgentNextAction[], focus: AgentAnswerF
   return lines.length ? lines : defaultAgentActionLines(focus)
 }
 
-function agentRunToAssistantResponse(question: string, run: AgentRunResult): SecurityAssistantResponse {
+function agentRunToAssistantResponse(
+  question: string,
+  run: AgentRunResult,
+  options: { reusedEvidence?: boolean } = {},
+): SecurityAssistantResponse {
   const status = String(run.status || 'unknown')
   const focus = agentAnswerFocus(question, run)
   const actions = visibleAgentNextActions(run.nextActions)
@@ -1168,14 +1149,20 @@ function agentRunToAssistantResponse(question: string, run: AgentRunResult): Sec
   const issueStepLines = agentRunFailedOrSkippedSteps(run, focus)
   const actionLines = compactAgentActionLines(actions, focus)
   const calledModuleLines = agentCalledModuleLines(run)
+  const evidenceChainLines = agentEvidenceChainLines(run, focus)
   const statusLine = status === 'success' || status === 'completed_with_risk'
     ? ''
     : `状态：${agentRunStatusLabel(status)}。`
   const answer = [
     agentRunDirectConclusion(run, question),
     statusLine,
-    calledModuleLines.length ? `\n### 本次调用模块\n${calledModuleLines.join('\n')}` : '',
-    calledModuleLines.length ? `本次扫描结果已自动同步到各模块，无需刷新页面。总耗时 ${Number(run.durationSeconds || 0).toFixed(2)} 秒。` : '',
+    evidenceChainLines.length ? `\n### 攻击证据链\n${evidenceChainLines.join('\n')}` : '',
+    calledModuleLines.length
+      ? `\n### ${options.reusedEvidence ? '本次回答复用模块' : '本次调用模块'}\n${calledModuleLines.join('\n')}`
+      : '',
+    calledModuleLines.length && !options.reusedEvidence
+      ? `本次扫描结果已自动同步到各模块，无需刷新页面。总耗时 ${Number(run.durationSeconds || 0).toFixed(2)} 秒。`
+      : '',
     gapLines.length ? `\n### 需要补证\n${gapLines.join('\n')}` : '',
     issueStepLines.length ? `\n### 未完成模块\n${issueStepLines.join('\n')}` : '',
     actionLines.length ? `\n### 下一步建议\n${actionLines.join('\n')}` : '',
@@ -1640,6 +1627,13 @@ export function SecurityPlatform() {
     const decision = decideAgentQuestionAction(value, isWorkspaceScanned(currentWorkspace))
     if (decision.action === 'answer') {
       const response = await askSecurityAgentChat(value, workspaceId)
+      const previousRun = currentWorkspace.agentRun
+        ? { ...currentWorkspace.agentRun, workspace: currentWorkspace }
+        : undefined
+      const focus = agentAnswerFocus(value, previousRun)
+      const structuredResponse = previousRun && focus === 'global'
+        ? agentRunToAssistantResponse(value, previousRun, { reusedEvidence: true })
+        : undefined
       const reusedModules = (currentWorkspace.agentRun?.steps || [])
         .filter((step) => step.status === 'success')
         .map((step) => step.name)
@@ -1647,7 +1641,7 @@ export function SecurityPlatform() {
       return {
         ...response,
         answer: [
-          response.answer,
+          structuredResponse?.answer || response.answer,
           '\n### 本次调用说明',
           '- 本次未重新调用扫描工具。',
           reusedModules.length ? `- 复用已完成模块：${reusedModules.join('、')}。` : '- 复用当前工作区已保存的扫描证据。',
@@ -2948,17 +2942,17 @@ function AgentConversationHome({
     <div className='mx-auto flex min-h-[calc(100svh-9rem)] w-full max-w-5xl flex-col'>
       <div className='flex-1 space-y-8 pb-40'>
         {!analysisStarted || scanRunning ? (
-        <div className='rounded-md border bg-card p-5 shadow-[var(--shadow-soft)]'>
-          <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
-          <ModuleLaunchGrid
-            modules={visibleModules}
-            analysisStarted={analysisStarted}
-            scanRunning={scanRunning}
-            scanSteps={scanSteps}
-            onStart={onStartAnalysis}
-            onOpenModule={onOpenModule}
-          />
-        </div>
+          <div className='rounded-md border bg-card p-4 shadow-[var(--shadow-soft)] sm:p-5'>
+            <ScanProgressPanel steps={scanSteps} running={scanRunning} completed={analysisStarted} />
+            <ModuleLaunchGrid
+              modules={visibleModules}
+              analysisStarted={analysisStarted}
+              scanRunning={scanRunning}
+              scanSteps={scanSteps}
+              onStart={onStartAnalysis}
+              onOpenModule={onOpenModule}
+            />
+          </div>
         ) : (
           <div className='space-y-4'>
             <div className='flex flex-wrap items-center justify-between gap-3 border-b border-border/70 px-1 pb-4'>
@@ -3081,7 +3075,7 @@ function ModuleResultNavigation({
         <h2 className='text-sm font-semibold'>模块详情</h2>
         <span className='text-xs text-muted-foreground'>{completedCount} 已完成 · {modules.length - completedCount} 未完成</span>
       </div>
-      <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6'>
+      <div className='grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7'>
         {modules.map((module) => {
           const step = moduleLaunchStep(module, stepByModule)
           const status = step?.status ?? 'pending'
@@ -3367,7 +3361,7 @@ function ModuleLaunchGrid({
   )
 
   return (
-    <div className='mt-4 space-y-3'>
+    <div className='mt-3 space-y-3'>
       <div className='flex flex-wrap items-center justify-between gap-2'>
         <div className='text-section-title'>模块详情</div>
         {analysisStarted && !scanRunning ? (
@@ -3386,7 +3380,7 @@ function ModuleLaunchGrid({
           </Button>
         )}
       </div>
-      <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3'>
+      <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-3'>
         {modules.map((module, index) => {
           const step = moduleLaunchStep(module, stepByModule)
           const isReady = analysisStarted && !scanRunning
@@ -3420,7 +3414,7 @@ function ModuleLaunchGrid({
                 type='button'
                 variant='outline'
                 className={cn(
-                  'group relative h-[132px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] px-5 py-4 text-left shadow-[0_8px_8px_rgba(2,6,23,0.22)] backdrop-blur transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-slate-300/30 hover:bg-[color:var(--surface-inset)] hover:shadow-[0_8px_8px_rgba(2,6,23,0.3)] active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
+                  'group relative h-[128px] w-full cursor-pointer justify-start overflow-hidden rounded-md border border-border bg-[color:var(--surface-card)] px-5 py-4 text-left shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-200 hover:-translate-y-px hover:border-slate-300/35 hover:bg-[color:var(--surface-inset)] hover:shadow-md hover:shadow-cyan-950/10 active:scale-[0.99] disabled:pointer-events-auto disabled:cursor-not-allowed disabled:opacity-80',
                   isCompleted && 'hover:border-emerald-300/35',
                   isReady && isSkipped && 'hover:border-amber-300/35',
                   isFailed && 'hover:border-red-300/35'
@@ -16848,7 +16842,7 @@ type AssistantMarkdownBlock =
   | { type: 'rule' }
 
 function normalizeAssistantMarkdown(text: string): AssistantMarkdownBlock[] {
-  const prepared = text
+  const prepared = sanitizeAgentAnswerMarkdown(text)
     .replace(/\s---\s/g, '\n---\n')
     .replace(/\s(#{2,4})\s+/g, '\n$1 ')
     .replace(/\s(-\s+\*\*)/g, '\n$1')
