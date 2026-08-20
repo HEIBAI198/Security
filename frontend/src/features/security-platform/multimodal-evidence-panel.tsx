@@ -17,7 +17,7 @@ import {
   type MultimodalEvidence, type MultimodalFinding,
   type MultimodalSourceType, type SecuritySeverity,
 } from '@/lib/security-api'
-import { cn } from '@/lib/utils'
+import { cn, formatLocalDateTime } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -328,7 +328,7 @@ function DetailSheet({evidence,open,onClose}:{evidence:MultimodalEvidence|null;o
         <Tabs value={tab}>
           <TabsContent value="overview" className="mt-0 space-y-5">
             <div className="grid grid-cols-3 gap-x-6 gap-y-3">
-              {[['文件类型',SRC_LABEL[st]],['MIME',evidence.mime_type],['大小',fmtBytes(evidence.size_bytes)],['SHA256',evidence.sha256?`${evidence.sha256.slice(0,20)}...`:'—'],['上传时间',evidence.uploaded_at?.slice(0,19).replace('T',' ')],['风险评分',`${evidence.risk_score??0}`]].map(([l,v])=><div key={l}><div className="text-[10px] text-muted-foreground uppercase tracking-wider">{l}</div><div className="mt-0.5 text-sm font-medium break-all font-mono">{v}</div></div>)}
+              {[['文件类型',SRC_LABEL[st]],['MIME',evidence.mime_type],['大小',fmtBytes(evidence.size_bytes)],['SHA256',evidence.sha256?`${evidence.sha256.slice(0,20)}...`:'—'],['上传时间',formatLocalDateTime(evidence.uploaded_at,{includeSeconds:true})],['风险评分',`${evidence.risk_score??0}`]].map(([l,v])=><div key={l}><div className="text-[10px] text-muted-foreground uppercase tracking-wider">{l}</div><div className="mt-0.5 text-sm font-medium break-all font-mono">{v}</div></div>)}
             </div>
             {evidence.derived.length>0&&<div><h4 className="mb-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">派生产物</h4><div className="space-y-1.5">{evidence.derived.map((d,i)=><div key={i} className="flex items-center gap-2 rounded-lg surface-inset px-3 py-2 text-[11px]"><Boxes className="size-3 text-cyan-400"/><span className="font-medium">{d.kind}</span><span className="text-muted-foreground">via {d.tool}</span><span className="ml-auto font-mono text-muted-foreground">{fmtBytes(d.size_bytes)}</span></div>)}</div></div>}
             {evidence.metadata&&Object.keys(evidence.metadata).length>0&&<div><h4 className="mb-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-widest">元数据</h4><pre className="rounded-lg surface-inset p-3 font-mono text-[11px] text-muted-foreground max-h-48 overflow-y-auto">{JSON.stringify(evidence.metadata,null,2)}</pre></div>}
@@ -489,7 +489,7 @@ function MultimodalEvidenceDetailPanel({
             <span className='grid size-9 shrink-0 place-items-center rounded-md border border-cyan-500/25 bg-cyan-500/10 text-cyan-700 dark:text-cyan-200'><Icon className='size-5' /></span>
             <div className='min-w-0'>
               <CardTitle className='truncate text-base text-foreground' title={evidence.original_filename}>{evidence.original_filename}</CardTitle>
-              <div className='mt-1 truncate text-[11px] text-muted-foreground'>{SRC_LABEL[evidence.source_type]} · {fmtBytes(evidence.size_bytes)} · {evidence.uploaded_at?.slice(0, 19).replace('T', ' ') || '时间未知'}</div>
+              <div className='mt-1 truncate text-[11px] text-muted-foreground'>{SRC_LABEL[evidence.source_type]} · {fmtBytes(evidence.size_bytes)} · {formatLocalDateTime(evidence.uploaded_at, { includeSeconds: true, fallback: '时间未知' })}</div>
             </div>
           </div>
           <Button variant='outline' size='sm' className='h-8 shrink-0 gap-1.5 text-xs' onClick={() => onOpenRaw(evidence)}>
@@ -819,12 +819,12 @@ export function MultimodalEvidencePanel({result,workspaceId,onScanned}:{
   async function upload(fileList?: File[]){
     const f = fileList ?? files
     if(!f.length)return; setUploading(true)
-    try{const r=await runMultimodalEvidenceScan(f,workspaceId);await onScanned(r);setFiles([]);toast.success(`已处理 ${r.summary.evidence_count} 条`)}catch(e){toast.error(e instanceof Error?e.message:'上传失败')}
+    try{const r=await runMultimodalEvidenceScan(f,workspaceId);await onScanned(r);setFiles([]);if(fileInputRef.current)fileInputRef.current.value='';toast.success(`已累计 ${r.summary.evidence_count} 条证据`)}catch(e){toast.error(e instanceof Error?e.message:'上传失败')}
     finally{setUploading(false)}
   }
   async function refresh(){
     setRefreshing(true)
-    try{const r=await loadMultimodalEvidenceLatest(100);await onScanned(r as unknown as MultimodalAuditResult);toast.success('已同步')}catch(e){toast.error(e instanceof Error?e.message:'刷新失败')}
+    try{const r=await loadMultimodalEvidenceLatest(100,workspaceId);await onScanned(r as unknown as MultimodalAuditResult);toast.success('已同步')}catch(e){toast.error(e instanceof Error?e.message:'刷新失败')}
     finally{setRefreshing(false)}
   }
   const handleDO=(e:React.DragEvent)=>{e.preventDefault();e.stopPropagation()}

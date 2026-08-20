@@ -9,6 +9,44 @@ export function sleep(ms: number = 1000) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+export type LocalDateTimeFormatOptions = {
+  includeSeconds?: boolean
+  timeZone?: string
+  fallback?: string
+}
+
+/** 将后端 ISO 时间转换为浏览器所在时区的统一日期时间文本。 */
+export function formatLocalDateTime(
+  value?: string | null,
+  options: LocalDateTimeFormatOptions = {}
+) {
+  const text = String(value || '').trim()
+  if (!text) return options.fallback ?? '-'
+
+  const parsed = new Date(text)
+  if (Number.isNaN(parsed.getTime())) return text.slice(0, 19).replace('T', ' ')
+
+  const formatter = new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(options.includeSeconds ? { second: '2-digit' as const } : {}),
+    hourCycle: 'h23',
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
+  })
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(parsed)
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  )
+  const date = `${parts.year}-${parts.month}-${parts.day}`
+  const time = `${parts.hour}:${parts.minute}`
+  return options.includeSeconds ? `${date} ${time}:${parts.second}` : `${date} ${time}`
+}
+
 /**
  * Generates page numbers for pagination with ellipsis
  * @param currentPage - Current page number (1-based)

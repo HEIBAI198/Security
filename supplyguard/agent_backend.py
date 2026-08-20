@@ -23,6 +23,8 @@ from .config import ROOT
 from .dependency_audit import DependencyAuditRequest, DependencyAuditResult, run_dependency_audit
 from .evidence_discovery import infer_case_evidence_paths, resolve_local_path
 from .log_audit import LogAuditResult, LogFileInput, run_log_audit
+from .multimodal_audit import MultimodalAuditResult, MultimodalFileInput, run_multimodal_audit
+from .agent_attachments import attachment_kind_counts, classify_attachment, resolve_agent_attachment
 
 
 AGENT_RUN_STORAGE_DIR = ROOT / "storage" / "agent_runs"
@@ -33,6 +35,7 @@ AGENT_MODULE_FLAGS: dict[str, tuple[str, str]] = {
     "cicd_audit": ("include_cicd_audit", "CI/CD 构建链"),
     "artifact_trust": ("include_artifact_trust", "产物可信"),
     "log_audit": ("include_log_audit", "日志印证"),
+    "multimodal_audit": ("include_multimodal_audit", "多模态证据"),
 }
 
 
@@ -54,11 +57,13 @@ class AgentRunRequest(BaseModel):
     allow_self_hosted_runner: bool | None = Field(default=None, alias="allowSelfHostedRunner")
     require_signature: bool | None = Field(default=None, alias="requireSignature")
     log_paths: list[str] = Field(default_factory=list, alias="logPaths")
+    attachment_paths: list[str] = Field(default_factory=list, alias="attachmentPaths")
     include_code_audit: bool = Field(default=True, alias="includeCodeAudit")
     include_dependency_audit: bool = Field(default=True, alias="includeDependencyAudit")
     include_cicd_audit: bool = Field(default=True, alias="includeCicdAudit")
     include_artifact_trust: bool = Field(default=True, alias="includeArtifactTrust")
     include_log_audit: bool = Field(default=True, alias="includeLogAudit")
+    include_multimodal_audit: bool = Field(default=False, alias="includeMultimodalAudit")
     timeout_seconds: int = Field(default=180, alias="timeoutSeconds", ge=10, le=600)
 
 
@@ -69,6 +74,7 @@ class AgentInternalResults:
     cicd_audit: CICDAuditResult | None = None
     artifact_trust: ArtifactTrustResult | None = None
     log_audit: LogAuditResult | None = None
+    multimodal_audit: MultimodalAuditResult | None = None
 
 
 @dataclass
@@ -89,7 +95,8 @@ def run_agent_backend(
 
     started_at = time.monotonic()
     started_at_iso = datetime.now(UTC).isoformat()
-    original_request = request
+    original_request = apply_agent_attachments(request)
+    request = original_request
     request, plan = plan_agent_request(request)
     request = apply_inferred_evidence(request)
     run_id = run_id or new_agent_run_id()
@@ -100,6 +107,7 @@ def run_agent_backend(
         new_step("cicd_audit", "CI/CD 构建链", "检查 workflow、权限、Action 引用和构建链路"),
         new_step("artifact_trust", "产物可信", "校验 artifact、provenance、commit、workflow 和 builder"),
         new_step("log_audit", "日志印证", "用运行期日志印证可疑行为"),
+        new_step("multimodal_audit", "多模态证据", "分析上传图片中的 OCR 文本和安全信号"),
         new_step("workspace_report", "图谱与报告汇总", "汇总工作台、攻击路径和溯源报告"),
     ]
     step_map = {step["id"]: step for step in steps}
@@ -262,6 +270,29 @@ def run_agent_backend(
         finish_step("log_audit")
         observe("log_audit")
 
+    if request.include_multimodal_audit:
+        image_paths = [
+            path for path in request.attachment_paths
+            if classify_attachment(Path(path).name) == "image"
+        ]
+        if image_paths:
+            start_step("multimodal_audit", "正在解析上传图片，提取 OCR 文本、实体和规则命中。")
+            results.multimodal_audit = run_step(
+                step_map["multimodal_audit"],
+                lambda: run_multimodal_audit(load_multimodal_inputs(image_paths)),
+                summarize_multimodal_audit,
+            )
+            finish_step("multimodal_audit")
+            observe("multimodal_audit")
+        else:
+            skip_step(step_map["multimodal_audit"], planned_skip_reason("multimodal_audit", "未上传图片附件。"))
+            finish_step("multimodal_audit")
+            observe("multimodal_audit")
+    else:
+        skip_step(step_map["multimodal_audit"], planned_skip_reason("multimodal_audit", "请求中关闭多模态证据分析。"))
+        finish_step("multimodal_audit")
+        observe("multimodal_audit")
+
     start_step("workspace_report", "正在汇总组件、构建链、产物和日志证据，生成攻击路径与溯源报告。")
     finish_workspace_step(step_map["workspace_report"])
     finish_step("workspace_report")
@@ -283,7 +314,7 @@ def run_agent_backend(
         next_actions=next_actions,
     )
     persist_agent_run(payload)
-    publish(status)
+    # 异步任务的终态必须等工作区结果写回完成后再发布，避免前端读取到旧工作区。
     return AgentRunBundle(payload=payload, results=results)
 
 
@@ -548,12 +579,66 @@ def load_log_inputs(log_paths: list[str]) -> list[LogFileInput]:
     return inputs
 
 
+def load_multimodal_inputs(paths: list[str]) -> list[MultimodalFileInput]:
+    """只读取已由附件接口保存的图片，避免把客户端路径直接交给扫描器。"""
+
+    inputs: list[MultimodalFileInput] = []
+    for raw_path in paths:
+        path = resolve_agent_attachment(raw_path)
+        inputs.append(MultimodalFileInput(filename=path.name, content=path.read_bytes()))
+    return inputs
+
+
+def apply_agent_attachments(request: AgentRunRequest) -> AgentRunRequest:
+    """把附件类型映射到现有模块输入，保持自然语言规划器作为最终决策入口。"""
+
+    if not request.attachment_paths:
+        return request
+    log_paths = list(request.log_paths)
+    artifact_path = request.artifact_path
+    attestation_path = request.attestation_path
+    include_log = request.include_log_audit
+    include_multimodal = request.include_multimodal_audit
+    include_artifact = request.include_artifact_trust
+    for raw_path in request.attachment_paths:
+        resolve_agent_attachment(raw_path)
+        kind = classify_attachment(Path(raw_path).name)
+        if kind in {"log", "text"} and raw_path not in log_paths:
+            log_paths.append(raw_path)
+            include_log = True
+        elif kind == "image":
+            include_multimodal = True
+        elif kind == "artifact" and not artifact_path:
+            artifact_path = raw_path
+            include_artifact = True
+        elif kind == "attestation" and not attestation_path:
+            attestation_path = raw_path
+            include_artifact = True
+    return request.model_copy(
+        update={
+            "log_paths": log_paths,
+            "artifact_path": artifact_path,
+            "attestation_path": attestation_path,
+            "include_log_audit": include_log,
+            "include_multimodal_audit": include_multimodal,
+            "include_artifact_trust": include_artifact,
+        }
+    )
+
+
 def plan_agent_request(request: AgentRunRequest) -> tuple[AgentRunRequest, dict[str, Any]]:
     question = str(request.question or "").strip()
     if not question:
         return request, build_default_agent_plan(request)
 
     selected = agent_modules_for_question(question)
+    counts = attachment_kind_counts(request.attachment_paths)
+    if counts.get("log", 0) or counts.get("text", 0):
+        selected.add("log_audit")
+    if counts.get("image", 0):
+        selected.add("multimodal_audit")
+    if counts.get("artifact", 0) or counts.get("attestation", 0):
+        selected.add("artifact_trust")
     updates: dict[str, object] = {}
     skipped: list[dict[str, str]] = []
     selected_modules: list[dict[str, str]] = []
@@ -622,6 +707,8 @@ def agent_modules_for_question(question: str) -> set[str]:
         selected.add("artifact_trust")
     if any(keyword in text for keyword in ["日志", "运行期", "外联", "回连", "异常访问", "log", "runtime", "egress"]):
         selected.add("log_audit")
+    if any(keyword in text for keyword in ["图片", "截图", "图像", "ocr", "多模态", "附件", "image"]):
+        selected.add("multimodal_audit")
 
     full_investigation_keywords = [
         "有风险",
@@ -1043,7 +1130,10 @@ def agent_run_status(
 
 def is_planner_scope_skip(step: dict[str, Any]) -> bool:
     reason = str(step.get("error") or step.get("summary", {}).get("reason") or "")
-    return "问题意图" in reason or "当前计划未选择" in reason
+    if "问题意图" in reason or "当前计划未选择" in reason:
+        return True
+    # 多模态是按附件按需启用的可选模块，没有图片时不应把一次正常任务判为 partial。
+    return step.get("id") == "multimodal_audit" and ("未上传图片" in reason or "关闭多模态" in reason)
 
 
 def agent_risk_signal_count(results: AgentInternalResults) -> int:
@@ -1053,6 +1143,7 @@ def agent_risk_signal_count(results: AgentInternalResults) -> int:
     signals += int((results.cicd_audit.summary if results.cicd_audit else {}).get("finding_count") or 0)
     signals += int((results.artifact_trust.summary if results.artifact_trust else {}).get("finding_count") or 0)
     signals += int((results.log_audit.summary if results.log_audit else {}).get("finding_count") or 0)
+    signals += int((results.multimodal_audit.summary if results.multimodal_audit else {}).get("finding_count") or 0)
     return signals
 
 
@@ -1070,7 +1161,9 @@ def build_agent_verdict(
     skipped_steps = [
         str(step.get("name") or step.get("id"))
         for step in steps
-        if step.get("status") == "skipped" and step.get("id") != "workspace_report"
+        if step.get("status") == "skipped"
+        and step.get("id") != "workspace_report"
+        and not is_planner_scope_skip(step)
     ]
     supported_claims = supported_agent_claims(signals, results)
     unsupported_claims = unsupported_agent_claims(signals, evidence_gaps, failed_steps, skipped_steps)
@@ -1125,6 +1218,17 @@ def build_agent_verdict(
             "confidence": 0,
             "evidenceIds": [],
         },
+    }
+
+
+def summarize_multimodal_audit(result: MultimodalAuditResult) -> dict[str, Any]:
+    return {
+        "scanId": result.scan_id,
+        "files": len(result.evidence),
+        "evidence": result.summary.get("evidence_count", len(result.evidence)),
+        "findings": result.summary.get("finding_count", 0),
+        "riskScore": result.summary.get("risk_score", 0),
+        "riskLevel": result.summary.get("risk_level", "low"),
     }
 
 
@@ -1368,6 +1472,8 @@ def agent_verdict_signals(results: AgentInternalResults) -> dict[str, Any]:
         "artifact_impacted": results.artifact_trust is not None and (artifact_findings > 0 or (0 < artifact_score < 70)),
         "log_evaluated": results.log_audit is not None,
         "log_findings": int((results.log_audit.summary if results.log_audit else {}).get("finding_count") or 0),
+        "multimodal_evaluated": results.multimodal_audit is not None,
+        "multimodal_findings": int((results.multimodal_audit.summary if results.multimodal_audit else {}).get("finding_count") or 0),
     }
 
 
@@ -1415,6 +1521,10 @@ def supported_agent_claims(signals: dict[str, Any], results: AgentInternalResult
         claims.append(
             f"运行或构建日志命中 {signals['log_findings']} 个异常行为"
             + (f"，重点事件：{targets}。" if targets else "。")
+        )
+    if signals["multimodal_findings"] > 0:
+        claims.append(
+            f"上传图片的多模态证据命中 {signals['multimodal_findings']} 个安全信号，建议结合日志和代码上下文复核。"
         )
     if not claims:
         claims.append("当前已执行模块未提供明确攻击证据。")
@@ -1601,6 +1711,7 @@ def summarize_agent_run(
         ("cicd_audit", "CI/CD 构建链", int((results.cicd_audit.summary if results.cicd_audit else {}).get("risk_score") or 0)),
         ("artifact_trust", "产物可信", int((results.artifact_trust.summary if results.artifact_trust else {}).get("risk_score") or 0)),
         ("log_audit", "日志印证", int((results.log_audit.summary if results.log_audit else {}).get("risk_score") or 0)),
+        ("multimodal_audit", "多模态证据", int((results.multimodal_audit.summary if results.multimodal_audit else {}).get("risk_score") or 0)),
     ]
     risk_source = max(module_scores, key=lambda item: item[2])
     risk_score = risk_source[2]

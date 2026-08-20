@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
 
-from .config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL, DEEPSEEK_TIMEOUT_SECONDS
+from .config import (
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_ASSISTANT_MAX_TOKENS,
+    DEEPSEEK_ASSISTANT_RETRY_MAX_TOKENS,
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+    DEEPSEEK_TIMEOUT_SECONDS,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 DEEPSEEK_SYSTEM_PROMPT = (
@@ -77,30 +88,9 @@ async def ask_deepseek_security_assistant(
         ],
         "thinking": {"type": "disabled"},
         "temperature": 0.2,
-        "max_tokens": 900,
+        "max_tokens": DEEPSEEK_ASSISTANT_MAX_TOKENS,
     }
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    async with httpx.AsyncClient(timeout=DEEPSEEK_TIMEOUT_SECONDS) as client:
-        response = await client.post(
-            f"{DEEPSEEK_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
-
-    data = response.json()
-    content = extract_chat_content(data)
-    if not content or chat_completion_is_incomplete(data, content):
-        return None
-
-    return {
-        "answer": content,
-        "model": str(data.get("model") or DEEPSEEK_MODEL),
-    }
+    return await request_deepseek_completion_with_retry(payload)
 
 
 async def ask_deepseek_investigation_agent(
@@ -139,27 +129,92 @@ async def ask_deepseek_investigation_agent(
         "temperature": 0.2,
         "max_tokens": 1800,
     }
+    return await request_deepseek_completion_with_retry(payload)
+
+
+async def request_deepseek_completion_with_retry(payload: dict[str, Any]) -> dict[str, Any] | None:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
     }
-
     async with httpx.AsyncClient(timeout=DEEPSEEK_TIMEOUT_SECONDS) as client:
-        response = await client.post(
-            f"{DEEPSEEK_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        response.raise_for_status()
+        data, content = await request_deepseek_completion(client, headers, payload)
+        if not content:
+            logger.warning("DeepSeek 返回空回答，准备使用离线回答")
+            return None
+        if not chat_completion_is_incomplete(data, content):
+            return deepseek_answer_payload(data, content)
 
+        logger.warning(
+            "DeepSeek 回答不完整，将 max_tokens 从 %s 提升到 %s 后重试",
+            payload.get("max_tokens"),
+            DEEPSEEK_ASSISTANT_RETRY_MAX_TOKENS,
+        )
+        retry_payload = {**payload, "max_tokens": DEEPSEEK_ASSISTANT_RETRY_MAX_TOKENS}
+        try:
+            retry_data, retry_content = await request_deepseek_completion(client, headers, retry_payload)
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("DeepSeek 重试失败，保留首次生成内容：%s", exc)
+            return deepseek_answer_payload(
+                data,
+                preserve_partial_chat_content(content),
+                partial=True,
+                retried=True,
+            )
+
+    if retry_content and not chat_completion_is_incomplete(retry_data, retry_content):
+        return deepseek_answer_payload(retry_data, retry_content, retried=True)
+
+    best_data = retry_data if retry_content else data
+    best_content = retry_content or content
+    logger.warning("DeepSeek 重试后回答仍不完整，保留当前已生成内容")
+    return deepseek_answer_payload(
+        best_data,
+        preserve_partial_chat_content(best_content),
+        partial=True,
+        retried=True,
+    )
+
+
+async def request_deepseek_completion(
+    client: httpx.AsyncClient,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    response = await client.post(
+        f"{DEEPSEEK_BASE_URL}/chat/completions",
+        headers=headers,
+        json=payload,
+    )
+    response.raise_for_status()
     data = response.json()
-    content = extract_chat_content(data)
-    if not content or chat_completion_is_incomplete(data, content):
-        return None
+    if not isinstance(data, dict):
+        raise ValueError("DeepSeek 响应必须是 JSON 对象")
+    return data, extract_chat_content(data)
+
+
+def deepseek_answer_payload(
+    data: dict[str, Any],
+    content: str,
+    *,
+    partial: bool = False,
+    retried: bool = False,
+) -> dict[str, Any]:
     return {
         "answer": content,
         "model": str(data.get("model") or DEEPSEEK_MODEL),
+        "partial": partial,
+        "retried": retried,
     }
+
+
+def preserve_partial_chat_content(content: str) -> str:
+    text = content.rstrip()
+    if text.count("**") % 2 == 1:
+        text += "**"
+    if text.count("```") % 2 == 1:
+        text += "\n```"
+    return f"{text}\n\n> 回答达到输出上限，以上为模型已生成的有效内容。"
 
 
 def build_assistant_context(

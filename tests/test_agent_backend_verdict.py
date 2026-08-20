@@ -153,6 +153,29 @@ class AgentBackendVerdictTests(unittest.TestCase):
         self.assertEqual(bundle.payload["verdict"]["level"], "insufficient_evidence")
         self.assertIn("证据不足", bundle.payload["verdict"]["label"])
 
+    def test_progress_waits_for_workspace_writeback_before_terminal_status(self):
+        temp_root = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_root.cleanup)
+        published_statuses: list[str] = []
+        request = AgentRunRequest(
+            include_code_audit=False,
+            include_dependency_audit=False,
+            include_cicd_audit=False,
+            include_artifact_trust=False,
+            include_log_audit=False,
+            include_multimodal_audit=False,
+        )
+
+        with patch.object(agent_backend, "AGENT_RUN_STORAGE_DIR", Path(temp_root.name)):
+            bundle = run_agent_backend(
+                request,
+                progress=lambda payload: published_statuses.append(str(payload["status"])),
+            )
+
+        self.assertTrue(published_statuses)
+        self.assertTrue(all(status == "running" for status in published_statuses))
+        self.assertNotEqual(bundle.payload["status"], "running")
+
     def test_planner_scope_skip_does_not_downgrade_clean_status(self):
         steps = [
             skipped_step("dependency_audit", "供应链组件", "问题意图本轮未选择该模块"),

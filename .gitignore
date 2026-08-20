@@ -22,7 +22,12 @@ outputs/
 storage/imports/
 storage/code_audit/
 storage/agent_runs/
+storage/agent_attachments/
+storage/conversations/
 storage/gnn_datasets/
+storage/workspaces/
+storage/multimodal/*.png
+supplyguard_kg.egg-info/
 
 storage/eval/
 storage/*.log

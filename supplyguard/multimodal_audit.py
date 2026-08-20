@@ -1272,6 +1272,64 @@ def load_evidence_index() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"evidence": []}
 
 
+def merge_multimodal_payloads(
+    existing: dict[str, Any] | None,
+    incoming: dict[str, Any] | None,
+    *,
+    max_evidence: int = MAX_INDEX_EVIDENCE,
+) -> dict[str, Any]:
+    """合并多批证据扫描结果，并优先保留最新一次扫描生成的记录。"""
+    existing_payload = existing if isinstance(existing, dict) else {}
+    incoming_payload = incoming if isinstance(incoming, dict) else {}
+    incoming_evidence = ensure_dicts(incoming_payload.get("evidence"))
+    existing_evidence = ensure_dicts(existing_payload.get("evidence"))
+
+    evidence: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in incoming_evidence + existing_evidence:
+        digest = str(item.get("sha256") or "").strip().lower()
+        evidence_id = str(item.get("evidence_id") or "").strip()
+        identity = f"sha256:{digest}" if digest else f"evidence:{evidence_id}"
+        if identity in seen or (not digest and not evidence_id):
+            continue
+        seen.add(identity)
+        evidence.append(dict(item))
+        if len(evidence) >= max(1, max_evidence):
+            break
+
+    summary = build_summary_from_dicts(evidence)
+    incoming_summary = incoming_payload.get("summary") if isinstance(incoming_payload.get("summary"), dict) else {}
+    existing_summary = existing_payload.get("summary") if isinstance(existing_payload.get("summary"), dict) else {}
+    duration_seconds = round(
+        float(existing_summary.get("duration_seconds") or 0)
+        + float(incoming_summary.get("duration_seconds") or 0),
+        2,
+    )
+    if duration_seconds:
+        summary["duration_seconds"] = duration_seconds
+
+    warnings: list[str] = []
+    for payload in (incoming_payload, existing_payload):
+        for warning in payload.get("warnings", []) if isinstance(payload.get("warnings"), list) else []:
+            value = str(warning).strip()
+            if value and value not in warnings:
+                warnings.append(value)
+
+    tools = incoming_payload.get("tools") if isinstance(incoming_payload.get("tools"), list) else []
+    if not tools and isinstance(existing_payload.get("tools"), list):
+        tools = existing_payload["tools"]
+
+    return {
+        "scan_id": incoming_payload.get("scan_id") or existing_payload.get("scan_id"),
+        "generated_at": incoming_payload.get("generated_at") or existing_payload.get("generated_at"),
+        "evidence": evidence,
+        "tools": tools,
+        "summary": summary,
+        "report": build_multimodal_report_from_dicts(evidence, summary),
+        "warnings": warnings,
+    }
+
+
 def latest_multimodal_payload(limit: int = 100) -> dict[str, Any]:
     index = load_evidence_index()
     evidence = [item for item in index.get("evidence", []) if isinstance(item, dict)][: max(1, min(limit, MAX_INDEX_EVIDENCE))]

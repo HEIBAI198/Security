@@ -8,7 +8,7 @@ import {
 import { toast } from 'sonner'
 import { downloadWorkspaceEvidencePackage, type SecurityWorkspace } from '@/lib/security-api'
 import type { PlatformTab } from './investigation-workflow'
-import { cn } from '@/lib/utils'
+import { cn, formatLocalDateTime } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -1613,7 +1613,7 @@ export function ReportPanel({workspace,animationKey,onOpenModule}:{workspace:Sec
   const confidence=Math.round(num(sortedAttackPaths(workspace)[0]?.confidence ?? workspace.graph?.summary?.average_path_confidence)*100)
   const totalSignals=riskSources.reduce((sum,item)=>sum+item.value,0)
   const primarySubject=primaryRiskSubject(workspace)
-  const generatedAt=workspace.graph?.generated_at?.slice(0,19).replace('T',' ')||workspace.generated_at?.slice(0,19).replace('T',' ')||'—'
+  const generatedAt=formatLocalDateTime(workspace.graph?.generated_at||workspace.generated_at,{includeSeconds:true,fallback:'—'})
   const reportScope=workspace.workspace?.repository||workspace.workspace?.name||'当前项目'
   const metrics=[
     {label:'风险信号',value:workspace.summary.open_findings||totalSignals,detail:'待处理发现'},

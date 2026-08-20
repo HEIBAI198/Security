@@ -114,7 +114,6 @@ import {
   loadArtifactTrustReport,
   loadCodeAuditSarif,
   loadGitHubCodeScanningUploadStatus,
-  loadCodeAuditState,
   loadMultimodalEvidenceLatest,
   loadRealtimeLogEvents,
   loadRealtimeLogTrend,
@@ -128,11 +127,13 @@ import {
   runCodeAuditScan,
   runLogAuditScan,
   runMultimodalEvidenceScan,
+  uploadAgentAttachments,
   uploadArtifactTrustScan,
   type ArtifactTrustCheck,
   type ArtifactTrustFinding,
   type ArtifactTrustResult,
   type AgentEvidenceGap,
+  type AgentAttachment,
   type AgentNextAction,
   type AgentRunEvent,
   type AgentRunRequest,
@@ -188,7 +189,7 @@ import {
 import { useAuthStore } from '@/stores/auth-store'
 import { Logo } from '@/assets/logo'
 import { IconGithub } from '@/assets/brand-icons'
-import { cn } from '@/lib/utils'
+import { cn, formatLocalDateTime } from '@/lib/utils'
 import { decideAgentQuestionAction } from './agent-question-routing'
 import { gnnScoreLabel, isGnnJudged, resolveGnnDecisionStatus } from './gnn-display-model'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -271,6 +272,7 @@ import {
 import { MultimodalEvidencePanel } from './multimodal-evidence-panel'
 import { AttackChainGraph } from './attack-chain-graph'
 import { ReportPanel, normalizeReportForDisplay } from './report-panel'
+import { workspaceHasScanResult } from './workspace-module-state'
 import {
   buildCicdDisplayModel,
   type CicdDisplayModel,
@@ -434,6 +436,7 @@ type MultimodalEntitySummary = {
 type AgentTargetPreset = '3cx' | 'solarwinds' | 'codecov' | 'eventstream' | 'manual'
 type AssistantMode = 'graphrag' | 'agent'
 type AgentFormState = {
+  question: string
   targetPath: string
   artifactPath: string
   attestationPath: string
@@ -446,7 +449,7 @@ type AgentFormState = {
   allowSelfHostedRunner: boolean
 }
 type AgentInvestigationStage = {
-  id: 'dependency' | 'cicd' | 'artifact' | 'logs' | 'graph'
+  id: 'dependency' | 'cicd' | 'artifact' | 'logs' | 'multimodal' | 'graph'
   title: string
   subtitle: string
   moduleTab: PlatformTab
@@ -523,7 +526,7 @@ const agentModuleIdByScanStep: Partial<Record<ScanStepState['id'], string>> = {
   pipeline: 'cicd_audit',
   artifact: 'artifact_trust',
   logs: 'log_audit',
-  multimodal: 'multimodal_evidence',
+  multimodal: 'multimodal_audit',
   graph: 'workspace_report',
 }
 
@@ -541,11 +544,15 @@ function scanStateFromWorkspace(workspace: SecurityWorkspace | null): ScanWorksp
   const steps = scanStepSeed.map((step) => {
     const moduleKey = agentModuleIdByScanStep[step.id] || String(step.id)
     const error = errors.get(moduleKey) || errors.get(String(step.id))
+    const hasSavedResult = workspaceHasScanResult(workspace, moduleKey)
+    if (error) return { ...step, status: 'failed' as const, message: error }
+    if (completedModuleIds.has(moduleKey)) {
+      return { ...step, status: 'completed' as const, message: '本轮执行完成' }
+    }
+    if (hasSavedResult) {
+      return { ...step, status: 'completed' as const, message: '已有扫描结果' }
+    }
     if (hasExplicitModuleResults) {
-      if (error) return { ...step, status: 'failed' as const, message: error }
-      if (completedModuleIds.has(moduleKey)) {
-        return { ...step, status: 'completed' as const, message: '本轮执行完成' }
-      }
       return {
         ...step,
         status: 'skipped' as const,
@@ -572,16 +579,16 @@ function scanStateFromWorkspace(workspace: SecurityWorkspace | null): ScanWorksp
         ? { ...step, status: 'failed' as const, message: '汇总时出现错误' }
         : { ...step, status: 'completed' as const, message: '图谱与报告已更新' }
     }
-    return error
-      ? { ...step, status: 'failed' as const, message: error }
-      : { ...step, status: 'completed' as const, message: '扫描完成' }
+    return { ...step, status: 'skipped' as const, message: '尚无扫描结果' }
   })
   return { running: false, completed: true, steps }
 }
 
 function scanStateFromAgentRun(run: AgentRunResult, workspace?: SecurityWorkspace | null): ScanWorkspaceState {
   const agentStepById = new Map((run.steps || []).map((step) => [step.id, step]))
-  const multimodalCount = workspace?.multimodal_audit?.summary?.evidence_count ?? 0
+  const workspaceStepById = new Map(
+    scanStateFromWorkspace(workspace ?? null).steps.map((step) => [step.id, step])
+  )
   const statusByStep: Record<string, ScanStepStatus> = {
     pending: 'pending',
     running: 'running',
@@ -590,17 +597,23 @@ function scanStateFromAgentRun(run: AgentRunResult, workspace?: SecurityWorkspac
     failed: 'failed',
   }
   const steps = scanStepSeed.map((seed) => {
-    if (seed.id === 'multimodal') {
-      return multimodalCount > 0
-        ? { ...seed, status: 'completed' as const, message: '已纳入外部证据' }
-        : { ...seed, status: 'skipped' as const, message: 'Agent 本轮未调用多模态证据' }
-    }
+    const savedStep = workspaceStepById.get(seed.id) ?? seed
     const agentStep = agentStepById.get(agentModuleIdByScanStep[seed.id] || '')
-    if (!agentStep) return { ...seed }
+    if (!agentStep) return { ...savedStep }
+    const status = statusByStep[agentStep.status] ?? 'pending'
+    if (status === 'skipped' && savedStep.status === 'completed') {
+      return { ...savedStep, message: '已有扫描结果，本轮未重复执行' }
+    }
+    const message = [
+      agentStep.error,
+      agentStep.summary?.message,
+      agentStep.summary?.reason,
+      agentStep.description,
+    ].find((value): value is string => typeof value === 'string') ?? ''
     return {
       ...seed,
-      status: statusByStep[agentStep.status] ?? 'pending',
-      message: agentStep.error || agentStep.summary?.message || agentStep.summary?.reason || agentStep.description || '',
+      status,
+      message,
     }
   })
   const running = ['queued', 'running', 'idle'].includes(String(run.status))
@@ -899,6 +912,7 @@ const agentPresetRequests: Record<Exclude<AgentTargetPreset, 'manual'>, AgentRun
 }
 
 const emptyAgentForm: AgentFormState = {
+  question: '',
   targetPath: '',
   artifactPath: '',
   attestationPath: '',
@@ -1280,6 +1294,12 @@ function workspaceHasModulePayload(workspace: SecurityWorkspace, moduleId: strin
   if (moduleId === 'cicd_audit') return Boolean(workspace.cicd_audit?.scan_id || (workspace.cicd_audit?.findings?.length ?? 0) > 0)
   if (moduleId === 'artifact_trust') return Boolean(workspace.artifact_trust?.scan_id || (workspace.artifact_trust?.checks?.length ?? 0) > 0)
   if (moduleId === 'log_audit') return Boolean(workspace.log_audit?.scan_id || (workspace.log_audit?.findings?.length ?? 0) > 0)
+  if (moduleId === 'multimodal_audit') {
+    return Boolean(
+      workspace.multimodal_audit?.scan_id ||
+      (workspace.multimodal_audit?.evidence?.length ?? 0) > 0
+    )
+  }
   if (moduleId === 'workspace_report') return Boolean(workspace.report || (workspace.graph?.attack_paths?.length ?? 0) > 0)
   return true
 }
@@ -1294,13 +1314,15 @@ function workspaceMissingCompletedModuleDetails(workspace: SecurityWorkspace | n
 async function loadWorkspaceUntilModulePayloads(
   workspaceId: string,
   fallback?: SecurityWorkspace | null,
-  attempts = 5
+  expectedRunId?: string | null,
+  attempts = 8
 ) {
   let latest = fallback ?? null
   for (let index = 0; index < attempts; index += 1) {
     try {
       latest = await loadSecurityWorkspaceById(workspaceId)
-      if (!workspaceMissingCompletedModuleDetails(latest)) return latest
+      const currentRunReady = !expectedRunId || latest.agentRun?.runId === expectedRunId
+      if (currentRunReady && !workspaceMissingCompletedModuleDetails(latest)) return latest
     } catch {
       if (index === attempts - 1 && latest) return latest
     }
@@ -1348,6 +1370,8 @@ export function SecurityPlatform() {
   const [assistantMode, setAssistantMode] = useState<AssistantMode>('graphrag')
   const [assistantMessages, setAssistantMessages] =
     useState<SecurityAssistantResponse[]>([])
+  const [assistantAttachments, setAssistantAttachments] = useState<AgentAttachment[]>([])
+  const [assistantAttachmentBusy, setAssistantAttachmentBusy] = useState(false)
   const [assistantBusy, setAssistantBusy] = useState(false)
   const [conversations, setConversations] = useState<SecurityConversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState('')
@@ -1392,6 +1416,7 @@ export function SecurityPlatform() {
 
   useEffect(() => {
     activeWorkspaceRef.current = activeWorkspaceKey
+    setAssistantAttachments([])
   }, [activeWorkspaceKey])
 
   useEffect(() => {
@@ -1454,6 +1479,29 @@ export function SecurityPlatform() {
       return next
     })
   }
+
+  async function addAssistantAttachments(files: File[]) {
+    if (!files.length || assistantAttachmentBusy) return
+    if (!workspace) {
+      toast.error('请先选择或导入一个项目')
+      return
+    }
+    setAssistantAttachmentBusy(true)
+    try {
+      const result = await uploadAgentAttachments(files, getWorkspaceId(workspace))
+      setAssistantAttachments((current) => {
+        const existing = new Set(current.map((item) => item.sha256))
+        return [...current, ...result.attachments.filter((item) => !existing.has(item.sha256))]
+      })
+      setAssistantMode('agent')
+      toast.success(`已添加 ${result.attachments.length} 个 Agent 附件`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Agent 附件上传失败')
+    } finally {
+      setAssistantAttachmentBusy(false)
+    }
+  }
+
 
   function applyWorkspaceUpdate(
     nextWorkspace: SecurityWorkspace,
@@ -1606,7 +1654,7 @@ export function SecurityPlatform() {
     setAssistantBusy(true)
     try {
       const response = assistantMode === 'agent' && workspace
-        ? await runAgentQuestion(value, workspace)
+        ? await runAgentQuestion(value, workspace, assistantAttachments)
         : await askSecurityAssistant(value, workspace ? getWorkspaceId(workspace) : undefined)
       if (workspace) {
         appendAssistantMessage(getWorkspaceId(workspace), response)
@@ -1614,6 +1662,7 @@ export function SecurityPlatform() {
         setAssistantMessages((current) => [...current, response].slice(-assistantHistoryLimit))
       }
       setQuestion('')
+      setAssistantAttachments([])
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '安全助手分析失败')
     } finally {
@@ -1621,11 +1670,15 @@ export function SecurityPlatform() {
     }
   }
 
-  async function runAgentQuestion(value: string, currentWorkspace: SecurityWorkspace): Promise<SecurityAssistantResponse> {
+  async function runAgentQuestion(
+    value: string,
+    currentWorkspace: SecurityWorkspace,
+    attachments: AgentAttachment[] = [],
+  ): Promise<SecurityAssistantResponse> {
     const request = agentRequestFromWorkspace(currentWorkspace)
     const workspaceId = getWorkspaceId(currentWorkspace)
     const decision = decideAgentQuestionAction(value, isWorkspaceScanned(currentWorkspace))
-    if (decision.action === 'answer') {
+    if (decision.action === 'answer' && !attachments.length) {
       const response = await askSecurityAgentChat(value, workspaceId)
       const previousRun = currentWorkspace.agentRun
         ? { ...currentWorkspace.agentRun, workspace: currentWorkspace }
@@ -1654,7 +1707,11 @@ export function SecurityPlatform() {
         model: response.graph_rag ? 'agent-graphrag' : response.model,
       }
     }
-    const created = await createSecurityAgentJob({ ...request, question: value })
+    const created = await createSecurityAgentJob({
+      ...request,
+      question: value,
+      ...(attachments.length ? { attachmentPaths: attachments.map((item) => item.path) } : {}),
+    })
     toast.success(
       decision.reason === 'first_scan'
         ? 'Agent 正在规划并执行首次扫描'
@@ -1677,7 +1734,8 @@ export function SecurityPlatform() {
     }
     const finalWorkspace = await loadWorkspaceUntilModulePayloads(
       workspaceId,
-      result.workspace ?? currentWorkspace
+      result.workspace ?? currentWorkspace,
+      result.runId
     )
     const finalResult = finalWorkspace.agentRun?.runId === result.runId
       ? finalWorkspace.agentRun
@@ -2038,6 +2096,10 @@ export function SecurityPlatform() {
                       scanSteps={scanSteps}
                       question={question}
                       setQuestion={setQuestion}
+                      attachments={assistantAttachments}
+                      attachmentBusy={assistantAttachmentBusy}
+                      onAddAttachments={(files) => void addAssistantAttachments(files)}
+                      onRemoveAttachment={(id) => setAssistantAttachments((current) => current.filter((item) => item.attachmentId !== id))}
                       assistantMode={assistantMode}
                       onAssistantModeChange={setAssistantMode}
                       messages={assistantMessages}
@@ -2103,7 +2165,7 @@ export function SecurityPlatform() {
                       score: finding.score,
                       asset: `${finding.ecosystem}:${finding.dependency} (${finding.source_file})`,
                       evidence: finding.evidence,
-                      first_seen: (audit.generated_at ?? '').slice(0, 16).replace('T', ' '),
+                      first_seen: formatLocalDateTime(audit.generated_at, { fallback: '' }),
                       owner: 'appsec',
                       status: finding.recommendation,
                     })),
@@ -2156,7 +2218,7 @@ export function SecurityPlatform() {
                       score: finding.score,
                       asset: `${finding.workflow}:${finding.line}`,
                       evidence: finding.evidence,
-                      first_seen: (audit.generated_at ?? '').slice(0, 16).replace('T', ' '),
+                      first_seen: formatLocalDateTime(audit.generated_at, { fallback: '' }),
                       owner: 'devops',
                       status: finding.recommendation,
                     })),
@@ -2257,6 +2319,10 @@ export function SecurityPlatform() {
               workspace={workspace}
               question={question}
               setQuestion={setQuestion}
+              attachments={assistantAttachments}
+              attachmentBusy={assistantAttachmentBusy}
+              onAddAttachments={(files) => void addAssistantAttachments(files)}
+              onRemoveAttachment={(id) => setAssistantAttachments((current) => current.filter((item) => item.attachmentId !== id))}
               assistantMode={assistantMode}
               onAssistantModeChange={setAssistantMode}
               messages={assistantMessages}
@@ -2872,6 +2938,10 @@ function AgentConversationHome({
   scanSteps,
   question,
   setQuestion,
+  attachments,
+  attachmentBusy,
+  onAddAttachments,
+  onRemoveAttachment,
   assistantMode,
   onAssistantModeChange,
   messages,
@@ -2886,6 +2956,10 @@ function AgentConversationHome({
   scanSteps: ScanStepState[]
   question: string
   setQuestion: (value: string) => void
+  attachments: AgentAttachment[]
+  attachmentBusy: boolean
+  onAddAttachments: (files: File[]) => void
+  onRemoveAttachment: (attachmentId: string) => void
   assistantMode: AssistantMode
   onAssistantModeChange: (mode: AssistantMode) => void
   messages: SecurityAssistantResponse[]
@@ -3032,6 +3106,10 @@ function AgentConversationHome({
         <AssistantComposer
           value={question}
           onChange={setQuestion}
+          attachments={attachments}
+          attachmentBusy={attachmentBusy}
+          onAddAttachments={onAddAttachments}
+          onRemoveAttachment={onRemoveAttachment}
           mode={assistantMode}
           onModeChange={onAssistantModeChange}
           onSubmit={onSubmit}
@@ -3128,6 +3206,10 @@ function ModuleResultNavigation({
 function AssistantComposer({
   value,
   onChange,
+  attachments,
+  attachmentBusy,
+  onAddAttachments,
+  onRemoveAttachment,
   mode,
   onModeChange,
   onSubmit,
@@ -3137,6 +3219,10 @@ function AssistantComposer({
 }: {
   value: string
   onChange: (value: string) => void
+  attachments: AgentAttachment[]
+  attachmentBusy: boolean
+  onAddAttachments: (files: File[]) => void
+  onRemoveAttachment: (attachmentId: string) => void
   mode: AssistantMode
   onModeChange: (mode: AssistantMode) => void
   onSubmit: () => void
@@ -3144,6 +3230,9 @@ function AssistantComposer({
   placeholder: string
   compact?: boolean
 }) {
+  const [dragActive, setDragActive] = useState(false)
+  const dragDepthRef = useRef(0)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: compact ? 54 : 64,
     maxHeight: 180,
@@ -3157,7 +3246,60 @@ function AssistantComposer({
 
   return (
     <div className='mx-auto w-full max-w-5xl'>
-      <div className='group relative overflow-hidden rounded-2xl border border-border/90 bg-card shadow-[0_16px_48px_rgba(2,6,23,0.3)] transition-[border-color,box-shadow] focus-within:border-cyan-400/60 focus-within:shadow-[0_0_0_1px_rgba(34,211,238,0.12),0_20px_56px_rgba(2,6,23,0.4)]'>
+      <div
+        className={cn(
+          'group relative overflow-hidden rounded-2xl border border-border/90 bg-card shadow-[0_16px_48px_rgba(2,6,23,0.3)] transition-[border-color,box-shadow,background-color] focus-within:border-cyan-400/60 focus-within:shadow-[0_0_0_1px_rgba(34,211,238,0.12),0_20px_56px_rgba(2,6,23,0.4)]',
+          dragActive && 'border-cyan-400 bg-cyan-50/70 shadow-[0_0_0_3px_rgba(34,211,238,0.16),0_20px_56px_rgba(2,6,23,0.22)] dark:bg-cyan-950/35'
+        )}
+        onDragEnter={(event) => {
+          if (!event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          event.stopPropagation()
+          dragDepthRef.current += 1
+          setDragActive(true)
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes('Files')) return
+          event.preventDefault()
+          event.stopPropagation()
+          event.dataTransfer.dropEffect = 'copy'
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+          if (dragDepthRef.current === 0) setDragActive(false)
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          dragDepthRef.current = 0
+          setDragActive(false)
+          const files = Array.from(event.dataTransfer.files ?? [])
+          if (files.length) onAddAttachments(files)
+        }}
+      >
+        {attachments.length ? (
+          <div className='flex flex-wrap gap-1.5 px-4 pt-3'>
+            {attachments.map((attachment) => (
+              <span key={attachment.attachmentId} className='inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background/90 px-2 py-1 text-[11px] shadow-sm'>
+                {attachment.kind === 'image' ? <Images className='size-3 text-cyan-600' /> : <FileText className='size-3 text-slate-500' />}
+                <span className='max-w-52 truncate' title={attachment.filename}>{attachment.filename}</span>
+                <Badge variant='outline' className='rounded px-1 py-0 text-[9px]'>{attachmentKindLabel(attachment.kind)}</Badge>
+                <button
+                  type='button'
+                  className='rounded p-0.5 text-muted-foreground hover:text-foreground'
+                  aria-label={`移除附件 ${attachment.filename}`}
+                  title='移除附件'
+                  onClick={() => onRemoveAttachment(attachment.attachmentId)}
+                >
+                  <X className='size-3' />
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {dragActive ? <div className='pointer-events-none absolute inset-0 z-10 grid place-items-center bg-cyan-100/45 text-sm font-semibold text-cyan-800 dark:bg-cyan-950/45 dark:text-cyan-200'>松开以上传到 Agent</div> : null}
         <Textarea
           ref={textareaRef}
           value={value}
@@ -3181,6 +3323,29 @@ function AssistantComposer({
         />
 
         <div className='absolute inset-x-3 bottom-3 flex h-10 items-center gap-1.5'>
+          <input
+            ref={attachmentInputRef}
+            type='file'
+            multiple
+            accept='image/*,.log,.jsonl,.ndjson,.txt,.md,.json,.yaml,.yml,.csv,.zip,.tar,.gz,.tgz,.intoto.json,.intoto.jsonl'
+            className='hidden'
+            onChange={(event) => {
+              onAddAttachments(Array.from(event.target.files ?? []))
+              event.currentTarget.value = ''
+            }}
+          />
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            className='size-9 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground'
+            disabled={attachmentBusy}
+            onClick={() => attachmentInputRef.current?.click()}
+            aria-label={attachmentBusy ? '附件上传中' : '上传 Agent 附件'}
+            title={attachmentBusy ? '附件上传中' : '上传 Agent 附件'}
+          >
+            {attachmentBusy ? <Loader2 className='size-4 animate-spin' /> : <Upload className='size-4' />}
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
             <Button
@@ -4320,9 +4485,7 @@ function SupplyReachabilityPanel({
   const ecosystems = Array.from(new Set(reachabilityItems.map((item) => item.packageManager).filter(Boolean)))
   const projectLabel = workspace.import?.projectName || workspace.workspace.name || '当前项目'
   const branchLabel = workspace.workspace.branch || '未识别分支'
-  const generatedAt = workspace.dependency_audit?.generated_at
-    ? workspace.dependency_audit.generated_at.slice(0, 16).replace('T', ' ')
-    : ''
+  const generatedAt = formatLocalDateTime(workspace.dependency_audit?.generated_at, { fallback: '' })
 
   async function rerunReachability() {
     setScanning(true)
@@ -6063,7 +6226,6 @@ export function CodeAuditPanel({
   const audit = workspace.code_audit
   const [scanning, setScanning] = useState(false)
   const [supplementing, setSupplementing] = useState(false)
-  const [state, setState] = useState<CodeAuditState | null>(null)
   const [mutating, setMutating] = useState(false)
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState('all')
@@ -6078,18 +6240,6 @@ export function CodeAuditPanel({
   const [githubResult, setGithubResult] =
     useState<GitHubCodeScanningUploadResult | null>(null)
   const supplementInputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    let alive = true
-    loadCodeAuditState()
-      .then((payload) => {
-        if (alive) setState(payload)
-      })
-      .catch(() => undefined)
-    return () => {
-      alive = false
-    }
-  }, [audit?.scan_id])
 
   async function startScan() {
     setScanning(true)
@@ -6106,7 +6256,6 @@ export function CodeAuditPanel({
       setCategoryFilter('all')
       setSelectedFindingId(nextAudit.findings[0] ? codeFindingKey(nextAudit.findings[0]) : null)
       onScanned(nextAudit)
-      setState(await loadCodeAuditState())
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '代码审查失败')
     } finally {
@@ -6173,7 +6322,6 @@ export function CodeAuditPanel({
     try {
       const payload = await createCodeAuditBaseline('accepted-current-risk')
       if (payload.code_audit) onScanned(payload.code_audit)
-      setState(payload.state)
       toast.success('基线已建立')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '建立基线失败')
@@ -6187,7 +6335,6 @@ export function CodeAuditPanel({
     try {
       const payload = await ignoreCodeAuditFinding(fingerprint, 'false-positive')
       if (payload.code_audit) onScanned(payload.code_audit)
-      setState(payload.state)
       toast.success('已加入误报忽略')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '忽略失败')
@@ -6231,18 +6378,13 @@ export function CodeAuditPanel({
   const riskScore = codeAuditRiskScore(findings, severitySummary)
   const riskFiles = Array.from(new Set(findings.map((finding) => finding.risk_file).filter(Boolean)))
   const activeScanners = scanners.filter((scanner) => scanner.available)
-  const trend = state?.trend ?? []
-  const reachability = buildReachabilityViewModel(workspace)
-  const codeAnimationKey = audit?.generated_at ? Date.parse(audit.generated_at) || findings.length : findings.length
   const hasCompletedAudit = Boolean(audit?.scan_id)
   const scannerLabel = activeScanners.length
     ? activeScanners.slice(0, 3).map((scanner) => scanner.name).join(' / ')
     : '代码安全扫描'
   const projectLabel = workspace.import?.projectName || workspace.workspace.name || '当前项目'
   const branchLabel = workspace.workspace.branch || '未识别分支'
-  const scanGeneratedAt = audit?.generated_at
-    ? audit.generated_at.slice(0, 16).replace('T', ' ')
-    : ''
+  const scanGeneratedAt = formatLocalDateTime(audit?.generated_at, { fallback: '' })
 
   return (
     <div className='space-y-4'>
@@ -6392,57 +6534,6 @@ export function CodeAuditPanel({
             />
           )}
 
-          <section className='flex flex-wrap items-center justify-between gap-3 border-y border-border px-1 py-3'>
-            <div className='flex min-w-0 flex-wrap items-center gap-2'>
-              <span className='text-label text-muted-foreground'>扫描引擎</span>
-              {scanners.length ? scanners.map((scanner) => (
-                <span key={`${scanner.name}-${scanner.command}`} className={cn('meta-chip-dark', scanner.available ? 'text-emerald-600 dark:text-emerald-200' : 'text-amber-600 dark:text-amber-200')} title={scanner.error || scanner.version || scanner.command}>
-                  {scanner.name} · {scannerStateLabel(scanner.state, scanner.available)}
-                </span>
-              )) : <span className='text-sm text-muted-foreground'>未返回引擎信息</span>}
-              <span className='meta-chip-dark'>已忽略 {audit?.summary.ignored_total ?? audit?.summary.ignored ?? state?.ignored.length ?? 0}</span>
-              <span className='meta-chip-dark'>{state?.baseline || audit?.summary.baseline_exists ? '基线已建立' : '尚无基线'}</span>
-            </div>
-          </section>
-
-          <Collapsible>
-            <CollapsibleTrigger asChild>
-              <Button variant='outline' className='w-full justify-between rounded-md'>
-                <span className='flex items-center gap-2'>
-                  <Route className='size-4 text-cyan-500' />
-                  查看代码风险可达性与扫描趋势
-                </span>
-                <ChevronDown className='size-4' />
-              </Button>
-            </CollapsibleTrigger>
-            <CollapsibleContent className='mt-4 space-y-4'>
-              <ReachabilityVerdictDashboard
-                key={`code-reachability-${audit?.scan_id || 'empty'}`}
-                model={reachability}
-                animationKey={codeAnimationKey}
-              />
-              <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]'>
-                <div className='space-y-4'>
-                  <ReachabilityPathGraph model={reachability} scanning={scanning} onScan={() => void startScan()} />
-                  <ReachabilityEvidenceMatrix model={reachability} />
-                </div>
-                <div className='space-y-4'>
-                  <ReachabilityGapPanel model={reachability} scanning={scanning} onScan={() => void startScan()} />
-                  <Card className='rounded-md'>
-                    <CardHeader><CardTitle className='text-base'>扫描引擎贡献</CardTitle></CardHeader>
-                    <CardContent><ScannerContributionPanel scanners={scanners} findings={findings} /></CardContent>
-                  </Card>
-                </div>
-              </div>
-              <Card className='rounded-md'>
-                <CardHeader><CardTitle className='text-base'>趋势与原始明细</CardTitle></CardHeader>
-                <CardContent className='space-y-4'>
-                  <CompactAuditTrend trend={trend} gradientId='codeAuditTrend' variant='wide' />
-                  <CodeFindingTable findings={findings} mutating={mutating} onIgnore={(fingerprint) => void ignoreFinding(fingerprint)} auditExists />
-                </CardContent>
-              </Card>
-            </CollapsibleContent>
-          </Collapsible>
         </>
       )}
     </div>
@@ -7958,7 +8049,7 @@ function CompactAuditTrend({
             minTickGap={18}
           />
           <YAxis allowDecimals={false} tick={{ fontSize: 10 }} width={28} />
-          <Tooltip labelFormatter={(value) => String(value).replace('T', ' ').slice(0, 19)} />
+          <Tooltip labelFormatter={(value) => formatLocalDateTime(String(value), { includeSeconds: true })} />
           <Area
             type='monotone'
             dataKey='total'
@@ -9084,9 +9175,7 @@ function PipelinePanel({
 
   const totalBuildChainRisks = displayModel.summary.finding_count
   const hasScanResult = Boolean(audit?.scan_id || audit?.generated_at)
-  const scanGeneratedAt = audit?.generated_at
-    ? audit.generated_at.slice(0, 16).replace('T', ' ')
-    : ''
+  const scanGeneratedAt = formatLocalDateTime(audit?.generated_at, { fallback: '' })
 
   return (
     <div className='space-y-4'>
@@ -9298,7 +9387,7 @@ function buildOrderedBuildSteps(
       title: def.title,
       mainEntity: s?.name || s?.step || '—',
       description: s?.detail || s?.actor || '等待扫描数据',
-      time: s?.time?.slice(0, 16).replace('T', ' ') || '',
+      time: formatLocalDateTime(s?.time, { fallback: '' }),
       source: s?.actor || stepType,
       riskLevel,
       status: s?.status || 'waiting',
@@ -10908,11 +10997,7 @@ function artifactTrustDisplayName(value?: string | null) {
 }
 
 function formatArtifactTrustGeneratedAt(value?: string | null) {
-  const text = String(value || '').trim()
-  if (!text) return '-'
-  const parsed = new Date(text)
-  if (Number.isNaN(parsed.getTime())) return text.slice(0, 19).replace('T', ' ')
-  return parsed.toLocaleString('zh-CN', { hour12: false })
+  return formatLocalDateTime(value, { includeSeconds: true })
 }
 
 type EvidenceKey = 'artifact' | 'digest' | 'signature' | 'attestation' | 'provenance' | 'policy'
@@ -11196,7 +11281,7 @@ function applyArtifactTrustToWorkspace(workspace: SecurityWorkspace, result: Art
     score: finding.score,
     asset: result.artifact,
     evidence: finding.evidence,
-    first_seen: (result.generated_at ?? '').slice(0, 16).replace('T', ' '),
+    first_seen: formatLocalDateTime(result.generated_at, { fallback: '' }),
     owner: 'release-engineering',
     status: finding.recommendation,
   }))
@@ -11263,7 +11348,7 @@ function applyLogAuditToWorkspace(workspace: SecurityWorkspace, audit: LogAuditR
       score: finding.score,
       asset: asset.join(' / '),
       evidence: finding.evidence,
-      first_seen: finding.time.slice(0, 16),
+      first_seen: formatLocalDateTime(finding.time, { fallback: '' }),
       owner: 'soc',
       status: `置信度 ${Math.round(finding.confidence * 100)}%，建议结合源 IP、账号和时间窗口复核。`,
     }
@@ -11908,16 +11993,22 @@ function LogEvidenceBlock({ text, title = '关键证据' }: { text: string; titl
   }
 
   return (
-    <div className='min-w-0 overflow-hidden rounded-md border border-slate-800 bg-slate-950'>
-      <div className='flex items-center justify-between gap-3 border-b border-slate-800 px-3 py-2'>
-        <div className='text-xs font-semibold text-slate-200'>{title}</div>
-        <Button type='button' variant='ghost' size='sm' className='h-7 px-2 text-slate-300 hover:bg-slate-800 hover:text-white' onClick={() => void copyEvidence()}>
+    <div className='min-w-0 overflow-hidden rounded-md border border-border bg-[color:var(--surface-inset)]'>
+      <div className='flex items-center justify-between gap-3 border-b border-border bg-[color:var(--surface-card)] px-3 py-2'>
+        <div className='text-xs font-semibold text-foreground'>{title}</div>
+        <Button
+          type='button'
+          variant='ghost'
+          size='sm'
+          className='h-7 px-2 text-muted-foreground hover:bg-[color:var(--surface-hover)] hover:text-foreground'
+          onClick={() => void copyEvidence()}
+        >
           <Copy className='size-3.5' />
           复制
         </Button>
       </div>
       <pre
-        className='max-h-[330px] min-w-0 overflow-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs font-medium leading-6 text-slate-100 [overflow-wrap:anywhere] [scrollbar-width:thin]'
+        className='max-h-[330px] min-w-0 overflow-auto whitespace-pre-wrap break-words bg-[color:var(--surface-inset)] px-4 py-3 font-mono text-xs font-medium leading-6 text-foreground selection:bg-cyan-200/70 selection:text-slate-950 dark:selection:bg-cyan-700/70 dark:selection:text-white [overflow-wrap:anywhere] [scrollbar-width:thin]'
         title={formattedText}
       >
         {formattedText}
@@ -12159,7 +12250,7 @@ function _MultimodalEvidencePanel_OLD({
   async function refreshLatest() {
     setRefreshingLatest(true)
     try {
-      const payload = await loadMultimodalEvidenceLatest(100)
+      const payload = await loadMultimodalEvidenceLatest(100, workspaceId)
       await onScanned(payload)
       toast.success(`已刷新 ${payload.summary.evidence_count} 条多模态证据`)
     } catch (error) {
@@ -15044,6 +15135,7 @@ const defaultAgentSteps: AgentRunStep[] = [
   { id: 'cicd_audit', name: 'CI/CD 构建链', description: '检查 workflow、权限和构建链路', status: 'pending', durationSeconds: 0, input: {}, summary: {}, error: '' },
   { id: 'artifact_trust', name: '产物可信', description: '校验 artifact 和 provenance', status: 'pending', durationSeconds: 0, input: {}, summary: {}, error: '' },
   { id: 'log_audit', name: '日志印证', description: '用运行期日志印证风险', status: 'pending', durationSeconds: 0, input: {}, summary: {}, error: '' },
+  { id: 'multimodal_audit', name: '多模态证据', description: '分析上传图片中的 OCR 和安全信号', status: 'pending', durationSeconds: 0, input: {}, summary: {}, error: '' },
   { id: 'workspace_report', name: '图谱与报告', description: '汇总攻击路径和溯源报告', status: 'pending', durationSeconds: 0, input: {}, summary: {}, error: '' },
 ]
 
@@ -15089,6 +15181,16 @@ const agentInvestigationStages: AgentInvestigationStage[] = [
     successCriteria: '证明可疑行为是否到达运行环境',
   },
   {
+    id: 'multimodal',
+    title: '多模态证据',
+    subtitle: '识别截图中的 OCR 文本、实体和安全规则命中',
+    moduleTab: 'multimodal',
+    stepIds: ['multimodal_audit'],
+    icon: <Images className='size-4' />,
+    evidenceLabel: '截图 / 图片附件',
+    successCriteria: '把图片中的外部告警和界面证据纳入研判',
+  },
+  {
     id: 'graph',
     title: '攻击路径生成',
     subtitle: '把组件、构建、产物和日志证据串成可解释路径',
@@ -15109,6 +15211,9 @@ function AgentCommandCenter({
 }) {
   const [targetPreset, setTargetPreset] = useState<AgentTargetPreset>('3cx')
   const [form, setForm] = useState<AgentFormState>(() => agentFormFromRequest(agentPresetRequests['3cx']))
+  const [attachments, setAttachments] = useState<AgentAttachment[]>([])
+  const [attachmentBusy, setAttachmentBusy] = useState(false)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentRun, setAgentRun] = useState<AgentRunResult | null>(null)
@@ -15136,15 +15241,34 @@ function AgentCommandCenter({
     setForm(agentFormFromRequest(agentPresetRequests[value]))
   }
 
+  async function addAttachments(files: File[]) {
+    if (!files.length || attachmentBusy) return
+    setAttachmentBusy(true)
+    try {
+      const result = await uploadAgentAttachments(files, getWorkspaceId(workspace))
+      setAttachments((current) => [...current, ...result.attachments])
+      toast.success(`已上传 ${result.attachments.length} 个附件，提交任务时将自动选择相关模块`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Agent 附件上传失败')
+    } finally {
+      setAttachmentBusy(false)
+      if (attachmentInputRef.current) attachmentInputRef.current.value = ''
+    }
+  }
+
   async function startAgentRun() {
-    if (!form.targetPath.trim()) {
-      toast.error('请先填写要扫描的项目路径')
+    if (!form.targetPath.trim() && !attachments.length) {
+      toast.error('请填写项目路径，或先上传日志/图片附件')
       return
     }
     setAgentBusy(true)
     try {
       const workspaceId = getWorkspaceId(workspace)
-      const request = { ...agentRequestFromForm(form), workspaceId }
+      const request = {
+        ...agentRequestFromForm(form),
+        workspaceId,
+        ...(attachments.length ? { attachmentPaths: attachments.map((item) => item.path) } : {}),
+      }
       const created = await createSecurityAgentJob(request)
       setAgentRun(created)
       toast.success('Agent 任务已创建，开始实时轮询调查进度')
@@ -15157,7 +15281,11 @@ function AgentCommandCenter({
         if (result.workspace) onWorkspaceUpdated(result.workspace)
       }
 
-      const finalWorkspace = await loadWorkspaceUntilModulePayloads(workspaceId, result.workspace)
+      const finalWorkspace = await loadWorkspaceUntilModulePayloads(
+        workspaceId,
+        result.workspace,
+        result.runId
+      )
       if (finalWorkspace) {
         result = { ...result, workspace: finalWorkspace }
         setAgentRun(result)
@@ -15293,6 +15421,64 @@ function AgentCommandCenter({
                 <SelectItem value='manual'>当前导入项目 / 手动路径</SelectItem>
               </SelectContent>
             </Select>
+            <div className='space-y-2'>
+              <Label htmlFor='agent-natural-language-task'>自然语言任务</Label>
+              <Textarea
+                id='agent-natural-language-task'
+                value={form.question}
+                onChange={(event) => setForm((current) => ({ ...current, question: event.target.value }))}
+                placeholder='例如：结合这些材料判断是否存在外联风险，并给出处置优先级'
+                className='min-h-20 resize-y text-sm'
+              />
+              <p className='text-[11px] text-muted-foreground'>Agent 会结合问题和附件类型自动选择代码、日志、产物或多模态模块。</p>
+            </div>
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between gap-2'>
+                <Label>任务附件</Label>
+                <input
+                  ref={attachmentInputRef}
+                  type='file'
+                  multiple
+                  accept='image/*,.log,.jsonl,.ndjson,.txt,.md,.json,.yaml,.yml,.csv,.zip,.tar,.gz,.tgz,.intoto.json,.intoto.jsonl'
+                  className='hidden'
+                  onChange={(event) => void addAttachments(Array.from(event.target.files ?? []))}
+                />
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  disabled={attachmentBusy}
+                  onClick={() => attachmentInputRef.current?.click()}
+                >
+                  {attachmentBusy ? <Loader2 className='animate-spin' /> : <Upload />}
+                  {attachmentBusy ? '上传中' : '选择文件'}
+                </Button>
+              </div>
+              {attachments.length ? (
+                <div className='space-y-1.5'>
+                  {attachments.map((attachment) => (
+                    <div key={attachment.attachmentId} className='flex items-center gap-2 rounded-md border bg-muted/20 px-2 py-1.5 text-xs'>
+                      {attachment.kind === 'image' ? <Images className='size-3.5 text-cyan-600' /> : <FileText className='size-3.5 text-slate-500' />}
+                      <span className='min-w-0 flex-1 truncate' title={attachment.filename}>{attachment.filename}</span>
+                      <Badge variant='outline' className='rounded px-1.5 py-0 text-[10px]'>{attachmentKindLabel(attachment.kind)}</Badge>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon'
+                        className='size-6 rounded-md'
+                        aria-label={`移除附件 ${attachment.filename}`}
+                        title='移除附件'
+                        onClick={() => setAttachments((current) => current.filter((item) => item.attachmentId !== attachment.attachmentId))}
+                      >
+                        <X className='size-3.5' />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className='rounded-md border border-dashed p-2 text-xs text-muted-foreground'>可上传截图、日志、JSON 或构建材料。</p>
+              )}
+            </div>
             <AgentTextField
               label='项目路径'
               value={form.targetPath}
@@ -16141,6 +16327,7 @@ function sleep(ms: number) {
 
 function agentFormFromRequest(request: AgentRunRequest): AgentFormState {
   return {
+    question: request.question || '',
     targetPath: request.targetPath || '',
     artifactPath: request.artifactPath || '',
     attestationPath: request.attestationPath || '',
@@ -16156,6 +16343,7 @@ function agentFormFromRequest(request: AgentRunRequest): AgentFormState {
 
 function agentRequestFromForm(form: AgentFormState): AgentRunRequest {
   return {
+    ...(form.question.trim() ? { question: form.question.trim() } : {}),
     targetPath: form.targetPath.trim(),
     ...(form.artifactPath.trim() ? { artifactPath: form.artifactPath.trim() } : {}),
     ...(form.attestationPath.trim() ? { attestationPath: form.attestationPath.trim() } : {}),
@@ -16172,6 +16360,18 @@ function agentRequestFromForm(form: AgentFormState): AgentRunRequest {
 
 function splitAgentValues(value: string) {
   return value.split(/[\n,;]+/).map((item) => item.trim()).filter(Boolean)
+}
+
+function attachmentKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    image: '图片',
+    log: '日志',
+    text: '文本',
+    artifact: '产物',
+    attestation: '证明',
+    file: '文件',
+  }
+  return labels[kind] || '文件'
 }
 
 function workspaceTargetPath(workspace: SecurityWorkspace) {
@@ -16269,6 +16469,10 @@ function CopilotPanel({
   workspace,
   question,
   setQuestion,
+  attachments,
+  attachmentBusy,
+  onAddAttachments,
+  onRemoveAttachment,
   assistantMode,
   onAssistantModeChange,
   messages,
@@ -16279,6 +16483,10 @@ function CopilotPanel({
   workspace: SecurityWorkspace
   question: string
   setQuestion: (value: string) => void
+  attachments: AgentAttachment[]
+  attachmentBusy: boolean
+  onAddAttachments: (files: File[]) => void
+  onRemoveAttachment: (attachmentId: string) => void
   assistantMode: AssistantMode
   onAssistantModeChange: (mode: AssistantMode) => void
   messages: SecurityAssistantResponse[]
@@ -16382,6 +16590,10 @@ function CopilotPanel({
         <AssistantComposer
           value={question}
           onChange={setQuestion}
+          attachments={attachments}
+          attachmentBusy={attachmentBusy}
+          onAddAttachments={onAddAttachments}
+          onRemoveAttachment={onRemoveAttachment}
           mode={assistantMode}
           onModeChange={onAssistantModeChange}
           onSubmit={onSubmit}
@@ -17425,7 +17637,7 @@ function formatBytes(value: number) {
 }
 
 function formatTimestamp(value?: string | null) {
-  return String(value || '').slice(0, 19).replace('T', ' ') || '-'
+  return formatLocalDateTime(value, { includeSeconds: true })
 }
 
 function formatPercent(value: number) {
@@ -17437,6 +17649,7 @@ function scannerStateLabel(state: string | undefined, available: boolean) {
   if (state === 'missing') return '未安装'
   if (state === 'fallback') return '降级'
   if (state === 'partial') return '部分成功'
+  if (state === 'timeout') return '超时'
   if (state === 'failed') return '异常'
   return available ? '可用' : '不可用'
 }
@@ -17444,7 +17657,7 @@ function scannerStateLabel(state: string | undefined, available: boolean) {
 function scannerBadgeClass(state: string | undefined, available: boolean) {
   if (state === 'ok') return cn('rounded-md', statusClasses.active)
   if (state === 'skipped') return cn('rounded-md', statusClasses.observed)
-  if (state === 'fallback' || state === 'partial') return cn('rounded-md', severityClasses.medium)
+  if (state === 'fallback' || state === 'partial' || state === 'timeout') return cn('rounded-md', severityClasses.medium)
   if (state === 'missing' || state === 'failed') return cn('rounded-md', severityClasses.high)
   return cn('rounded-md', available ? statusClasses.active : severityClasses.medium)
 }

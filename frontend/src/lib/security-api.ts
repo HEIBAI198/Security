@@ -48,7 +48,7 @@ export type CodeAuditScanner = {
   command: string
   version?: string | null
   error?: string | null
-  state?: 'ok' | 'skipped' | 'missing' | 'fallback' | 'partial' | 'failed' | string
+  state?: 'ok' | 'skipped' | 'missing' | 'fallback' | 'partial' | 'timeout' | 'failed' | string
 }
 
 export type CodeAuditResult = {
@@ -1318,12 +1318,25 @@ export type AgentRunRequest = {
   allowSelfHostedRunner?: boolean
   requireSignature?: boolean
   logPaths?: string[]
+  attachmentPaths?: string[]
   includeCodeAudit?: boolean
   includeDependencyAudit?: boolean
   includeCicdAudit?: boolean
   includeArtifactTrust?: boolean
   includeLogAudit?: boolean
+  includeMultimodalAudit?: boolean
   timeoutSeconds?: number
+}
+
+export type AgentAttachment = {
+  attachmentId: string
+  filename: string
+  path: string
+  kind: 'image' | 'log' | 'text' | 'artifact' | 'attestation' | 'file' | string
+  contentType: string
+  sizeBytes: number
+  sha256: string
+  uploadedAt: string
 }
 
 export type AgentRunResult = {
@@ -1484,6 +1497,33 @@ export async function createSecurityAgentJob(options: AgentRunRequest) {
     method: 'POST',
     body: JSON.stringify(options),
   })
+}
+
+export async function uploadAgentAttachments(files: File[], workspaceId?: string) {
+  const formData = new FormData()
+  files.forEach((file) => formData.append('files', file))
+  if (workspaceId) formData.set('workspaceId', workspaceId)
+  const response = await fetch(`${apiBase}/api/security/agent/attachments`, {
+    method: 'POST',
+    body: formData,
+  })
+  if (!response.ok) {
+    let message = response.statusText
+    const errorText = await response.text()
+    try {
+      const payload = JSON.parse(errorText)
+      message = payload.error || payload.detail || message
+    } catch {
+      message = errorText
+    }
+    throw new Error(message || 'Agent 附件上传失败')
+  }
+  return response.json() as Promise<{
+    workspaceId?: string
+    attachments: AgentAttachment[]
+    attachmentPaths: string[]
+    kinds: string[]
+  }>
 }
 
 export async function loadSecurityAgentJob(runId: string) {
@@ -1771,8 +1811,10 @@ export async function analyzeMultimodalRecognizedText(options: MultimodalTextAna
   })
 }
 
-export async function loadMultimodalEvidenceLatest(limit = 100) {
-  return api<MultimodalAuditResult>(`/api/security/multimodal/latest?limit=${limit}`)
+export async function loadMultimodalEvidenceLatest(limit = 100, workspaceId?: string) {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (workspaceId) params.set('workspaceId', workspaceId)
+  return api<MultimodalAuditResult>(`/api/security/multimodal/latest?${params.toString()}`)
 }
 
 export async function ingestRealtimeLogs(payload: Record<string, unknown> | Array<Record<string, unknown>>) {

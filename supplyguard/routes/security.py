@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import hashlib
 import io
 import json
+import logging
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any
@@ -66,6 +67,10 @@ from ..agent_backend import (
     refine_agent_payload_with_workspace_graph,
     run_agent_backend,
 )
+from ..agent_attachments import (
+    MAX_AGENT_ATTACHMENTS,
+    save_agent_attachment,
+)
 from ..dependency_audit import (
     DependencyAuditRequest,
     DependencyAuditResult,
@@ -93,6 +98,7 @@ from ..multimodal_audit import (
     MultimodalFileInput,
     MultimodalTextInput,
     empty_multimodal_payload,
+    merge_multimodal_payloads,
     run_multimodal_audit,
     run_multimodal_text_audit,
     serialize_multimodal_audit,
@@ -118,12 +124,14 @@ from ..workspaces import (
 
 
 router = APIRouter(prefix="/api/security", tags=["Security Platform"])
+logger = logging.getLogger(__name__)
 LAST_CODE_AUDIT: CodeAuditResult | None = None
 LAST_DEPENDENCY_AUDIT: DependencyAuditResult | None = None
 LAST_CICD_AUDIT: CICDAuditResult | None = None
 LAST_LOG_AUDIT: LogAuditResult | None = None
 LAST_ARTIFACT_TRUST: ArtifactTrustResult | None = None
 LAST_MULTIMODAL_AUDIT: MultimodalAuditResult | None = None
+LAST_MULTIMODAL_PAYLOAD: dict[str, Any] | None = None
 LAST_AGENT_RUN: dict[str, Any] | None = None
 LAST_AGENT_JOB_ID: str | None = None
 AGENT_JOBS: dict[str, dict[str, Any]] = {}
@@ -1588,7 +1596,20 @@ def short_text(value: Any, limit: int) -> str:
 
 def current_multimodal_payload() -> dict[str, Any]:
     """返回当前会话的外部告警证据，避免把历史索引缓存混入本次研判。"""
+    if LAST_MULTIMODAL_PAYLOAD is not None:
+        return deepcopy(LAST_MULTIMODAL_PAYLOAD)
     return serialize_multimodal_audit(LAST_MULTIMODAL_AUDIT) or empty_multimodal_payload()
+
+
+def multimodal_payload_for_workspace(workspace_id: str | None) -> dict[str, Any]:
+    if not workspace_id:
+        return current_multimodal_payload()
+    try:
+        workspace = load_workspace(workspace_id)
+    except (FileNotFoundError, ValueError):
+        return empty_multimodal_payload()
+    payload = workspace.get("multimodal_audit")
+    return deepcopy(payload) if isinstance(payload, dict) else empty_multimodal_payload()
 
 
 def build_clean_import_workspace_payload(
@@ -3464,6 +3485,10 @@ def agent_result_module_payloads(results: Any) -> list[tuple[str, dict[str, Any]
         serialized = serialize_log_audit(results.log_audit)
         if serialized:
             payloads.append(("log_audit", serialized))
+    if results.multimodal_audit is not None:
+        serialized = serialize_multimodal_audit(results.multimodal_audit)
+        if serialized:
+            payloads.append(("multimodal_audit", serialized))
     return payloads
 
 
@@ -3504,6 +3529,8 @@ def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[st
     global LAST_CICD_AUDIT
     global LAST_ARTIFACT_TRUST
     global LAST_LOG_AUDIT
+    global LAST_MULTIMODAL_AUDIT
+    global LAST_MULTIMODAL_PAYLOAD
     global LAST_AGENT_RUN
 
     if bundle.results.code_audit is not None:
@@ -3516,9 +3543,15 @@ def apply_agent_results(bundle: Any, workspace_id: str | None = None) -> dict[st
         LAST_ARTIFACT_TRUST = bundle.results.artifact_trust
     if bundle.results.log_audit is not None:
         LAST_LOG_AUDIT = bundle.results.log_audit
+    if bundle.results.multimodal_audit is not None:
+        LAST_MULTIMODAL_AUDIT = bundle.results.multimodal_audit
 
     workspace = workspace_or_current(workspace_id) if workspace_id else build_workspace_payload()
     for module_key, module_payload in agent_result_module_payloads(bundle.results):
+        if module_key == "multimodal_audit":
+            existing_multimodal = workspace.get("multimodal_audit") if isinstance(workspace.get("multimodal_audit"), dict) else {}
+            module_payload = merge_multimodal_payloads(existing_multimodal, module_payload)
+            LAST_MULTIMODAL_PAYLOAD = module_payload
         workspace = apply_module_payload_to_workspace(workspace, module_key, module_payload)
 
     workspace["agentRun"] = bundle.payload
@@ -3698,6 +3731,39 @@ async def security_agent_run(payload: AgentRunRequest, request: Request) -> dict
     workspace_id = await workspace_id_from_request(request) or payload.workspace_id
     bundle = run_agent_backend(payload)
     return apply_agent_results(bundle, workspace_id=workspace_id)
+
+
+@router.post("/agent/attachments")
+@router.post("/agent/attachments/")
+async def security_agent_attachments(
+    files: list[UploadFile] | None = File(default=None),
+    file: UploadFile | None = File(default=None),
+    workspaceId: str | None = Form(default=None),
+) -> dict[str, Any]:
+    """保存 Agent 任务附件，并返回供后续自然语言任务引用的受控路径。"""
+
+    uploads = [item for item in (files or []) if item is not None]
+    if file is not None:
+        uploads.append(file)
+    if not uploads:
+        raise HTTPException(status_code=400, detail="请至少选择一个附件")
+    if len(uploads) > MAX_AGENT_ATTACHMENTS:
+        raise HTTPException(status_code=400, detail=f"一次最多上传 {MAX_AGENT_ATTACHMENTS} 个附件")
+
+    saved: list[dict[str, Any]] = []
+    try:
+        for upload in uploads:
+            content = await upload.read()
+            attachment = save_agent_attachment(upload.filename, content, upload.content_type)
+            saved.append(attachment.payload())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "workspaceId": workspaceId,
+        "attachments": saved,
+        "attachmentPaths": [str(item["path"]) for item in saved],
+        "kinds": sorted({str(item["kind"]) for item in saved}),
+    }
 
 
 @router.get("/agent/latest")
@@ -3918,6 +3984,7 @@ async def multimodal_audit_scan(
     workspaceId: str | None = Form(default=None),
 ) -> dict[str, Any]:
     global LAST_MULTIMODAL_AUDIT
+    global LAST_MULTIMODAL_PAYLOAD
     uploads = list(files or [])
     if file is not None:
         uploads.append(file)
@@ -3933,7 +4000,9 @@ async def multimodal_audit_scan(
         LAST_MULTIMODAL_AUDIT = run_multimodal_audit(inputs)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    result = current_multimodal_payload()
+    incoming = serialize_multimodal_audit(LAST_MULTIMODAL_AUDIT) or empty_multimodal_payload()
+    result = merge_multimodal_payloads(multimodal_payload_for_workspace(workspaceId), incoming)
+    LAST_MULTIMODAL_PAYLOAD = result
     if workspaceId:
         persist_current_workspace(workspaceId, module_key="multimodal_audit", module_payload=result)
     return result
@@ -3943,6 +4012,7 @@ async def multimodal_audit_scan(
 @router.post("/multimodal/analyze-text/")
 async def multimodal_text_analyze(payload: MultimodalTextAnalyzeRequest, request: Request) -> dict[str, Any]:
     global LAST_MULTIMODAL_AUDIT
+    global LAST_MULTIMODAL_PAYLOAD
     workspace_id = await workspace_id_from_request(request)
     evidence_type = payload.evidence_type or ("audio_asr" if payload.source_type == "audio" else "visual_ocr")
     try:
@@ -3961,7 +4031,9 @@ async def multimodal_text_analyze(payload: MultimodalTextAnalyzeRequest, request
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    result = current_multimodal_payload()
+    incoming = serialize_multimodal_audit(LAST_MULTIMODAL_AUDIT) or empty_multimodal_payload()
+    result = merge_multimodal_payloads(multimodal_payload_for_workspace(workspace_id), incoming)
+    LAST_MULTIMODAL_PAYLOAD = result
     if workspace_id:
         persist_current_workspace(workspace_id, module_key="multimodal_audit", module_payload=result)
     return result
@@ -3969,8 +4041,15 @@ async def multimodal_text_analyze(payload: MultimodalTextAnalyzeRequest, request
 
 @router.get("/multimodal/latest")
 @router.get("/multimodal/latest/")
-async def multimodal_audit_latest(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
-    return current_multimodal_payload()
+async def multimodal_audit_latest(
+    limit: int = Query(default=100, ge=1, le=500),
+    workspaceId: str | None = Query(default=None),
+) -> dict[str, Any]:
+    payload = multimodal_payload_for_workspace(workspaceId)
+    evidence = payload.get("evidence") if isinstance(payload.get("evidence"), list) else []
+    if len(evidence) <= limit:
+        return payload
+    return merge_multimodal_payloads({}, payload, max_evidence=limit)
 
 
 @router.get("/multimodal/report")
@@ -4295,7 +4374,8 @@ async def security_assistant(payload: AssistantQuestion) -> dict[str, Any]:
             retrieval,
             graph_rag=graph_rag_result,
         )
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("DeepSeek 安全助手调用失败，使用离线回答：%s", exc)
         deepseek_answer = None
 
     if deepseek_answer is not None:
@@ -4324,7 +4404,8 @@ async def investigation_agent_answer(question: str, investigation: dict[str, Any
     rule_answer = answer_investigation_question(question, investigation, workspace)
     try:
         llm_answer = await ask_deepseek_investigation_agent(question, workspace, investigation)
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning("DeepSeek 调查 Agent 调用失败，使用规则回答：%s", exc)
         llm_answer = None
     if llm_answer is not None:
         return {

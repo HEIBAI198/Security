@@ -46,7 +46,7 @@ MIN_SCANNER_TIMEOUT_SECONDS = 8
 STANDARD_SCANNER_TIMEOUT_SECONDS = 45
 GITLEAKS_SCANNER_TIMEOUT_SECONDS = 30
 BANDIT_SCANNER_TIMEOUT_SECONDS = 30
-CHECKOV_SCANNER_TIMEOUT_SECONDS = 45
+CHECKOV_SCANNER_TIMEOUT_SECONDS = 90
 VERSION_TIMEOUT_SECONDS = 3
 CHECKOV_FRAMEWORKS = ("dockerfile", "github_actions", "terraform", "kubernetes", "cloudformation")
 CHECKOV_TARGET_FILENAMES = {
@@ -822,10 +822,18 @@ def run_checkov(
 
     process = run_command(cmd, command_timeout)
     if process.timeout:
+        timeout_message = f"扫描超时（{command_timeout} 秒）"
         return (
             [],
-            ScannerStatus(name="Checkov", available=True, command=command, version=version, error="Timed out", state="failed"),
-            ["Checkov scan timed out"],
+            ScannerStatus(
+                name="Checkov",
+                available=True,
+                command=command,
+                version=version,
+                error=timeout_message,
+                state="timeout",
+            ),
+            [f"Checkov scan timed out after {command_timeout} seconds"],
         )
 
     output = process.stdout.strip()
@@ -1144,6 +1152,11 @@ def get_tool_version(cmd: list[str], *, timeout_seconds: int = 10) -> str | None
 
 
 def get_checkov_version(command: str, *, timeout_seconds: int = 10) -> str | None:
+    try:
+        return importlib.metadata.version("checkov")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+
     output = ""
     try:
         process = subprocess.run(
@@ -1164,11 +1177,7 @@ def get_checkov_version(command: str, *, timeout_seconds: int = 10) -> str | Non
     match = re.search(r"\b\d+\.\d+\.\d+\b", output)
     if match:
         return match.group(0)
-
-    try:
-        return importlib.metadata.version("checkov")
-    except importlib.metadata.PackageNotFoundError:
-        return None
+    return None
 
 
 def tool_env() -> dict[str, str]:

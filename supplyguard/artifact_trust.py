@@ -828,7 +828,10 @@ def check_signature(
     repo = repo_owner_name(policy.get("expected_repo") or info.source_repo)
     envelope_signature_count = len(info.envelope.get("signatures") or []) if isinstance(info.envelope, dict) else 0
 
-    if repo and tools[0].available:
+    # 本地生成的裸 SLSA statement 没有远端签名身份；签名非必需时无需访问 GitHub API。
+    should_verify_signature = require_signature or envelope_signature_count > 0
+
+    if should_verify_signature and repo and tools[0].available:
         result = run_command(
             [tool_command("gh"), "attestation", "verify", str(artifact_path), "-R", repo, "--format", "json"],
             timeout_seconds,
@@ -868,7 +871,7 @@ def check_signature(
             )
 
     image_reference = str(policy.get("subject_name") or info.subject_name or "")
-    if is_image_reference(image_reference) and tools[1].available:
+    if should_verify_signature and is_image_reference(image_reference) and tools[1].available:
         target = image_reference.removeprefix("oci://")
         result = run_command([tool_command("cosign"), "verify-attestation", target], timeout_seconds)
         tools[1] = ArtifactTrustToolStatus(

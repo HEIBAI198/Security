@@ -40,7 +40,12 @@ IMPORT_WORKSPACE_DIR = Path(
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 DEEPSEEK_MODEL = normalize_deepseek_model(os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"))
-DEEPSEEK_TIMEOUT_SECONDS = float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "30"))
+DEEPSEEK_TIMEOUT_SECONDS = float(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "60"))
+DEEPSEEK_ASSISTANT_MAX_TOKENS = int(os.environ.get("DEEPSEEK_ASSISTANT_MAX_TOKENS", "2400"))
+DEEPSEEK_ASSISTANT_RETRY_MAX_TOKENS = max(
+    DEEPSEEK_ASSISTANT_MAX_TOKENS,
+    int(os.environ.get("DEEPSEEK_ASSISTANT_RETRY_MAX_TOKENS", "4800")),
+)
 
 
 def resolve_frontend_dir() -> tuple[Path | None, str]:

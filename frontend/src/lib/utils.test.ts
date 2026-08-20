@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { getPageNumbers } from './utils'
+import { formatLocalDateTime, getPageNumbers } from './utils'
+
+describe('formatLocalDateTime', () => {
+  it('按指定时区转换 UTC ISO 时间', () => {
+    expect(formatLocalDateTime('2026-08-20T06:19:00+00:00', { timeZone: 'Asia/Shanghai' }))
+      .toBe('2026-08-20 14:19')
+  })
+
+  it('可显示秒并处理空值', () => {
+    expect(formatLocalDateTime('2026-08-20T06:19:07Z', {
+      includeSeconds: true,
+      timeZone: 'Asia/Shanghai',
+    })).toBe('2026-08-20 14:19:07')
+    expect(formatLocalDateTime(null, { fallback: '' })).toBe('')
+  })
+})
 
 describe('getPageNumbers', () => {
   it('returns all pages when total is at most 5', () => {
