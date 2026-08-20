@@ -53,7 +53,7 @@ RUN set -eu; \
       tool_name="$1"; \
       tool_url="$2"; \
       archive_path="/tmp/${tool_name}.tar.gz"; \
-      if curl -sSfL --connect-timeout 20 --retry 3 --retry-delay 2 --retry-all-errors \
+      if curl -sSfL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 --retry-max-time 120 --retry-all-errors \
           "$tool_url" -o "$archive_path" \
         && tar -tzf "$archive_path" "$tool_name" >/dev/null 2>&1 \
         && tar -xzf "$archive_path" -C /usr/local/bin "$tool_name" \
@@ -71,7 +71,7 @@ RUN set -eu; \
     install_tar_tool \
       actionlint \
       "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"; \
-    if curl -sSfL --connect-timeout 20 --retry 3 --retry-delay 2 --retry-all-errors \
+    if curl -sSfL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 --retry-max-time 120 --retry-all-errors \
         "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
         -o /tmp/osv-scanner \
       && test -s /tmp/osv-scanner \
