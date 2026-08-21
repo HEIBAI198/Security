@@ -3224,7 +3224,7 @@ async def security_workspace_scan_suite(workspace_id: str, payload: ScanSuiteReq
 
     if payload.include_cicd_audit:
         try:
-            LAST_CICD_AUDIT = run_cicd_audit(CICDAuditRequest(importId=import_id, includeZizmor=False, includeActionlint=False))
+            LAST_CICD_AUDIT = run_cicd_audit(CICDAuditRequest(importId=import_id, includeZizmor=True, includeActionlint=True))
             module_results["cicd_audit"] = serialize_cicd_audit(LAST_CICD_AUDIT) or {}
         except Exception as exc:  # noqa: BLE001
             errors.append({"module": "cicd_audit", "message": str(exc)})

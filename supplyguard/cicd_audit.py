@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .config import ROOT
 from .project_imports import ImportErrorDetail, load_import, load_latest_import
+from .scanner_tools import executable_suffixes
 
 try:
     import yaml
@@ -1116,7 +1117,7 @@ def find_tool(name: str) -> str | None:
 
 
 def tool_candidates(name: str) -> Iterable[Path]:
-    suffixes = [".exe", ".cmd", ".bat", ""]
+    suffixes = executable_suffixes()
     dirs = [project_venv_scripts_dir(), Path(sys.executable).resolve().parent]
     for directory in dirs:
         if directory is None:

@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .config import IMPORT_WORKSPACE_DIR, ROOT
 from .project_imports import ImportErrorDetail, load_import, load_latest_import
+from .scanner_tools import executable_suffixes
 
 
 RULES_DIR = Path(__file__).resolve().parent / "rules" / "semgrep"
@@ -1192,7 +1193,7 @@ def tool_env() -> dict[str, str]:
 
 def find_python_tool(name: str) -> str | None:
     script_dirs = [path for path in (project_venv_scripts_dir(), Path(sys.executable).resolve().parent) if path]
-    suffixes = [".exe", ".cmd", ".bat", ""]
+    suffixes = executable_suffixes()
     for scripts_dir in script_dirs:
         for suffix in suffixes:
             candidate = scripts_dir / f"{name}{suffix}"

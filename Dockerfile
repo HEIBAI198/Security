@@ -13,8 +13,8 @@ RUN npm run build
 FROM docker.m.daocloud.io/library/python:3.12-slim
 
 ARG GITLEAKS_VERSION=8.30.1
-ARG ACTIONLINT_VERSION=1.7.7
-ARG OSV_SCANNER_VERSION=2.2.3
+ARG ACTIONLINT_VERSION=1.7.12
+ARG OSV_SCANNER_VERSION=2.3.8
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -29,6 +29,7 @@ WORKDIR /app
 
 COPY requirements.txt .
 COPY requirements-gnn-pyg.txt .
+COPY requirements-scanners.txt .
 RUN sed -i \
     -e 's|http://deb.debian.org/debian|http://mirrors.aliyun.com/debian|g' \
     -e 's|http://deb.debian.org/debian-security|http://mirrors.aliyun.com/debian-security|g' \
@@ -41,8 +42,7 @@ RUN sed -i \
       tesseract-ocr tesseract-ocr-eng tesseract-ocr-chi-sim \
       fonts-noto-cjk \
   && rm -rf /var/lib/apt/lists/* \
-  && pip install --no-cache-dir -r requirements.txt semgrep bandit checkov cyclonedx-bom \
-  && (pip install --no-cache-dir zizmor || echo "WARNING: zizmor install failed; CI/CD audit will use built-in checks and actionlint if available.") \
+  && pip install --no-cache-dir -r requirements.txt -r requirements-scanners.txt cyclonedx-bom \
   && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch \
   && pip install --no-cache-dir -r requirements-gnn-pyg.txt
 
@@ -53,7 +53,7 @@ RUN set -eu; \
       tool_name="$1"; \
       tool_url="$2"; \
       archive_path="/tmp/${tool_name}.tar.gz"; \
-      if curl -sSfL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 --retry-max-time 120 --retry-all-errors \
+      if curl -4 -sSfL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 --retry-max-time 120 --retry-all-errors \
           "$tool_url" -o "$archive_path" \
         && tar -tzf "$archive_path" "$tool_name" >/dev/null 2>&1 \
         && tar -xzf "$archive_path" -C /usr/local/bin "$tool_name" \
@@ -71,7 +71,7 @@ RUN set -eu; \
     install_tar_tool \
       actionlint \
       "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"; \
-    if curl -sSfL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 --retry-max-time 120 --retry-all-errors \
+    if curl -4 -sSfL --connect-timeout 20 --max-time 120 --retry 3 --retry-delay 2 --retry-max-time 120 --retry-all-errors \
         "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
         -o /tmp/osv-scanner \
       && test -s /tmp/osv-scanner \

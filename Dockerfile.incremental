@@ -13,7 +13,25 @@ RUN npm run build
 # 复用服务器当前镜像中的 Python、GNN 与安全扫描器依赖，仅更新应用代码。
 FROM security-api:latest
 
+ARG ACTIONLINT_VERSION=1.7.12
+ARG OSV_SCANNER_VERSION=2.3.8
+
 WORKDIR /app
+
+# 增量部署也校准独立二进制扫描器，避免复用旧镜像时版本漂移或工具缺失。
+RUN set -eu; \
+    curl -4 -sSfL --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 --retry-all-errors \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+      -o /tmp/actionlint.tar.gz; \
+    tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint; \
+    chmod +x /usr/local/bin/actionlint; \
+    rm -f /tmp/actionlint.tar.gz; \
+    curl -4 -sSfL --connect-timeout 20 --max-time 180 --retry 3 --retry-delay 2 --retry-all-errors \
+      "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
+      -o /usr/local/bin/osv-scanner; \
+    chmod +x /usr/local/bin/osv-scanner; \
+    actionlint --version; \
+    osv-scanner --version
 
 COPY . .
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
